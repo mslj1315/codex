@@ -30,7 +30,7 @@ class WorkspaceViewModel(
     }
 
     val tasks: List<LocalActionTask>
-        get() = mutableTasks
+        get() = mutableTasks.toList()
 
     var videoStage by mutableStateOf(
         VideoFactoryStage.fromWireValue(savedStateHandle[VIDEO_STAGE])

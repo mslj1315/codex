@@ -45,7 +45,7 @@ class WorkspaceViewModelTest {
     }
 
     @Test
-    fun `workspace state persists explicit wire values and tasks are not exposed as mutable snapshot state`() {
+    fun `workspace state persists explicit wire values and tasks are exposed as an immutable snapshot`() {
         val handle = SavedStateHandle()
         val viewModel = WorkspaceViewModel(handle)
 
@@ -59,7 +59,7 @@ class WorkspaceViewModelTest {
         assertEquals("tasks", handle.get<String>("workspace_selected_tab"))
         assertEquals("copy", handle.get<String>("workspace_video_stage"))
         assertEquals("video-factory", handle.get<String>("workspace_overlay"))
-        assertEquals(List::class.java, WorkspaceViewModel::class.java.getMethod("getTasks").returnType)
+        assertFalse(viewModel.tasks is MutableList<*>)
     }
 
     @Test
