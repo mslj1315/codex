@@ -330,25 +330,29 @@ private fun VideoFactoryStageContent(
 
 @Composable
 private fun TopicStage(selectedTopic: String, onSelectTopic: (String) -> Unit) {
-    val topics = listOf("午市双人套餐", "工作日午餐限时菜单", "门店午市服务提醒")
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("选题", style = MaterialTheme.typography.titleLarge)
         Text("选择一个本地示例选题。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        topics.forEach { topic ->
+        VideoFactoryLocalContent.sources.forEach { source ->
             Card(modifier = Modifier.fillMaxWidth()) {
-                Row(
+                Column(
                     modifier = Modifier.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(topic, style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            if (selectedTopic == topic) "已选本地示例" else "本地示例",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    TextButton(onClick = { onSelectTopic(topic) }) {
-                        Text(if (selectedTopic == topic) "已选择" else "选择")
+                    Text(source.label, style = MaterialTheme.typography.labelLarge)
+                    source.topics.forEach { topic ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(topic, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    if (selectedTopic == topic) "已选本地示例" else "本地示例",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = { onSelectTopic(topic) }) {
+                                Text(if (selectedTopic == topic) "已选择" else "选择")
+                            }
+                        }
                     }
                 }
             }
@@ -384,14 +388,17 @@ private fun ComplianceStage() {
 private fun StoryboardStage() {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("分镜", style = MaterialTheme.typography.titleLarge)
-        Text("镜头 1：展示午市双人套餐与用餐场景。")
-        Text("镜头 2：呈现套餐内容与到店提示。")
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "分镜预览占位，未创建真实视频画面。",
-                modifier = Modifier.padding(16.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        VideoFactoryLocalContent.shots.forEach { shot ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(shot.title, style = MaterialTheme.typography.titleSmall)
+                    Text(shot.filmingGuidance)
+                    Text(shot.materialPlaceholder, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
@@ -422,6 +429,7 @@ private fun LibraryStage() {
             ) {
                 Text("午市双人套餐短片", style = MaterialTheme.typography.titleSmall)
                 Text("示例条目，未生成真实视频")
+                Text("本地处理状态占位，未进入生成队列", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
