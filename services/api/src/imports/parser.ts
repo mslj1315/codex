@@ -1,16 +1,26 @@
 import ExcelJS from "exceljs";
+import yauzl from "yauzl";
 import type { MetricKey, ParseOptions, ParseResult, ParsedCandidate } from "./models.js";
 
 type Row = Record<string, unknown>;
 type Unit = ParsedCandidate["unit"];
 type CurrencyUnit = "yuan" | "cents";
+interface Cell {
+  header: string;
+  value: unknown;
+  columnIndex: number;
+}
 
 export const MAX_XLSX_BYTES = 5 * 1024 * 1024;
 export const MAX_XLSX_ROWS = 10_000;
 export const MAX_XLSX_COLUMNS = 64;
+export const MAX_XLSX_ENTRIES = 256;
+export const MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES = 5 * 1024 * 1024;
+export const MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES = 12 * 1024 * 1024;
+export const MAX_XLSX_COMPRESSION_RATIO = 200;
 
 export class ParserInputError extends Error {
-  constructor(readonly code: "xlsx_too_large" | "xlsx_row_limit" | "xlsx_column_limit") {
+  constructor(readonly code: "xlsx_too_large" | "xlsx_row_limit" | "xlsx_column_limit" | "xlsx_entry_limit" | "xlsx_expanded_too_large" | "xlsx_unsafe_path" | "xlsx_compression_ratio") {
     super(code);
     this.name = "ParserInputError";
   }
@@ -28,20 +38,25 @@ interface MetricDefinition {
 const METRICS: readonly MetricDefinition[] = [
   { key: "revenue", displayName: "Revenue", standard: ["营业额（元）", "营业额(元)", "营业额（人民币）", "营业额(人民币)", "营业额（分）", "营业额(分)"], aliases: ["营业额", "营业收入", "销售额", "收入"], kind: "amount", nonpositiveRejected: false },
   { key: "orders", displayName: "Orders", standard: ["订单数"], aliases: ["订单量", "订单数量"], kind: "count", nonpositiveRejected: true },
-  { key: "average_spend", displayName: "Average spend", standard: ["客单价（元）", "客单价(元)"], aliases: ["客单价"], kind: "amount", nonpositiveRejected: true },
-  { key: "package_sales", displayName: "Package sales", standard: ["套餐销售额（元）", "套餐销售额(元)"], aliases: ["套餐销售额", "套餐销售"], kind: "amount", nonpositiveRejected: true },
+  { key: "average_spend", displayName: "Average spend", standard: ["客单价（元）", "客单价(元)", "客单价（分）", "客单价(分)"], aliases: ["客单价"], kind: "amount", nonpositiveRejected: true },
+  { key: "package_sales", displayName: "Package sales", standard: ["套餐销售额（元）", "套餐销售额(元)", "套餐销售额（分）", "套餐销售额(分)"], aliases: ["套餐销售额", "套餐销售"], kind: "amount", nonpositiveRejected: true },
   { key: "package_redemptions", displayName: "Package redemptions", standard: ["套餐核销数"], aliases: ["套餐核销", "核销数"], kind: "count", nonpositiveRejected: true },
-  { key: "refunds", displayName: "Refunds", standard: ["退款金额（元）", "退款金额(元)"], aliases: ["退款金额", "退款额", "退款"], kind: "amount", nonpositiveRejected: false },
-  { key: "promotion_spend", displayName: "Promotion spend", standard: ["推广费用（元）", "推广费用(元)", "促销费用（元）", "促销费用(元)"], aliases: ["推广费用", "推广费", "促销费用"], kind: "amount", nonpositiveRejected: false }
+  { key: "refunds", displayName: "Refunds", standard: ["退款金额（元）", "退款金额(元)", "退款金额（分）", "退款金额(分)"], aliases: ["退款金额", "退款额", "退款"], kind: "amount", nonpositiveRejected: false },
+  { key: "promotion_spend", displayName: "Promotion spend", standard: ["推广费用（元）", "推广费用(元)", "促销费用（元）", "促销费用(元)", "推广费用（分）", "推广费用(分)", "促销费用（分）", "促销费用(分)"], aliases: ["推广费用", "推广费", "促销费用"], kind: "amount", nonpositiveRejected: false }
 ];
 
 export function parseRows(rows: readonly Row[], options: ParseOptions): ParseResult {
+  return parseCellRows(rows.map((row) => Object.entries(row).map(([header, value], columnIndex) => ({ header, value, columnIndex }))), options);
+}
+
+function parseCellRows(rows: readonly (readonly Cell[])[], options: ParseOptions): ParseResult {
   const candidates: ParsedCandidate[] = [];
   const unknownHeaders: string[] = [];
   const seenUnknownHeaders = new Set<string>();
 
   rows.forEach((row, rowIndex) => {
-    const recognized = Object.entries(row).flatMap(([header, rawValue]) => {
+    const recognized = row.flatMap((cell) => {
+      const { header, value: rawValue } = cell;
       const match = findMetric(header);
       if (!match) {
         if (!seenUnknownHeaders.has(header)) {
@@ -50,7 +65,7 @@ export function parseRows(rows: readonly Row[], options: ParseOptions): ParseRes
         }
         return [];
       }
-      return [{ header, rawValue, match }];
+      return [{ header, rawValue, match, columnIndex: cell.columnIndex }];
     });
     const duplicateMetrics = new Set(recognized.map(({ match }) => match.definition.key).filter((key, index, keys) => keys.indexOf(key) !== index));
     for (const { header, rawValue, match } of recognized) {
@@ -67,7 +82,7 @@ export function parseRows(rows: readonly Row[], options: ParseOptions): ParseRes
 export function parseCsv(input: string, options: ParseOptions): ParseResult {
   const [headerRow = [], ...valueRows] = parseCsvRecords(input);
   const headers = headerRow.map((header) => header.replace(/^\uFEFF/, ""));
-  const result = parseRows(valueRows.map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]))), options);
+  const result = parseCellRows(valueRows.map((values) => headers.map((header, columnIndex) => ({ header, value: values[columnIndex] ?? "", columnIndex }))), options);
   return { ...result, unknownHeaders: mergeUnknownHeaders(result.unknownHeaders, headers.filter((header) => !findMetric(header))) };
 }
 
@@ -76,6 +91,7 @@ export async function parseXlsx(input: ArrayBuffer | Uint8Array, options: ParseO
   const workbook = new ExcelJS.Workbook();
   const workbookBytes = new Uint8Array(input.byteLength);
   workbookBytes.set(input instanceof Uint8Array ? input : new Uint8Array(input));
+  await preflightXlsxArchive(workbookBytes.buffer);
   await workbook.xlsx.load(workbookBytes.buffer);
   const worksheet = workbook.worksheets[0];
   if (!worksheet) return parseRows([], options);
@@ -86,12 +102,13 @@ export async function parseXlsx(input: ArrayBuffer | Uint8Array, options: ParseO
   worksheet.getRow(1).eachCell({ includeEmpty: false }, (cell, columnNumber) => {
     headers.set(columnNumber, cell.text);
   });
-  const rows: Row[] = [];
+  const rows: Cell[][] = [];
   worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
     if (rowNumber === 1) return;
-    rows.push(Object.fromEntries([...headers].map(([columnNumber, header]) => [header, cachedScalarValue(row.getCell(columnNumber).value)])));
+    rows.push([...headers].map(([columnNumber, header]) => ({ header, value: cachedScalarValue(row.getCell(columnNumber).value), columnIndex: columnNumber - 1 })));
   });
-  return parseRows(rows, options);
+  const result = parseCellRows(rows, options);
+  return { ...result, unknownHeaders: mergeUnknownHeaders(result.unknownHeaders, [...headers.values()].filter((header) => !findMetric(header))) };
 }
 
 function findMetric(header: string): { definition: MetricDefinition; isStandard: boolean } | undefined {
@@ -188,6 +205,59 @@ function cachedScalarValue(value: unknown): unknown {
 
 function mergeUnknownHeaders(current: string[], headers: string[]): string[] {
   return [...new Set([...current, ...headers])];
+}
+
+function preflightXlsxArchive(buffer: ArrayBuffer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(Buffer.from(buffer), { lazyEntries: true, validateEntrySizes: false }, (error, archive) => {
+      if (error || !archive) {
+        reject(error ?? new Error("Unable to open XLSX archive"));
+        return;
+      }
+
+      let entryCount = 0;
+      let totalUncompressedBytes = 0;
+      let settled = false;
+      const fail = (reason: ParserInputError) => {
+        if (settled) return;
+        settled = true;
+        archive.close();
+        reject(reason);
+      };
+      archive.on("error", (archiveError) => {
+        if (!settled) {
+          settled = true;
+          reject(archiveError);
+        }
+      });
+      archive.on("entry", (entry) => {
+        if (settled) return;
+        entryCount += 1;
+        totalUncompressedBytes += entry.uncompressedSize;
+        const compressionRatio = entry.compressedSize === 0
+          ? (entry.uncompressedSize === 0 ? 1 : Number.POSITIVE_INFINITY)
+          : entry.uncompressedSize / entry.compressedSize;
+        if (entryCount > MAX_XLSX_ENTRIES) return fail(new ParserInputError("xlsx_entry_limit"));
+        if (hasUnsafeArchivePath(entry.fileName)) return fail(new ParserInputError("xlsx_unsafe_path"));
+        if (entry.uncompressedSize > MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES || totalUncompressedBytes > MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES) {
+          return fail(new ParserInputError("xlsx_expanded_too_large"));
+        }
+        if (compressionRatio > MAX_XLSX_COMPRESSION_RATIO) return fail(new ParserInputError("xlsx_compression_ratio"));
+        archive.readEntry();
+      });
+      archive.on("end", () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      });
+      archive.readEntry();
+    });
+  });
+}
+
+function hasUnsafeArchivePath(fileName: string): boolean {
+  return fileName.startsWith("/") || fileName.includes("\\") || fileName.includes("\0") || fileName.split("/").some((segment) => segment === "..");
 }
 
 function parseCsvRecords(input: string): string[][] {

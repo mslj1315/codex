@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MAX_XLSX_BYTES, ParserInputError, parseCsv, parseRows, parseXlsx } from "../src/imports/parser.js";
 import ExcelJS from "exceljs";
+import yazl from "yazl";
 
 const validRange = { rangeStart: "2026-08-01", rangeEnd: "2026-08-07" };
 
@@ -34,6 +35,22 @@ describe("import parser", () => {
     expect(result.candidates).toEqual([
       expect.objectContaining({ metricKey: "revenue", value: 123, unit: "cents", confidence: 100, status: "ready" })
     ]);
+  });
+
+  it("maps explicit cents headers for every amount metric", () => {
+    const result = parseRows([{
+      "客单价（分）": "3800",
+      "套餐销售额（分）": "10000",
+      "退款金额（分）": "350",
+      "推广费用（分）": "400"
+    }], validRange);
+
+    expect(result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metricKey: "average_spend", value: 3800, confidence: 100, status: "ready" }),
+      expect.objectContaining({ metricKey: "package_sales", value: 10000, confidence: 100, status: "ready" }),
+      expect.objectContaining({ metricKey: "refunds", value: 350, confidence: 100, status: "ready" }),
+      expect.objectContaining({ metricKey: "promotion_spend", value: 400, confidence: 100, status: "ready" })
+    ]));
   });
 
   it("converts yuan decimals to cents without floating point rounding", () => {
@@ -171,6 +188,15 @@ describe("import parser", () => {
     ]);
   });
 
+  it("marks exact duplicate CSV headers as requiring confirmation", () => {
+    const result = parseCsv("订单数,订单数\n10,11\n", validRange);
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ value: 10, issueCode: "duplicate_header", status: "needs_confirmation" }),
+      expect.objectContaining({ value: 11, issueCode: "duplicate_header", status: "needs_confirmation" })
+    ]);
+  });
+
   it("uses cached scalar formula results without evaluating formulas", async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("first");
@@ -190,6 +216,20 @@ describe("import parser", () => {
     await expect(parseXlsx(new Uint8Array(MAX_XLSX_BYTES + 1), validRange)).rejects.toMatchObject({
       code: "xlsx_too_large"
     } satisfies Partial<ParserInputError>);
+  });
+
+  it("rejects an XLSX archive whose declared expanded size exceeds the preflight budget", async () => {
+    const zip = new yazl.ZipFile();
+    const chunks: Buffer[] = [];
+    zip.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const archive = new Promise<Buffer>((resolve, reject) => {
+      zip.outputStream.on("end", () => resolve(Buffer.concat(chunks)));
+      zip.outputStream.on("error", reject);
+    });
+    zip.addBuffer(Buffer.alloc(6 * 1024 * 1024, 0), "xl/sharedStrings.xml", { compress: true });
+    zip.end();
+
+    await expect(parseXlsx(await archive, validRange)).rejects.toMatchObject({ code: "xlsx_expanded_too_large" });
   });
 
   it("rejects a first worksheet with more than the configured row limit", async () => {
@@ -215,6 +255,30 @@ describe("import parser", () => {
     const result = await parseXlsx(await workbook.xlsx.writeBuffer(), validRange);
 
     expect(result.candidates).toEqual([expect.objectContaining({ metricKey: "orders", value: 1284 })]);
+  });
+
+  it("marks exact duplicate XLSX headers as requiring confirmation", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("first");
+    sheet.addRow(["订单数", "订单数"]);
+    sheet.addRow([10, 11]);
+
+    const result = await parseXlsx(await workbook.xlsx.writeBuffer(), validRange);
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ value: 10, issueCode: "duplicate_header", status: "needs_confirmation" }),
+      expect.objectContaining({ value: 11, issueCode: "duplicate_header", status: "needs_confirmation" })
+    ]);
+  });
+
+  it("preserves unknown headers from a header-only XLSX sheet", async () => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet("first").addRow(["天气"]);
+
+    const result = await parseXlsx(await workbook.xlsx.writeBuffer(), validRange);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.unknownHeaders).toEqual(["天气"]);
   });
 
   it("preserves the byte offset and length of sliced XLSX input", async () => {
