@@ -35,7 +35,7 @@ fun WorkspaceRoot(
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
             onBack = viewModel::closeOverlay,
-            onCreateTask = viewModel::createPriorityTask
+            onCreateTask = viewModel::createPriorityTaskAndOpenTasks
         )
         viewModel.isVideoFactoryOpen -> VideoFactoryPlaceholder(onBack = viewModel::closeOverlay)
         else -> Scaffold(

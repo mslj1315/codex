@@ -149,6 +149,19 @@ class WorkspaceViewModelTest {
     }
 
     @Test
+    fun `creating a priority task from diagnosis opens the task result`() {
+        val viewModel = WorkspaceViewModel(SavedStateHandle())
+
+        viewModel.openDiagnosis()
+        viewModel.createPriorityTaskAndOpenTasks()
+
+        assertEquals(1, viewModel.tasks.size)
+        assertEquals(WorkspaceTab.TASKS, viewModel.selectedTab)
+        assertFalse(viewModel.isDiagnosisOpen)
+        assertFalse(viewModel.isVideoFactoryOpen)
+    }
+
+    @Test
     fun `overlay state is exclusive and close persists both overlays as closed`() {
         val handle = SavedStateHandle()
         val viewModel = WorkspaceViewModel(handle)

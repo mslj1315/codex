@@ -55,6 +55,12 @@ class WorkspaceViewModel(
         }
     }
 
+    fun createPriorityTaskAndOpenTasks() {
+        createPriorityTask()
+        selectTab(WorkspaceTab.TASKS)
+        closeOverlay()
+    }
+
     fun openDiagnosis() {
         isDiagnosisOpen = true
         isVideoFactoryOpen = false
