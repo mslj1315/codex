@@ -17,7 +17,7 @@ export interface ParsedCandidate extends DateRange {
   unit: "cents" | "count" | "unknown";
   sourceLocator: string;
   confidence: 0 | 80 | 100;
-  issueCode?: "unit_missing" | "invalid_value" | "invalid_range" | "negative_value" | "nonpositive_value";
+  issueCode?: "unit_missing" | "invalid_value" | "invalid_range" | "negative_value" | "nonpositive_value" | "duplicate_header";
   status: ParserCandidateStatus;
 }
 
