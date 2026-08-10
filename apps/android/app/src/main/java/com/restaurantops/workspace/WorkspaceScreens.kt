@@ -19,6 +19,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -37,7 +38,20 @@ fun WorkspaceRoot(
             onBack = viewModel::closeOverlay,
             onCreateTask = viewModel::createPriorityTaskAndOpenTasks
         )
-        viewModel.isVideoFactoryOpen -> VideoFactoryPlaceholder(onBack = viewModel::closeOverlay)
+        viewModel.isVideoFactoryOpen -> VideoFactoryScreen(
+            stage = viewModel.videoStage,
+            selectedTopic = viewModel.selectedTopic,
+            copyDraft = viewModel.copyDraft,
+            onSelectTopic = viewModel::selectTopic,
+            onCopyDraftChanged = viewModel::updateCopyDraft,
+            onPrevious = viewModel::retreatVideoStage,
+            onNext = viewModel::advanceVideoStage,
+            onClose = viewModel::closeOverlay,
+            onReturnHome = {
+                viewModel.selectTab(WorkspaceTab.HOME)
+                viewModel.closeOverlay()
+            }
+        )
         else -> Scaffold(
             topBar = { TopAppBar(title = { Text("今日经营") }) },
             bottomBar = {
@@ -213,20 +227,203 @@ private fun DiagnosisSection(title: String, content: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VideoFactoryPlaceholder(onBack: () -> Unit) {
+private fun VideoFactoryScreen(
+    stage: VideoFactoryStage,
+    selectedTopic: String,
+    copyDraft: String,
+    onSelectTopic: (String) -> Unit,
+    onCopyDraftChanged: (String) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit,
+    onReturnHome: () -> Unit
+) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("AI 视频工厂") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } }
+                navigationIcon = { TextButton(onClick = onReturnHome) { Text("返回首页") } },
+                actions = { TextButton(onClick = onClose) { Text("关闭") } }
             )
         }
     ) { contentPadding ->
-        LocalPlaceholderScreen(
-            title = "本地占位",
-            message = "视频生成流程尚未接入。本地演示没有创建视频、调用 AI 或上传素材。",
-            modifier = Modifier.padding(contentPadding)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("本地演示流程", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "第 ${stage.ordinal + 1} / ${VideoFactoryStage.entries.size} 步",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            VideoStageIndicator(currentStage = stage)
+            HorizontalDivider()
+            VideoFactoryStageContent(
+                stage = stage,
+                selectedTopic = selectedTopic,
+                copyDraft = copyDraft,
+                onSelectTopic = onSelectTopic,
+                onCopyDraftChanged = onCopyDraftChanged
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onPrevious, enabled = stage != VideoFactoryStage.TOPIC) {
+                    Text("上一步")
+                }
+                Button(onClick = onNext, enabled = stage != VideoFactoryStage.LIBRARY) {
+                    Text("下一步")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoStageIndicator(currentStage: VideoFactoryStage) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        VideoFactoryStage.entries.forEachIndexed { index, item ->
+            val marker = if (item == currentStage) "●" else "○"
+            val label = if (item == currentStage) {
+                "$marker ${index + 1}. ${item.title}（当前）"
+            } else {
+                "$marker ${index + 1}. ${item.title}"
+            }
+            Text(
+                label,
+                color = if (item == currentStage) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoFactoryStageContent(
+    stage: VideoFactoryStage,
+    selectedTopic: String,
+    copyDraft: String,
+    onSelectTopic: (String) -> Unit,
+    onCopyDraftChanged: (String) -> Unit
+) {
+    when (stage) {
+        VideoFactoryStage.TOPIC -> TopicStage(
+            selectedTopic = selectedTopic,
+            onSelectTopic = onSelectTopic
         )
+        VideoFactoryStage.COPY -> CopyStage(copyDraft, onCopyDraftChanged)
+        VideoFactoryStage.COPY_COMPLIANCE -> ComplianceStage()
+        VideoFactoryStage.STORYBOARD -> StoryboardStage()
+        VideoFactoryStage.ASSETS -> MaterialsStage()
+        VideoFactoryStage.LIBRARY -> LibraryStage()
+    }
+}
+
+@Composable
+private fun TopicStage(selectedTopic: String, onSelectTopic: (String) -> Unit) {
+    val topics = listOf("午市双人套餐", "工作日午餐限时菜单", "门店午市服务提醒")
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("选题", style = MaterialTheme.typography.titleLarge)
+        Text("选择一个本地示例选题。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        topics.forEach { topic ->
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(topic, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (selectedTopic == topic) "已选本地示例" else "本地示例",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = { onSelectTopic(topic) }) {
+                        Text(if (selectedTopic == topic) "已选择" else "选择")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CopyStage(copyDraft: String, onCopyDraftChanged: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("文案", style = MaterialTheme.typography.titleLarge)
+        Text("编辑本地文案草稿。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextField(
+            value = copyDraft,
+            onValueChange = onCopyDraftChanged,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("视频文案") },
+            minLines = 5
+        )
+    }
+}
+
+@Composable
+private fun ComplianceStage() {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("文字合规", style = MaterialTheme.typography.titleLarge)
+        Text("本地规则演示，不构成平台审核结果")
+        Text("请以实际发布平台的规则与审核结果为准。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun StoryboardStage() {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("分镜", style = MaterialTheme.typography.titleLarge)
+        Text("镜头 1：展示午市双人套餐与用餐场景。")
+        Text("镜头 2：呈现套餐内容与到店提示。")
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "分镜预览占位，未创建真实视频画面。",
+                modifier = Modifier.padding(16.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun MaterialsStage() {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("素材", style = MaterialTheme.typography.titleLarge)
+        Text("素材占位：未选择、读取或传输任何文件。")
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "图片与视频素材将在接入后显示；当前仅为本地占位。",
+                modifier = Modifier.padding(16.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibraryStage() {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("视频库", style = MaterialTheme.typography.titleLarge)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text("午市双人套餐短片", style = MaterialTheme.typography.titleSmall)
+                Text("示例条目，未生成真实视频")
+            }
+        }
     }
 }
 

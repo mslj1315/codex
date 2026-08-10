@@ -95,6 +95,21 @@ class WorkspaceViewModelTest {
     }
 
     @Test
+    fun `edited copy remains available after navigating away from and back to copy stage`() {
+        val viewModel = WorkspaceViewModel(SavedStateHandle())
+
+        viewModel.selectTopic("午市双人套餐")
+        viewModel.advanceVideoStage()
+        viewModel.updateCopyDraft("午市双人套餐，适合两人午休共享。")
+        viewModel.advanceVideoStage()
+        viewModel.retreatVideoStage()
+
+        assertEquals(VideoFactoryStage.COPY, viewModel.videoStage)
+        assertEquals("午市双人套餐", viewModel.selectedTopic)
+        assertEquals("午市双人套餐，适合两人午休共享。", viewModel.copyDraft)
+    }
+
+    @Test
     fun `video stage remains within the available stage range`() {
         val viewModel = WorkspaceViewModel(SavedStateHandle())
 
