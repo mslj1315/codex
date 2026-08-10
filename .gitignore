@@ -3,6 +3,9 @@
 work/
 outputs/
 
+# Node package installation output
+node_modules/
+
 # Android and Gradle local state
 .gradle/
 **/build/
