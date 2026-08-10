@@ -42,6 +42,11 @@ class WorkspaceViewModelTest {
         )
         assertFalse(unknownOverlayRestoredViewModel.isDiagnosisOpen)
         assertFalse(unknownOverlayRestoredViewModel.isVideoFactoryOpen)
+
+        val importRestoredViewModel = WorkspaceViewModel(
+            SavedStateHandle(mapOf("workspace_overlay" to "import"))
+        )
+        assertFalse(importRestoredViewModel.isImportOpen)
     }
 
     @Test
@@ -192,6 +197,22 @@ class WorkspaceViewModelTest {
         viewModel.closeOverlay()
         val restoredViewModel = WorkspaceViewModel(handle)
 
+        assertFalse(restoredViewModel.isDiagnosisOpen)
+        assertFalse(restoredViewModel.isVideoFactoryOpen)
+    }
+
+    @Test
+    fun `import overlay closes and does not restore an empty local import session`() {
+        val handle = SavedStateHandle()
+        val viewModel = WorkspaceViewModel(handle)
+
+        viewModel.openImport()
+        assertTrue(viewModel.isImportOpen)
+
+        viewModel.closeOverlay()
+        val restoredViewModel = WorkspaceViewModel(handle)
+
+        assertFalse(restoredViewModel.isImportOpen)
         assertFalse(restoredViewModel.isDiagnosisOpen)
         assertFalse(restoredViewModel.isVideoFactoryOpen)
     }

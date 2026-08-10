@@ -39,6 +39,24 @@ class ImportViewModelTest {
     }
 
     @Test
+    fun `editing a ready candidate is rejected before reaching the repository`() {
+        val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository)
+
+        viewModel.load("store_demo", "import_1")
+        viewModel.editCandidate(
+            storeId = "store_demo",
+            candidateId = "candidate_ready",
+            value = 1,
+            unit = "yuan"
+        )
+
+        assertEquals(0, repository.updateCalls)
+        assertEquals(4_826_000, viewModel.summary!!.candidates.first().value)
+        assertEquals(listOf("candidate_ready"), viewModel.readyCandidateIds)
+    }
+
+    @Test
     fun `bulk confirmation submits only ready candidates`() {
         val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
         val viewModel = ImportViewModel(repository)
@@ -47,6 +65,20 @@ class ImportViewModelTest {
         viewModel.confirmReady("store_demo")
 
         assertEquals(listOf("candidate_ready"), repository.confirmedIds)
+        assertEquals("已生成确认数据版本", viewModel.confirmationMessage)
+    }
+
+    @Test
+    fun `confirmation is one-shot and removes ready candidates from eligibility`() {
+        val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository)
+
+        viewModel.load("store_demo", "import_1")
+        viewModel.confirmReady("store_demo")
+        viewModel.confirmReady("store_demo")
+
+        assertEquals(1, repository.confirmCalls)
+        assertEquals(emptyList<String>(), viewModel.readyCandidateIds)
         assertEquals("已生成确认数据版本", viewModel.confirmationMessage)
     }
 
@@ -75,6 +107,8 @@ class ImportViewModelTest {
         private val original: ImportSummary
     ) : ImportRepository {
         var confirmedIds: List<String> = emptyList()
+        var updateCalls: Int = 0
+        var confirmCalls: Int = 0
 
         override fun loadImport(storeId: String, importId: String): ImportSummary = original
 
@@ -85,21 +119,25 @@ class ImportViewModelTest {
             importId: String,
             candidateId: String,
             update: ImportCandidateUpdate
-        ): ImportSummary = original.copy(
-            candidates = original.candidates.map { candidate ->
-                if (candidate.id == candidateId) {
-                    candidate.copy(
-                        value = update.value ?: candidate.value,
-                        unit = update.unit ?: candidate.unit,
-                        status = update.status ?: candidate.status
-                    )
-                } else {
-                    candidate
+        ): ImportSummary {
+            updateCalls += 1
+            return original.copy(
+                candidates = original.candidates.map { candidate ->
+                    if (candidate.id == candidateId) {
+                        candidate.copy(
+                            value = update.value ?: candidate.value,
+                            unit = update.unit ?: candidate.unit,
+                            status = update.status ?: candidate.status
+                        )
+                    } else {
+                        candidate
+                    }
                 }
-            }
-        )
+            )
+        }
 
         override fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion {
+            confirmCalls += 1
             confirmedIds = candidateIds
             return FactVersion("fact_1", "import_1", "confirmed")
         }

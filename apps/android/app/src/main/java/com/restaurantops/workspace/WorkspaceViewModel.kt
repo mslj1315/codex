@@ -118,7 +118,12 @@ class WorkspaceViewModel(
     private fun restoreOverlay(): WorkspaceOverlay {
         val persistedOverlay = savedStateHandle.get<String>(OVERLAY)
         if (persistedOverlay != null) {
-            return WorkspaceOverlay.fromWireValue(persistedOverlay)
+            val restoredOverlay = WorkspaceOverlay.fromWireValue(persistedOverlay)
+            if (restoredOverlay == WorkspaceOverlay.IMPORT) {
+                savedStateHandle[OVERLAY] = WorkspaceOverlay.NONE.wireValue
+                return WorkspaceOverlay.NONE
+            }
+            return restoredOverlay
         }
 
         return when {

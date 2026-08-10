@@ -17,8 +17,10 @@ class ImportViewModel(
     var confirmationMessage by mutableStateOf<String?>(null)
         private set
 
+    private var isConfirmed by mutableStateOf(false)
+
     val readyCandidateIds: List<String>
-        get() = summary?.candidates.orEmpty()
+        get() = if (isConfirmed) emptyList() else summary?.candidates.orEmpty()
             .filter { it.status == ImportCandidateStatus.READY }
             .map { it.id }
 
@@ -29,6 +31,7 @@ class ImportViewModel(
 
     fun load(storeId: String, importId: String) {
         summary = repository.loadImport(storeId, importId)
+        isConfirmed = false
         confirmationMessage = null
     }
 
@@ -40,11 +43,15 @@ class ImportViewModel(
     fun createManualImport(storeId: String, draft: ManualImportDraft) {
         summary = repository.createManualImport(storeId, draft)
         selectedSource = ImportSourceType.MANUAL
+        isConfirmed = false
         confirmationMessage = null
     }
 
     fun editCandidate(storeId: String, candidateId: String, value: Long, unit: String) {
         val currentSummary = summary ?: return
+        val candidate = currentSummary.candidates.firstOrNull { it.id == candidateId }
+            ?: return
+        if (candidate.status != ImportCandidateStatus.NEEDS_CONFIRMATION || isConfirmed) return
         val normalizedUnit = unit.trim().lowercase()
         val isResolved = value > 0 && normalizedUnit in CONFIRMABLE_UNITS
         summary = repository.updateCandidate(
@@ -66,10 +73,12 @@ class ImportViewModel(
 
     fun confirmReady(storeId: String) {
         val currentSummary = summary ?: return
+        if (isConfirmed) return
         val candidateIds = readyCandidateIds
         if (candidateIds.isEmpty()) return
 
         repository.confirm(storeId, currentSummary.id, candidateIds)
+        isConfirmed = true
         confirmationMessage = "已生成确认数据版本"
     }
 
