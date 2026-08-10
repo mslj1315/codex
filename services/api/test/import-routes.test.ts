@@ -168,4 +168,30 @@ describe("import API routes", () => {
     const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07", headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" }, payload: Buffer.alloc(5 * 1024 * 1024 + 1) });
     expect(response.statusCode).toBe(413);
   });
+
+  it("rejects multipart fields that exceed the upload request bound without a content length", async () => {
+    const boundary = "----too-many-fields";
+    const fields = Array.from({ length: 8 }, (_, index) => `--${boundary}\r\nContent-Disposition: form-data; name="extra${index}"\r\n\r\nvalue\r\n`).join("");
+    const body = [
+      `--${boundary}\r\nContent-Disposition: form-data; name="upload"; filename="weekly.csv"\r\nContent-Type: text/csv\r\n\r\n订单数\n12\n\r\n`,
+      fields,
+      `--${boundary}\r\nContent-Disposition: form-data; name="rangeStart"\r\n\r\n2026-08-01\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="rangeEnd"\r\n\r\n2026-08-07\r\n--${boundary}--\r\n`
+    ].join("");
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/file", headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
+    expect(response.statusCode).toBe(413);
+  });
+
+  it("rejects manual candidates with persisted-only statuses or invalid confidence before persistence", async () => {
+    for (const candidate of [
+      { metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "confirmed", confidence: 100 },
+      { metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "rejected", confidence: 100 },
+      { metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready", confidence: 100.5 },
+      { metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready", confidence: 101 }
+    ]) {
+      const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/manual", payload: { rangeStart: "2026-08-01", rangeEnd: "2026-08-07", candidates: [candidate] } });
+      expect(response.statusCode).toBe(422);
+    }
+    expect(await pool.query("SELECT * FROM import_batches")).toMatchObject({ rows: [] });
+  });
 });

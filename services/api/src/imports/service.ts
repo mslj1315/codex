@@ -80,6 +80,8 @@ export class ImportService {
 
   private prepareCandidate(candidate: CandidateDraft, rangeStart: string, rangeEnd: string): Omit<CreateCandidateInput, "batchId" | "enterpriseId" | "storeId"> {
     if (typeof candidate.metricKey !== "string" || typeof candidate.metricDisplayName !== "string" || typeof candidate.value !== "number" || typeof candidate.unit !== "string") throw new ValidationError("Candidate fields are invalid");
+    if (candidate.status !== undefined && candidate.status !== "ready" && candidate.status !== "needs_confirmation") throw new ValidationError("Candidate status is invalid");
+    if (candidate.confidence !== undefined && (!Number.isInteger(candidate.confidence) || candidate.confidence < 0 || candidate.confidence > 100)) throw new ValidationError("Candidate confidence is invalid");
     const start = candidate.rangeStart ?? rangeStart; const end = candidate.rangeEnd ?? rangeEnd;
     assertRange(start, end);
     const prepared = { metricKey: candidate.metricKey, metricDisplayName: candidate.metricDisplayName, value: candidate.value, unit: candidate.unit, rangeStart: start, rangeEnd: end, sourceLocator: candidate.sourceLocator ?? `manual:${candidate.metricKey}`, confidence: candidate.confidence ?? 100, status: candidate.status ?? "ready" as const };

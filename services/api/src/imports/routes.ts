@@ -26,7 +26,7 @@ export async function registerImportRoutes(app: FastifyInstance, database: Datab
     const declared = Number(request.headers["content-length"]);
     if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) return reply.code(413).send(errorBody("Upload exceeds maximum size"));
   });
-  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
+  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 3, parts: 4, fieldSize: 64 } });
   app.addContentTypeParser(["text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], { parseAs: "buffer", bodyLimit: MAX_UPLOAD_BYTES }, (_request, body, done) => done(null, body));
 
   app.post("/v1/stores/:storeId/imports/manual", async (request, reply) => {
@@ -94,5 +94,9 @@ function stringParam(request: FastifyRequest, key: string): string { const value
 function header(request: FastifyRequest, key: string): string { const value = request.headers[key]; if (typeof value !== "string" || value === "") throw new ValidationError(`${key} header is required`); return value; }
 function optionalCurrency(value: unknown): "yuan" | "cents" | undefined { if (value === undefined) return undefined; if (value === "yuan" || value === "cents") return value; throw new ValidationError("currencyUnit is invalid"); }
 function errorBody(message: string) { return { error: message }; }
-function isUploadTooLarge(error: unknown): boolean { return typeof error === "object" && error !== null && "code" in error && ["FST_REQ_FILE_TOO_LARGE", "FST_ERR_CTP_BODY_TOO_LARGE"].includes(String((error as { code?: unknown }).code)); }
+function isUploadTooLarge(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  const code = String((error as { code?: unknown }).code);
+  return code === "FST_REQ_FILE_TOO_LARGE" || code === "FST_ERR_CTP_BODY_TOO_LARGE" || code === "FST_FIELDS_LIMIT" || code === "FST_PARTS_LIMIT" || code === "FST_FIELD_TOO_LARGE";
+}
 function isLoopback(ip: string): boolean { return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1"; }
