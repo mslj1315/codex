@@ -4,16 +4,23 @@ import type { Database } from "../db.js";
 import { ParserInputError, ImportService, type TrustedContext } from "./service.js";
 import { ConflictError, ForbiddenError, ImportRepository, NotFoundError, ValidationError } from "./repository.js";
 
-export const DEV_CONTEXT: TrustedContext = { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" };
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+export type TrustedContextResolver = (request: FastifyRequest) => Promise<TrustedContext | undefined>;
+export const developmentContextResolver: TrustedContextResolver = async (request) => isLoopback(request.ip)
+  ? { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" }
+  : undefined;
 
 declare module "fastify" {
-  interface FastifyRequest { devContext: TrustedContext; }
+  interface FastifyRequest { trustedContext?: TrustedContext; }
 }
 
-export async function registerImportRoutes(app: FastifyInstance, database: Database): Promise<void> {
+export async function registerImportRoutes(app: FastifyInstance, database: Database, contextResolver: TrustedContextResolver): Promise<void> {
   const service = new ImportService(new ImportRepository(database));
-  app.decorateRequest("devContext", { getter: () => DEV_CONTEXT });
+  app.decorateRequest("trustedContext", undefined);
+  app.addHook("onRequest", async (request, reply) => {
+    request.trustedContext = await contextResolver(request);
+    if (!request.trustedContext) return reply.code(403).send(errorBody("No trusted request context"));
+  });
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.includes("/imports/file")) return;
     const declared = Number(request.headers["content-length"]);
@@ -30,17 +37,24 @@ export async function registerImportRoutes(app: FastifyInstance, database: Datab
   });
   app.post("/v1/stores/:storeId/imports/file", async (request, reply) => {
     const context = scopedContext(request);
-    let bytes: Buffer; let filename: string; let mimeType: string; let fields: Record<string, unknown> = {};
+    let bytes: Buffer | undefined; let filename: string | undefined; let mimeType: string | undefined; let fields: Record<string, unknown> = {};
     if (request.isMultipart()) {
-      const part = await request.file();
-      if (!part) throw new ValidationError("A file is required");
-      bytes = await part.toBuffer(); filename = part.filename; mimeType = part.mimetype;
-      fields = Object.fromEntries(Object.entries(part.fields).map(([key, value]) => [key, (value as { value?: unknown }).value]));
+      let fileSeen = false;
+      for await (const part of request.parts()) {
+        if (part.type === "file") {
+          if (fileSeen) throw new ValidationError("Only one file is allowed");
+          fileSeen = true; bytes = await part.toBuffer(); filename = part.filename; mimeType = part.mimetype;
+        } else {
+          fields[part.fieldname] = part.value;
+        }
+      }
+      if (!fileSeen) throw new ValidationError("A file is required");
     } else {
       if (!Buffer.isBuffer(request.body)) throw new ValidationError("File bytes are required");
       bytes = request.body; filename = header(request, "x-file-name"); mimeType = request.headers["content-type"]?.split(";")[0] ?? "";
       fields = request.query as Record<string, unknown>;
     }
+    if (!bytes || !filename || !mimeType) throw new ValidationError("A file is required");
     if (bytes.byteLength > MAX_UPLOAD_BYTES) return reply.code(413).send(errorBody("Upload exceeds maximum size"));
     const batch = await service.createFile(context, { bytes, filename, mimeType, rangeStart: stringField(fields, "rangeStart"), rangeEnd: stringField(fields, "rangeEnd"), currencyUnit: optionalCurrency(fields.currencyUnit) });
     return reply.code(201).send(batch);
@@ -69,8 +83,9 @@ export async function registerImportRoutes(app: FastifyInstance, database: Datab
 
 function scopedContext(request: FastifyRequest): TrustedContext {
   const storeId = stringParam(request, "storeId");
-  if (storeId !== request.devContext.storeId) throw new ForbiddenError("Store is outside trusted development context");
-  return request.devContext;
+  if (!request.trustedContext) throw new ForbiddenError("No trusted request context");
+  if (storeId !== request.trustedContext.storeId) throw new ForbiddenError("Store is outside trusted request context");
+  return request.trustedContext;
 }
 function record(value: unknown): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ValidationError("Request body must be an object"); return value as Record<string, unknown>; }
 function stringField(body: Record<string, unknown>, key: string): string { if (typeof body[key] !== "string") throw new ValidationError(`${key} is required`); return body[key]; }
@@ -79,4 +94,5 @@ function stringParam(request: FastifyRequest, key: string): string { const value
 function header(request: FastifyRequest, key: string): string { const value = request.headers[key]; if (typeof value !== "string" || value === "") throw new ValidationError(`${key} header is required`); return value; }
 function optionalCurrency(value: unknown): "yuan" | "cents" | undefined { if (value === undefined) return undefined; if (value === "yuan" || value === "cents") return value; throw new ValidationError("currencyUnit is invalid"); }
 function errorBody(message: string) { return { error: message }; }
-function isUploadTooLarge(error: unknown): boolean { return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "FST_REQ_FILE_TOO_LARGE"; }
+function isUploadTooLarge(error: unknown): boolean { return typeof error === "object" && error !== null && "code" in error && ["FST_REQ_FILE_TOO_LARGE", "FST_ERR_CTP_BODY_TOO_LARGE"].includes(String((error as { code?: unknown }).code)); }
+function isLoopback(ip: string): boolean { return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1"; }

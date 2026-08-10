@@ -2,17 +2,25 @@ import { readFile } from "node:fs/promises";
 import { newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
+import type { Database } from "../src/db.js";
 
 describe("import API routes", () => {
   let app: ReturnType<typeof buildServer>;
+  let pool: Database;
 
   beforeEach(async () => {
     const memory = newDb();
     const { Pool } = memory.adapters.createPg();
-    const pool = new Pool();
+    pool = new Pool();
     const migration = await readFile(new URL("../migrations/001_imports.sql", import.meta.url), "utf8");
     await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
-    app = buildServer({ database: pool });
+    app = buildServer({ database: pool, developmentMode: true });
+  });
+
+  it("does not expose import routes without an explicit trusted context provider", async () => {
+    const production = buildServer({ database: pool });
+    const response = await production.inject({ method: "POST", url: "/v1/stores/store_demo/imports/manual", payload: {} });
+    expect(response.statusCode).toBe(404);
   });
 
   it("creates a manual batch then confirms its ready candidate into an immutable fact version", async () => {
@@ -113,6 +121,51 @@ describe("import API routes", () => {
       headers: { "content-type": "text/csv", "x-file-name": "weekly.csv", "content-length": String(5 * 1024 * 1024 + 1) },
       payload: "订单数\n12\n"
     });
+    expect(response.statusCode).toBe(413);
+  });
+
+  it("rolls back the whole manual import when a later candidate is invalid", async () => {
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/manual", payload: {
+      rangeStart: "2026-08-01", rangeEnd: "2026-08-07",
+      candidates: [
+        { metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready" },
+        { metricKey: "orders", metricDisplayName: "Orders", value: 1.5, unit: "count", status: "ready" }
+      ]
+    } });
+    expect(response.statusCode).toBe(422);
+    expect(await pool.query("SELECT * FROM import_batches")).toMatchObject({ rows: [] });
+  });
+
+  it("rejects a resolved candidate with a metric-unit mismatch and rejects patching a confirmed batch", async () => {
+    const invalid = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/manual", payload: {
+      rangeStart: "2026-08-01", rangeEnd: "2026-08-07",
+      candidates: [{ metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "cents", status: "ready" }]
+    } });
+    expect(invalid.statusCode).toBe(422);
+
+    const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/manual", payload: {
+      rangeStart: "2026-08-01", rangeEnd: "2026-08-07",
+      candidates: [{ metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready" }]
+    } });
+    const batch = created.json();
+    await app.inject({ method: "POST", url: `/v1/stores/store_demo/imports/${batch.id}/confirm`, payload: { candidateIds: [batch.candidates[0].id] } });
+    const patched = await app.inject({ method: "PATCH", url: `/v1/stores/store_demo/imports/${batch.id}/candidates/${batch.candidates[0].id}`, payload: { value: 13 } });
+    expect(patched.statusCode).toBe(409);
+  });
+
+  it("accepts multipart fields that arrive after the file part", async () => {
+    const boundary = "----codex-boundary";
+    const body = [
+      `--${boundary}\r\nContent-Disposition: form-data; name="upload"; filename="weekly.csv"\r\nContent-Type: text/csv\r\n\r\n订单数\n12\n\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="rangeStart"\r\n\r\n2026-08-01\r\n`,
+      `--${boundary}\r\nContent-Disposition: form-data; name="rangeEnd"\r\n\r\n2026-08-07\r\n--${boundary}--\r\n`
+    ].join("");
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/file", headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
+    expect(response.statusCode).toBe(201);
+  });
+
+  it("maps Fastify raw body-limit errors to 413", async () => {
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07", headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" }, payload: Buffer.alloc(5 * 1024 * 1024 + 1) });
     expect(response.statusCode).toBe(413);
   });
 });

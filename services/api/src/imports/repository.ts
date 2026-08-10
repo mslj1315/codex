@@ -126,7 +126,25 @@ export interface UpdateCandidateInput {
 type Row = Record<string, unknown>;
 
 export class ImportRepository {
-  constructor(private readonly database: Database) {}
+  constructor(private readonly database: Queryable, private readonly transactionDatabase?: Database) {}
+
+  async createBatchWithCandidates(input: CreateBatchInput, candidates: readonly Omit<CreateCandidateInput, "batchId" | "enterpriseId" | "storeId">[]): Promise<ImportBatchDetails> {
+    const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
+    if (!database) throw new Error("Transactions require a database connection");
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN");
+      const transaction = new ImportRepository(client);
+      const batch = await transaction.createBatch(input);
+      for (const candidate of candidates) await transaction.createCandidate({ ...candidate, batchId: batch.id, enterpriseId: input.enterpriseId, storeId: input.storeId });
+      const details = await transaction.getBatch({ id: batch.id, enterpriseId: input.enterpriseId, storeId: input.storeId });
+      await client.query("COMMIT");
+      return details;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  }
 
   async createBatch(input: CreateBatchInput): Promise<ImportBatch> {
     const result = await this.database.query<Row>(
@@ -188,20 +206,35 @@ export class ImportRepository {
 
   async updateCandidate(input: UpdateCandidateInput): Promise<ImportCandidate> {
     if (input.value !== undefined) assertSafeInteger(input.value, "Candidate value");
-    const current = await this.database.query<Row>(
-      `SELECT * FROM import_candidates WHERE id = $1 AND batch_id = $2 AND enterprise_id = $3 AND store_id = $4`,
+    const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
+    if (!database) throw new Error("Transactions require a database connection");
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN");
+      const current = await client.query<Row>(
+      `SELECT candidate.* FROM import_candidates candidate JOIN import_batches batch ON batch.id = candidate.batch_id
+       WHERE candidate.id = $1 AND candidate.batch_id = $2 AND candidate.enterprise_id = $3 AND candidate.store_id = $4
+       AND batch.enterprise_id = $3 AND batch.store_id = $4 AND batch.status = 'pending_confirmation' FOR UPDATE`,
       [input.id, input.batchId, input.enterpriseId, input.storeId]
-    );
-    if (current.rowCount !== 1) throw new NotFoundError("Import candidate not found for import batch");
-    if (current.rows[0].status === "confirmed") throw new ConflictError("Confirmed candidates cannot be changed");
-    const result = await this.database.query<Row>(
+      );
+      if (current.rowCount !== 1) {
+        const batch = await client.query<Row>("SELECT status FROM import_batches WHERE id = $1 AND enterprise_id = $2 AND store_id = $3", [input.batchId, input.enterpriseId, input.storeId]);
+        if (batch.rowCount === 1 && batch.rows[0].status !== "pending_confirmation") throw new ConflictError("Candidates cannot be changed after confirmation");
+        throw new NotFoundError("Import candidate not found for import batch");
+      }
+      const result = await client.query<Row>(
       `UPDATE import_candidates SET value = COALESCE($1, value), unit = COALESCE($2, unit),
        range_start = COALESCE($3, range_start), range_end = COALESCE($4, range_end), status = COALESCE($5, status),
        updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND batch_id = $7 AND enterprise_id = $8 AND store_id = $9 RETURNING *`,
       [input.value ?? null, input.unit ?? null, input.rangeStart ?? null, input.rangeEnd ?? null, input.status ?? null,
         input.id, input.batchId, input.enterpriseId, input.storeId]
-    );
-    return toCandidate(result.rows[0]);
+      );
+      await client.query("COMMIT");
+      return toCandidate(result.rows[0]);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
   }
 
   async confirmBatch(input: ConfirmBatchInput): Promise<FactVersion> {
@@ -209,13 +242,15 @@ export class ImportRepository {
       throw new ValidationError("At least one candidate is required for confirmation");
     }
 
-    const client = await this.database.connect();
+    const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
+    if (!database) throw new Error("Transactions require a database connection");
+    const client = await database.connect();
     try {
       await client.query("BEGIN");
       const candidateIdClause = placeholders(4, input.candidateIds.length);
       const batchResult = await client.query<Row>(
         `SELECT * FROM import_batches
-         WHERE id = $1 AND enterprise_id = $2 AND store_id = $3`,
+         WHERE id = $1 AND enterprise_id = $2 AND store_id = $3 FOR UPDATE`,
         [input.batchId, input.enterpriseId, input.storeId]
       );
       if (batchResult.rowCount !== 1) {
@@ -228,7 +263,7 @@ export class ImportRepository {
       const candidateResult = await client.query<Row>(
         `SELECT * FROM import_candidates
          WHERE batch_id = $1 AND enterprise_id = $2 AND store_id = $3 AND id IN (${candidateIdClause})
-         ORDER BY created_at`,
+         ORDER BY created_at FOR UPDATE`,
         [input.batchId, input.enterpriseId, input.storeId, ...input.candidateIds]
       );
       if (candidateResult.rowCount !== input.candidateIds.length || candidateResult.rows.some((row) => row.status !== "ready")) {
@@ -327,7 +362,7 @@ function toCandidate(row: Row): ImportCandidate {
   return {
     id: string(row.id), batchId: string(row.batch_id), enterpriseId: string(row.enterprise_id),
     storeId: string(row.store_id), metricKey: string(row.metric_key), metricDisplayName: string(row.metric_display_name),
-    value: number(row.value), unit: string(row.unit), rangeStart: string(row.range_start), rangeEnd: string(row.range_end),
+    value: number(row.value), unit: string(row.unit), rangeStart: dateOnly(row.range_start), rangeEnd: dateOnly(row.range_end),
     sourceLocator: string(row.source_locator), confidence: number(row.confidence), issueCode: nullableString(row.issue_code),
     status: row.status as CreateCandidateInput["status"], confirmedValue: nullableNumber(row.confirmed_value),
     createdAt: date(row.created_at), updatedAt: date(row.updated_at)
@@ -358,6 +393,7 @@ function nullableString(value: unknown): string | null { return value == null ? 
 function nullableNumber(value: unknown): number | null { return value == null ? null : number(value); }
 function date(value: unknown): Date { return new Date(string(value)); }
 function nullableDate(value: unknown): Date | null { return value == null ? null : date(value); }
+function dateOnly(value: unknown): string { return value instanceof Date ? value.toISOString().slice(0, 10) : string(value); }
 function assertSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new ValidationError(`${name} must be a JSON safe integer`);
@@ -366,6 +402,7 @@ function assertSafeInteger(value: number, name: string): void {
 function isUniqueViolation(error: unknown): error is { code: string } {
   return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "23505";
 }
+function isDatabase(value: Queryable): value is Database { return "connect" in value && typeof value.connect === "function"; }
 function placeholders(start: number, count: number): string {
   return Array.from({ length: count }, (_, index) => `$${start + index}`).join(", ");
 }
