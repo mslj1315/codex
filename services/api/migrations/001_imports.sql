@@ -42,6 +42,7 @@ CREATE TABLE import_candidates (
   CHECK (value BETWEEN -9007199254740991 AND 9007199254740991),
   CHECK (confirmed_value IS NULL OR confirmed_value BETWEEN -9007199254740991 AND 9007199254740991),
   UNIQUE (id, enterprise_id, store_id),
+  UNIQUE (id, batch_id, enterprise_id, store_id),
   FOREIGN KEY (batch_id, enterprise_id, store_id)
     REFERENCES import_batches (id, enterprise_id, store_id)
 );
@@ -58,6 +59,7 @@ CREATE TABLE fact_versions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (source_batch_id),
   UNIQUE (id, enterprise_id, store_id),
+  UNIQUE (id, source_batch_id, enterprise_id, store_id),
   FOREIGN KEY (source_batch_id, enterprise_id, store_id)
     REFERENCES import_batches (id, enterprise_id, store_id)
 );
@@ -78,10 +80,10 @@ CREATE TABLE fact_values (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CHECK (range_start <= range_end),
   CHECK (value BETWEEN -9007199254740991 AND 9007199254740991),
-  FOREIGN KEY (fact_version_id, enterprise_id, store_id)
-    REFERENCES fact_versions (id, enterprise_id, store_id),
-  FOREIGN KEY (source_candidate_id, enterprise_id, store_id)
-    REFERENCES import_candidates (id, enterprise_id, store_id),
+  FOREIGN KEY (fact_version_id, source_batch_id, enterprise_id, store_id)
+    REFERENCES fact_versions (id, source_batch_id, enterprise_id, store_id),
+  FOREIGN KEY (source_candidate_id, source_batch_id, enterprise_id, store_id)
+    REFERENCES import_candidates (id, batch_id, enterprise_id, store_id),
   FOREIGN KEY (source_batch_id, enterprise_id, store_id)
     REFERENCES import_batches (id, enterprise_id, store_id)
 );

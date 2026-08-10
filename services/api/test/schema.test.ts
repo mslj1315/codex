@@ -8,9 +8,11 @@ import {
   NotFoundError,
   ValidationError
 } from "../src/imports/repository.js";
+import type { Database } from "../src/db.js";
 
 describe("import repository", () => {
   let imports: ImportRepository;
+  let database: Database;
   let migration: string;
 
   beforeEach(async () => {
@@ -25,6 +27,7 @@ describe("import repository", () => {
     // pg-mem supports relational constraints but not PostgreSQL PL/pgSQL triggers.
     // Trigger execution and concurrent confirmations require a Docker PostgreSQL test run.
     await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    database = pool;
     imports = new ImportRepository(pool);
   });
 
@@ -109,6 +112,35 @@ describe("import repository", () => {
     expect(migration).toContain("RAISE EXCEPTION 'fact records are append-only'");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON fact_versions");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON fact_values");
+  });
+
+  it("rejects a fact value whose candidate comes from another batch in the same store", async () => {
+    const firstBatch = await imports.createBatch({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", sourceType: "manual" });
+    const firstCandidate = await imports.createCandidate({
+      batchId: firstBatch.id, enterpriseId: "ent_demo", storeId: "store_demo", metricKey: "revenue",
+      metricDisplayName: "Revenue", value: 4826000, unit: "cents", rangeStart: "2026-08-01",
+      rangeEnd: "2026-08-07", sourceLocator: "manual:revenue", confidence: 100, status: "ready"
+    });
+    const version = await imports.confirmBatch({
+      batchId: firstBatch.id, enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", candidateIds: [firstCandidate.id]
+    });
+    const secondBatch = await imports.createBatch({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", sourceType: "manual" });
+    const secondCandidate = await imports.createCandidate({
+      batchId: secondBatch.id, enterpriseId: "ent_demo", storeId: "store_demo", metricKey: "orders",
+      metricDisplayName: "Orders", value: 120, unit: "orders", rangeStart: "2026-08-01",
+      rangeEnd: "2026-08-07", sourceLocator: "manual:orders", confidence: 100, status: "ready"
+    });
+
+    await expect(database.query(
+      `INSERT INTO fact_values (
+        id, fact_version_id, enterprise_id, store_id, metric_key, value, unit,
+        range_start, range_end, source_candidate_id, source_batch_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        "invalid_cross_batch_fact", version.id, "ent_demo", "store_demo", "orders", 120, "orders",
+        "2026-08-01", "2026-08-07", secondCandidate.id, firstBatch.id
+      ]
+    )).rejects.toThrow();
   });
 
   it("returns typed errors for a repeat confirmation and non-ready candidate", async () => {
