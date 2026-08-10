@@ -1,14 +1,19 @@
 import Fastify from "fastify";
 import { fileURLToPath } from "node:url";
+import { createDatabase, type Database } from "./db.js";
+import { registerImportRoutes } from "./imports/routes.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
+  database?: Database;
 }
 
-export function buildServer(_options: ServerOptions = {}) {
-  const app = Fastify();
+export function buildServer(options: ServerOptions = {}) {
+  const app = Fastify({ bodyLimit: 5 * 1024 * 1024 });
 
   app.get("/health", async () => ({ status: "ok" }));
+  const database = options.database ?? (options.databaseUrl ? createDatabase(options.databaseUrl) : undefined);
+  if (database) app.register((instance) => registerImportRoutes(instance, database));
 
   return app;
 }

@@ -107,6 +107,22 @@ export interface FactVersion {
   values: FactValue[];
 }
 
+export interface ImportBatchDetails extends ImportBatch {
+  candidates: ImportCandidate[];
+}
+
+export interface UpdateCandidateInput {
+  id: string;
+  batchId: string;
+  enterpriseId: string;
+  storeId: string;
+  value?: number;
+  unit?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+  status?: Exclude<CandidateStatus, "confirmed" | "rejected">;
+}
+
 type Row = Record<string, unknown>;
 
 export class ImportRepository {
@@ -153,6 +169,37 @@ export class ImportRepository {
         input.metricDisplayName, input.value, input.unit, input.rangeStart, input.rangeEnd,
         input.sourceLocator, input.confidence, input.issueCode ?? null, input.status
       ]
+    );
+    return toCandidate(result.rows[0]);
+  }
+
+  async getBatch(scope: FactVersionScope): Promise<ImportBatchDetails> {
+    const batchResult = await this.database.query<Row>(
+      "SELECT * FROM import_batches WHERE id = $1 AND enterprise_id = $2 AND store_id = $3",
+      [scope.id, scope.enterpriseId, scope.storeId]
+    );
+    if (batchResult.rowCount !== 1) throw new NotFoundError("Import batch not found for enterprise and store");
+    const candidates = await this.database.query<Row>(
+      "SELECT * FROM import_candidates WHERE batch_id = $1 AND enterprise_id = $2 AND store_id = $3 ORDER BY created_at",
+      [scope.id, scope.enterpriseId, scope.storeId]
+    );
+    return { ...toBatch(batchResult.rows[0]), candidates: candidates.rows.map(toCandidate) };
+  }
+
+  async updateCandidate(input: UpdateCandidateInput): Promise<ImportCandidate> {
+    if (input.value !== undefined) assertSafeInteger(input.value, "Candidate value");
+    const current = await this.database.query<Row>(
+      `SELECT * FROM import_candidates WHERE id = $1 AND batch_id = $2 AND enterprise_id = $3 AND store_id = $4`,
+      [input.id, input.batchId, input.enterpriseId, input.storeId]
+    );
+    if (current.rowCount !== 1) throw new NotFoundError("Import candidate not found for import batch");
+    if (current.rows[0].status === "confirmed") throw new ConflictError("Confirmed candidates cannot be changed");
+    const result = await this.database.query<Row>(
+      `UPDATE import_candidates SET value = COALESCE($1, value), unit = COALESCE($2, unit),
+       range_start = COALESCE($3, range_start), range_end = COALESCE($4, range_end), status = COALESCE($5, status),
+       updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND batch_id = $7 AND enterprise_id = $8 AND store_id = $9 RETURNING *`,
+      [input.value ?? null, input.unit ?? null, input.rangeStart ?? null, input.rangeEnd ?? null, input.status ?? null,
+        input.id, input.batchId, input.enterpriseId, input.storeId]
     );
     return toCandidate(result.rows[0]);
   }
@@ -253,6 +300,16 @@ export class ImportRepository {
       [scope.id, scope.enterpriseId, scope.storeId]
     );
     return { ...toFactVersion(versionResult.rows[0]), values: valuesResult.rows.map(toFactValue) };
+  }
+
+  async getLatestFactVersion(scope: Omit<FactVersionScope, "id">): Promise<FactVersion> {
+    const result = await this.database.query<Row>(
+      `SELECT id FROM fact_versions WHERE enterprise_id = $1 AND store_id = $2
+       ORDER BY confirmed_at DESC, created_at DESC LIMIT 1`,
+      [scope.enterpriseId, scope.storeId]
+    );
+    if (result.rowCount !== 1) throw new NotFoundError("No confirmed fact version for enterprise and store");
+    return this.getFactVersion({ id: string(result.rows[0].id), ...scope });
   }
 }
 
