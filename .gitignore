@@ -1,0 +1,17 @@
+# Codex working state and temporary downloads
+.superpowers/
+work/
+outputs/
+
+# Android and Gradle local state
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+
+# Environment and credentials
+.env
+.env.local
+*.keystore
+*.jks
