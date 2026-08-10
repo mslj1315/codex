@@ -19,6 +19,9 @@ class ImportViewModel(
 
     private var isConfirmed by mutableStateOf(false)
 
+    val isReadOnly: Boolean
+        get() = isConfirmed
+
     val readyCandidateIds: List<String>
         get() = if (isConfirmed) emptyList() else summary?.candidates.orEmpty()
             .filter { it.status == ImportCandidateStatus.READY }

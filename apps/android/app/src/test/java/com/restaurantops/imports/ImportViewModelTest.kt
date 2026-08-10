@@ -2,6 +2,7 @@ package com.restaurantops.imports
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImportViewModelTest {
@@ -80,6 +81,21 @@ class ImportViewModelTest {
         assertEquals(1, repository.confirmCalls)
         assertEquals(emptyList<String>(), viewModel.readyCandidateIds)
         assertEquals("已生成确认数据版本", viewModel.confirmationMessage)
+    }
+
+    @Test
+    fun `confirmation switches the local import to read only while preserving unresolved items`() {
+        val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository)
+
+        viewModel.load("store_demo", "import_1")
+        assertFalse(viewModel.isReadOnly)
+        assertEquals(listOf("candidate_unresolved"), viewModel.unresolvedCandidateIds)
+
+        viewModel.confirmReady("store_demo")
+
+        assertTrue(viewModel.isReadOnly)
+        assertEquals(listOf("candidate_unresolved"), viewModel.unresolvedCandidateIds)
     }
 
     private class FakeImportRepository(

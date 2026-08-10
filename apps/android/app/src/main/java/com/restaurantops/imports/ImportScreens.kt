@@ -84,6 +84,7 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                     summary = summary,
                     readyCount = viewModel.readyCandidateIds.size,
                     unresolvedCount = viewModel.unresolvedCandidateIds.size,
+                    isReadOnly = viewModel.isReadOnly,
                     confirmationMessage = viewModel.confirmationMessage,
                     onConfirmReady = { viewModel.confirmReady(LOCAL_STORE_ID) },
                     onEditCandidate = { candidate, value, unit ->
@@ -163,6 +164,7 @@ private fun ImportSummaryContent(
     summary: ImportSummary,
     readyCount: Int,
     unresolvedCount: Int,
+    isReadOnly: Boolean,
     confirmationMessage: String?,
     onConfirmReady: () -> Unit,
     onEditCandidate: (ImportCandidate, Long, String) -> Unit
@@ -198,7 +200,11 @@ private fun ImportSummaryContent(
     if (unresolvedCandidates.isNotEmpty()) {
         Text("待确认项", style = MaterialTheme.typography.titleSmall)
         unresolvedCandidates.forEach { candidate ->
-            EditableCandidateCard(candidate = candidate, onSave = onEditCandidate)
+            EditableCandidateCard(
+                candidate = candidate,
+                isReadOnly = isReadOnly,
+                onSave = onEditCandidate
+            )
         }
     }
 }
@@ -216,6 +222,7 @@ private fun CandidateCard(candidate: ImportCandidate) {
 @Composable
 private fun EditableCandidateCard(
     candidate: ImportCandidate,
+    isReadOnly: Boolean,
     onSave: (ImportCandidate, Long, String) -> Unit
 ) {
     var valueInput by rememberSaveable(candidate.id) { mutableStateOf(candidate.value.toString()) }
@@ -229,26 +236,30 @@ private fun EditableCandidateCard(
             Text(candidate.metricDisplayName, style = MaterialTheme.typography.titleSmall)
             Text("待确认，尚未用于诊断", color = MaterialTheme.colorScheme.error)
             candidate.issueCode?.let { Text("待处理原因：$it", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            OutlinedTextField(
-                value = valueInput,
-                onValueChange = { valueInput = it },
-                label = { Text("确认数值") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = unitInput,
-                onValueChange = { unitInput = it },
-                label = { Text("确认单位：yuan / cents / count / times") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(
-                onClick = { onSave(candidate, valueInput.toLongOrNull() ?: 0L, unitInput) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("保存并加入已就绪项")
+            if (isReadOnly) {
+                Text("该导入已确认，待确认项不可再编辑。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                OutlinedTextField(
+                    value = valueInput,
+                    onValueChange = { valueInput = it },
+                    label = { Text("确认数值") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = unitInput,
+                    onValueChange = { unitInput = it },
+                    label = { Text("确认单位：yuan / cents / count / times") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(
+                    onClick = { onSave(candidate, valueInput.toLongOrNull() ?: 0L, unitInput) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("保存并加入已就绪项")
+                }
             }
         }
     }
