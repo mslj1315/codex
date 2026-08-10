@@ -5,6 +5,12 @@ export type ImportSourceType = "csv" | "xlsx" | "manual";
 export type ImportBatchStatus = "pending_confirmation" | "confirmed";
 export type CandidateStatus = "ready" | "needs_confirmation" | "confirmed" | "rejected";
 
+export class RepositoryError extends Error {}
+export class NotFoundError extends RepositoryError {}
+export class ConflictError extends RepositoryError {}
+export class ValidationError extends RepositoryError {}
+export class ForbiddenError extends RepositoryError {}
+
 export interface CreateBatchInput {
   enterpriseId: string;
   storeId: string;
@@ -66,6 +72,12 @@ export interface ConfirmBatchInput {
   candidateIds: readonly string[];
 }
 
+export interface FactVersionScope {
+  id: string;
+  enterpriseId: string;
+  storeId: string;
+}
+
 export interface FactValue {
   id: string;
   factVersionId: string;
@@ -119,6 +131,17 @@ export class ImportRepository {
   }
 
   async createCandidate(input: CreateCandidateInput): Promise<ImportCandidate> {
+    assertSafeInteger(input.value, "Candidate value");
+    const batchResult = await this.database.query<Row>(
+      "SELECT enterprise_id, store_id FROM import_batches WHERE id = $1",
+      [input.batchId]
+    );
+    if (batchResult.rowCount !== 1) {
+      throw new NotFoundError("Import batch not found");
+    }
+    if (batchResult.rows[0].enterprise_id !== input.enterpriseId || batchResult.rows[0].store_id !== input.storeId) {
+      throw new ForbiddenError("Candidate tenant and store must match its import batch");
+    }
     const result = await this.database.query<Row>(
       `INSERT INTO import_candidates (
         id, batch_id, enterprise_id, store_id, metric_key, metric_display_name, value, unit,
@@ -136,7 +159,7 @@ export class ImportRepository {
 
   async confirmBatch(input: ConfirmBatchInput): Promise<FactVersion> {
     if (input.candidateIds.length === 0) {
-      throw new Error("At least one candidate is required for confirmation");
+      throw new ValidationError("At least one candidate is required for confirmation");
     }
 
     const client = await this.database.connect();
@@ -145,11 +168,14 @@ export class ImportRepository {
       const candidateIdClause = placeholders(4, input.candidateIds.length);
       const batchResult = await client.query<Row>(
         `SELECT * FROM import_batches
-         WHERE id = $1 AND enterprise_id = $2 AND store_id = $3 AND status = 'pending_confirmation'`,
+         WHERE id = $1 AND enterprise_id = $2 AND store_id = $3`,
         [input.batchId, input.enterpriseId, input.storeId]
       );
       if (batchResult.rowCount !== 1) {
-        throw new Error("Pending import batch not found for enterprise and store");
+        throw new NotFoundError("Import batch not found for enterprise and store");
+      }
+      if (batchResult.rows[0].status !== "pending_confirmation") {
+        throw new ConflictError("Import batch is already confirmed");
       }
 
       const candidateResult = await client.query<Row>(
@@ -159,7 +185,7 @@ export class ImportRepository {
         [input.batchId, input.enterpriseId, input.storeId, ...input.candidateIds]
       );
       if (candidateResult.rowCount !== input.candidateIds.length || candidateResult.rows.some((row) => row.status !== "ready")) {
-        throw new Error("Only ready candidates in the pending batch can be confirmed");
+        throw new ValidationError("Only ready candidates in the pending batch can be confirmed");
       }
 
       const confirmedAt = new Date();
@@ -203,20 +229,28 @@ export class ImportRepository {
       return { ...toFactVersion(versionResult.rows[0]), values };
     } catch (error) {
       await client.query("ROLLBACK");
+      if (isUniqueViolation(error)) {
+        throw new ConflictError("Import batch is already confirmed");
+      }
       throw error;
     } finally {
       client.release();
     }
   }
 
-  async getFactVersion(id: string): Promise<FactVersion> {
-    const versionResult = await this.database.query<Row>("SELECT * FROM fact_versions WHERE id = $1", [id]);
+  async getFactVersion(scope: FactVersionScope): Promise<FactVersion> {
+    const versionResult = await this.database.query<Row>(
+      "SELECT * FROM fact_versions WHERE id = $1 AND enterprise_id = $2 AND store_id = $3",
+      [scope.id, scope.enterpriseId, scope.storeId]
+    );
     if (versionResult.rowCount !== 1) {
-      throw new Error("Fact version not found");
+      throw new NotFoundError("Fact version not found for enterprise and store");
     }
     const valuesResult = await this.database.query<Row>(
-      "SELECT * FROM fact_values WHERE fact_version_id = $1 ORDER BY created_at",
-      [id]
+      `SELECT * FROM fact_values
+       WHERE fact_version_id = $1 AND enterprise_id = $2 AND store_id = $3
+       ORDER BY created_at`,
+      [scope.id, scope.enterpriseId, scope.storeId]
     );
     return { ...toFactVersion(versionResult.rows[0]), values: valuesResult.rows.map(toFactValue) };
   }
@@ -267,6 +301,14 @@ function nullableString(value: unknown): string | null { return value == null ? 
 function nullableNumber(value: unknown): number | null { return value == null ? null : number(value); }
 function date(value: unknown): Date { return new Date(string(value)); }
 function nullableDate(value: unknown): Date | null { return value == null ? null : date(value); }
+function assertSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value)) {
+    throw new ValidationError(`${name} must be a JSON safe integer`);
+  }
+}
+function isUniqueViolation(error: unknown): error is { code: string } {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "23505";
+}
 function placeholders(start: number, count: number): string {
   return Array.from({ length: count }, (_, index) => `$${start + index}`).join(", ");
 }
