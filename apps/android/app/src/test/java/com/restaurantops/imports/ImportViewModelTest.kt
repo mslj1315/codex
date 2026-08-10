@@ -1,6 +1,7 @@
 package com.restaurantops.imports
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ImportViewModelTest {
@@ -13,6 +14,40 @@ class ImportViewModelTest {
 
         assertEquals(listOf("candidate_ready"), viewModel.readyCandidateIds)
         assertEquals(listOf("candidate_unresolved"), viewModel.unresolvedCandidateIds)
+    }
+
+    @Test
+    fun `editing an unresolved candidate leaves ready candidates unchanged`() {
+        val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository)
+
+        viewModel.load("store_demo", "import_1")
+        viewModel.editCandidate(
+            storeId = "store_demo",
+            candidateId = "candidate_unresolved",
+            value = 42,
+            unit = "yuan"
+        )
+
+        assertEquals(
+            listOf("candidate_ready", "candidate_unresolved"),
+            viewModel.readyCandidateIds
+        )
+        assertFalse(viewModel.unresolvedCandidateIds.contains("candidate_ready"))
+        assertEquals(emptyList<String>(), viewModel.unresolvedCandidateIds)
+        assertEquals(42, viewModel.summary!!.candidates.last().value)
+    }
+
+    @Test
+    fun `bulk confirmation submits only ready candidates`() {
+        val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository)
+
+        viewModel.load("store_demo", "import_1")
+        viewModel.confirmReady("store_demo")
+
+        assertEquals(listOf("candidate_ready"), repository.confirmedIds)
+        assertEquals("已生成确认数据版本", viewModel.confirmationMessage)
     }
 
     private class FakeImportRepository(
@@ -34,6 +69,40 @@ class ImportViewModelTest {
             importId: String,
             candidateIds: List<String>
         ): FactVersion = FactVersion("fact_1", "import_1", "confirmed")
+    }
+
+    private class EditingFakeImportRepository(
+        private val original: ImportSummary
+    ) : ImportRepository {
+        var confirmedIds: List<String> = emptyList()
+
+        override fun loadImport(storeId: String, importId: String): ImportSummary = original
+
+        override fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = original
+
+        override fun updateCandidate(
+            storeId: String,
+            importId: String,
+            candidateId: String,
+            update: ImportCandidateUpdate
+        ): ImportSummary = original.copy(
+            candidates = original.candidates.map { candidate ->
+                if (candidate.id == candidateId) {
+                    candidate.copy(
+                        value = update.value ?: candidate.value,
+                        unit = update.unit ?: candidate.unit,
+                        status = update.status ?: candidate.status
+                    )
+                } else {
+                    candidate
+                }
+            }
+        )
+
+        override fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion {
+            confirmedIds = candidateIds
+            return FactVersion("fact_1", "import_1", "confirmed")
+        }
     }
 
     private companion object {

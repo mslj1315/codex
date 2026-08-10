@@ -23,9 +23,13 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.restaurantops.imports.ImportScreen
+import com.restaurantops.imports.ImportViewModel
+import com.restaurantops.imports.LocalDemoImportRepository
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,6 +37,7 @@ fun WorkspaceRoot(
     viewModel: WorkspaceViewModel,
     onReturnToOnboarding: () -> Unit
 ) {
+    val importViewModel = remember { ImportViewModel(LocalDemoImportRepository()) }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
             onBack = viewModel::closeOverlay,
@@ -51,6 +56,10 @@ fun WorkspaceRoot(
                 viewModel.selectTab(WorkspaceTab.HOME)
                 viewModel.closeOverlay()
             }
+        )
+        viewModel.isImportOpen -> ImportScreen(
+            viewModel = importViewModel,
+            onBack = viewModel::closeOverlay
         )
         else -> Scaffold(
             topBar = { TopAppBar(title = { Text("今日经营") }) },
@@ -77,6 +86,7 @@ fun WorkspaceRoot(
                     },
                     onViewAllAlerts = { viewModel.selectTab(WorkspaceTab.TASKS) },
                     onOpenVideoFactory = viewModel::openVideoFactory,
+                    onOpenImport = viewModel::openImport,
                     modifier = Modifier.padding(contentPadding)
                 )
                 WorkspaceTab.TASKS -> TasksScreen(
@@ -104,6 +114,7 @@ private fun HomeScreen(
     onCreateTask: () -> Unit,
     onViewAllAlerts: () -> Unit,
     onOpenVideoFactory: () -> Unit,
+    onOpenImport: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -134,6 +145,7 @@ private fun HomeScreen(
         TextButton(onClick = onViewAllAlerts) { Text("查看全部提醒") }
         HorizontalDivider()
         Text("工作入口", style = MaterialTheme.typography.titleMedium)
+        EntryRow(title = "导入经营数据", detail = "本地演示：手工录入和待确认项", onClick = onOpenImport)
         EntryRow(title = "经营诊断", detail = "查看本地演示诊断", onClick = onOpenDiagnosis)
         EntryRow(title = "AI 视频工厂", detail = "本地占位，暂未生成视频", onClick = onOpenVideoFactory)
         Text("待办任务 $pendingTaskCount 项", style = MaterialTheme.typography.titleMedium)

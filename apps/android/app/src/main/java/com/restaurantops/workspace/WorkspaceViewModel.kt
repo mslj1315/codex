@@ -23,6 +23,9 @@ class WorkspaceViewModel(
     var isVideoFactoryOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.VIDEO_FACTORY)
         private set
 
+    var isImportOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.IMPORT)
+        private set
+
     private val mutableTasks = mutableStateListOf<LocalActionTask>().apply {
         if (savedStateHandle.get<Boolean>(HAS_PRIORITY_TASK) == true) {
             add(PRIORITY_TASK)
@@ -64,19 +67,29 @@ class WorkspaceViewModel(
     fun openDiagnosis() {
         isDiagnosisOpen = true
         isVideoFactoryOpen = false
+        isImportOpen = false
         savedStateHandle[OVERLAY] = WorkspaceOverlay.DIAGNOSIS.wireValue
     }
 
     fun closeOverlay() {
         isDiagnosisOpen = false
         isVideoFactoryOpen = false
+        isImportOpen = false
         savedStateHandle[OVERLAY] = WorkspaceOverlay.NONE.wireValue
     }
 
     fun openVideoFactory() {
         isDiagnosisOpen = false
         isVideoFactoryOpen = true
+        isImportOpen = false
         savedStateHandle[OVERLAY] = WorkspaceOverlay.VIDEO_FACTORY.wireValue
+    }
+
+    fun openImport() {
+        isDiagnosisOpen = false
+        isVideoFactoryOpen = false
+        isImportOpen = true
+        savedStateHandle[OVERLAY] = WorkspaceOverlay.IMPORT.wireValue
     }
 
     fun advanceVideoStage() = updateVideoStage(
@@ -136,7 +149,8 @@ class WorkspaceViewModel(
     private enum class WorkspaceOverlay(val wireValue: String) {
         NONE("none"),
         DIAGNOSIS("diagnosis"),
-        VIDEO_FACTORY("video-factory");
+        VIDEO_FACTORY("video-factory"),
+        IMPORT("import");
 
         companion object {
             fun fromWireValue(value: String): WorkspaceOverlay =
