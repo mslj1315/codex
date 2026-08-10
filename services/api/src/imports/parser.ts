@@ -209,14 +209,15 @@ function mergeUnknownHeaders(current: string[], headers: string[]): string[] {
 
 function preflightXlsxArchive(buffer: ArrayBuffer): Promise<void> {
   return new Promise((resolve, reject) => {
-    yauzl.fromBuffer(Buffer.from(buffer), { lazyEntries: true, validateEntrySizes: false }, (error, archive) => {
+    yauzl.fromBuffer(Buffer.from(buffer), { lazyEntries: true, validateEntrySizes: true }, (error, archive) => {
       if (error || !archive) {
         reject(error ?? new Error("Unable to open XLSX archive"));
         return;
       }
 
       let entryCount = 0;
-      let totalUncompressedBytes = 0;
+      let declaredUncompressedBytes = 0;
+      let actualUncompressedBytes = 0;
       let settled = false;
       const fail = (reason: ParserInputError) => {
         if (settled) return;
@@ -233,17 +234,39 @@ function preflightXlsxArchive(buffer: ArrayBuffer): Promise<void> {
       archive.on("entry", (entry) => {
         if (settled) return;
         entryCount += 1;
-        totalUncompressedBytes += entry.uncompressedSize;
+        declaredUncompressedBytes += entry.uncompressedSize;
         const compressionRatio = entry.compressedSize === 0
           ? (entry.uncompressedSize === 0 ? 1 : Number.POSITIVE_INFINITY)
           : entry.uncompressedSize / entry.compressedSize;
         if (entryCount > MAX_XLSX_ENTRIES) return fail(new ParserInputError("xlsx_entry_limit"));
         if (hasUnsafeArchivePath(entry.fileName)) return fail(new ParserInputError("xlsx_unsafe_path"));
-        if (entry.uncompressedSize > MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES || totalUncompressedBytes > MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES) {
+        if (entry.uncompressedSize > MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES || declaredUncompressedBytes > MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES) {
           return fail(new ParserInputError("xlsx_expanded_too_large"));
         }
         if (compressionRatio > MAX_XLSX_COMPRESSION_RATIO) return fail(new ParserInputError("xlsx_compression_ratio"));
-        archive.readEntry();
+        if (entry.fileName.endsWith("/")) {
+          archive.readEntry();
+          return;
+        }
+        archive.openReadStream(entry, (streamError, stream) => {
+          if (streamError || !stream) {
+            fail(new ParserInputError("xlsx_expanded_too_large"));
+            return;
+          }
+          let entryUncompressedBytes = 0;
+          stream.on("data", (chunk: Buffer) => {
+            entryUncompressedBytes += chunk.length;
+            actualUncompressedBytes += chunk.length;
+            if (entryUncompressedBytes > MAX_XLSX_ENTRY_UNCOMPRESSED_BYTES || actualUncompressedBytes > MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES) {
+              stream.destroy();
+              fail(new ParserInputError("xlsx_expanded_too_large"));
+            }
+          });
+          stream.on("error", () => fail(new ParserInputError("xlsx_expanded_too_large")));
+          stream.on("end", () => {
+            if (!settled) archive.readEntry();
+          });
+        });
       });
       archive.on("end", () => {
         if (!settled) {

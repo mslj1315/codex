@@ -232,6 +232,14 @@ describe("import parser", () => {
     await expect(parseXlsx(await archive, validRange)).rejects.toMatchObject({ code: "xlsx_expanded_too_large" });
   });
 
+  it("rejects actual expanded ZIP output when the central directory underreports its size", async () => {
+    const archive = await createZip(Buffer.alloc(6 * 1024 * 1024, 0), "xl/sharedStrings.xml");
+    const centralDirectory = archive.indexOf(Buffer.from("PK\x01\x02"));
+    archive.writeUInt32LE(1, centralDirectory + 24);
+
+    await expect(parseXlsx(archive, validRange)).rejects.toMatchObject({ code: "xlsx_expanded_too_large" });
+  });
+
   it("rejects a first worksheet with more than the configured row limit", async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("first");
@@ -295,3 +303,16 @@ describe("import parser", () => {
     expect(result.candidates).toEqual([expect.objectContaining({ metricKey: "orders", value: 1284 })]);
   });
 });
+
+async function createZip(contents: Buffer, fileName: string): Promise<Buffer> {
+  const zip = new yazl.ZipFile();
+  const chunks: Buffer[] = [];
+  zip.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk));
+  const archive = new Promise<Buffer>((resolve, reject) => {
+    zip.outputStream.on("end", () => resolve(Buffer.concat(chunks)));
+    zip.outputStream.on("error", reject);
+  });
+  zip.addBuffer(contents, fileName, { compress: true });
+  zip.end();
+  return archive;
+}
