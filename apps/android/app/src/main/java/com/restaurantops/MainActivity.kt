@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -34,15 +35,29 @@ import com.restaurantops.onboarding.BusinessType
 import com.restaurantops.onboarding.OnboardingStep
 import com.restaurantops.onboarding.StoreFactDraft
 import com.restaurantops.onboarding.StoreOnboardingViewModel
+import com.restaurantops.workspace.WorkspaceRoot
+import com.restaurantops.workspace.WorkspaceViewModel
 
 class MainActivity : ComponentActivity() {
     private val onboardingViewModel: StoreOnboardingViewModel by viewModels()
+    private val workspaceViewModel: WorkspaceViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                StoreOnboardingScreen(onboardingViewModel)
+                var isInWorkspace = rememberSaveable { false }
+                if (isInWorkspace) {
+                    WorkspaceRoot(
+                        viewModel = workspaceViewModel,
+                        onReturnToOnboarding = { isInWorkspace = false }
+                    )
+                } else {
+                    StoreOnboardingScreen(
+                        viewModel = onboardingViewModel,
+                        onEnterWorkspace = { isInWorkspace = true }
+                    )
+                }
             }
         }
     }
@@ -50,7 +65,10 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StoreOnboardingScreen(viewModel: StoreOnboardingViewModel) {
+fun StoreOnboardingScreen(
+    viewModel: StoreOnboardingViewModel,
+    onEnterWorkspace: () -> Unit
+) {
     val steps = OnboardingStep.entries
     val step = steps[viewModel.stepIndex]
 
@@ -76,7 +94,11 @@ fun StoreOnboardingScreen(viewModel: StoreOnboardingViewModel) {
             )
 
             if (viewModel.isPreviewing) {
-                LocalPreviewContent(viewModel.draft, viewModel::exitPreview)
+                LocalPreviewContent(
+                    draft = viewModel.draft,
+                    onReturnToEditing = viewModel::exitPreview,
+                    onEnterWorkspace = onEnterWorkspace
+                )
             } else {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
@@ -181,7 +203,11 @@ private fun StepContent(
 }
 
 @Composable
-private fun LocalPreviewContent(draft: StoreFactDraft, onReturnToEditing: () -> Unit) {
+private fun LocalPreviewContent(
+    draft: StoreFactDraft,
+    onReturnToEditing: () -> Unit,
+    onEnterWorkspace: () -> Unit
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(20.dp),
@@ -194,6 +220,9 @@ private fun LocalPreviewContent(draft: StoreFactDraft, onReturnToEditing: () -> 
             )
             TextButton(onClick = onReturnToEditing) {
                 Text("返回修改")
+            }
+            Button(onClick = onEnterWorkspace, modifier = Modifier.fillMaxWidth()) {
+                Text("进入今日经营")
             }
         }
     }

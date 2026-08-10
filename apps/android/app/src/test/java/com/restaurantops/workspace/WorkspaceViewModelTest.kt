@@ -125,6 +125,17 @@ class WorkspaceViewModelTest {
     }
 
     @Test
+    fun `returning home after creating the priority task retains one task`() {
+        val viewModel = WorkspaceViewModel(SavedStateHandle())
+
+        viewModel.createPriorityTask()
+        viewModel.selectTab(WorkspaceTab.HOME)
+
+        assertEquals(WorkspaceTab.HOME, viewModel.selectedTab)
+        assertEquals(1, viewModel.tasks.size)
+    }
+
+    @Test
     fun `overlay state is exclusive and close persists both overlays as closed`() {
         val handle = SavedStateHandle()
         val viewModel = WorkspaceViewModel(handle)
