@@ -11,24 +11,29 @@ class WorkspaceViewModel(
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
     var selectedTab by mutableStateOf(
-        savedStateHandle.get<String>(SELECTED_TAB)?.let(WorkspaceTab::valueOf) ?: WorkspaceTab.HOME
+        WorkspaceTab.fromWireValue(savedStateHandle[SELECTED_TAB])
     )
         private set
 
-    var isDiagnosisOpen by mutableStateOf(savedStateHandle.get<Boolean>(IS_DIAGNOSIS_OPEN) ?: false)
+    private val restoredOverlay = restoreOverlay()
+
+    var isDiagnosisOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.DIAGNOSIS)
         private set
 
-    var isVideoFactoryOpen by mutableStateOf(savedStateHandle.get<Boolean>(IS_VIDEO_FACTORY_OPEN) ?: false)
+    var isVideoFactoryOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.VIDEO_FACTORY)
         private set
 
-    val tasks = mutableStateListOf<LocalActionTask>().apply {
+    private val mutableTasks = mutableStateListOf<LocalActionTask>().apply {
         if (savedStateHandle.get<Boolean>(HAS_PRIORITY_TASK) == true) {
             add(PRIORITY_TASK)
         }
     }
 
+    val tasks: List<LocalActionTask>
+        get() = mutableTasks
+
     var videoStage by mutableStateOf(
-        savedStateHandle.get<String>(VIDEO_STAGE)?.let(VideoFactoryStage::valueOf) ?: VideoFactoryStage.TOPIC
+        VideoFactoryStage.fromWireValue(savedStateHandle[VIDEO_STAGE])
     )
         private set
 
@@ -40,12 +45,12 @@ class WorkspaceViewModel(
 
     fun selectTab(tab: WorkspaceTab) {
         selectedTab = tab
-        savedStateHandle[SELECTED_TAB] = tab.name
+        savedStateHandle[SELECTED_TAB] = tab.wireValue
     }
 
     fun createPriorityTask() {
-        if (tasks.none { it.title == PRIORITY_TASK.title }) {
-            tasks.add(PRIORITY_TASK)
+        if (mutableTasks.none { it.title == PRIORITY_TASK.title }) {
+            mutableTasks.add(PRIORITY_TASK)
             savedStateHandle[HAS_PRIORITY_TASK] = true
         }
     }
@@ -53,22 +58,19 @@ class WorkspaceViewModel(
     fun openDiagnosis() {
         isDiagnosisOpen = true
         isVideoFactoryOpen = false
-        savedStateHandle[IS_DIAGNOSIS_OPEN] = true
-        savedStateHandle[IS_VIDEO_FACTORY_OPEN] = false
+        savedStateHandle[OVERLAY] = WorkspaceOverlay.DIAGNOSIS.wireValue
     }
 
     fun closeOverlay() {
         isDiagnosisOpen = false
         isVideoFactoryOpen = false
-        savedStateHandle[IS_DIAGNOSIS_OPEN] = false
-        savedStateHandle[IS_VIDEO_FACTORY_OPEN] = false
+        savedStateHandle[OVERLAY] = WorkspaceOverlay.NONE.wireValue
     }
 
     fun openVideoFactory() {
         isDiagnosisOpen = false
         isVideoFactoryOpen = true
-        savedStateHandle[IS_DIAGNOSIS_OPEN] = false
-        savedStateHandle[IS_VIDEO_FACTORY_OPEN] = true
+        savedStateHandle[OVERLAY] = WorkspaceOverlay.VIDEO_FACTORY.wireValue
     }
 
     fun advanceVideoStage() = updateVideoStage(
@@ -91,11 +93,25 @@ class WorkspaceViewModel(
 
     private fun updateVideoStage(stage: VideoFactoryStage) {
         videoStage = stage
-        savedStateHandle[VIDEO_STAGE] = stage.name
+        savedStateHandle[VIDEO_STAGE] = stage.wireValue
+    }
+
+    private fun restoreOverlay(): WorkspaceOverlay {
+        val persistedOverlay = savedStateHandle.get<String>(OVERLAY)
+        if (persistedOverlay != null) {
+            return WorkspaceOverlay.fromWireValue(persistedOverlay)
+        }
+
+        return when {
+            savedStateHandle.get<Boolean>(IS_DIAGNOSIS_OPEN) == true -> WorkspaceOverlay.DIAGNOSIS
+            savedStateHandle.get<Boolean>(IS_VIDEO_FACTORY_OPEN) == true -> WorkspaceOverlay.VIDEO_FACTORY
+            else -> WorkspaceOverlay.NONE
+        }
     }
 
     private companion object {
         const val SELECTED_TAB = "workspace_selected_tab"
+        const val OVERLAY = "workspace_overlay"
         const val IS_DIAGNOSIS_OPEN = "workspace_is_diagnosis_open"
         const val IS_VIDEO_FACTORY_OPEN = "workspace_is_video_factory_open"
         const val HAS_PRIORITY_TASK = "workspace_has_priority_task"
@@ -109,5 +125,16 @@ class WorkspaceViewModel(
             dueDate = "明日午市前",
             metric = "套餐核销率"
         )
+    }
+
+    private enum class WorkspaceOverlay(val wireValue: String) {
+        NONE("none"),
+        DIAGNOSIS("diagnosis"),
+        VIDEO_FACTORY("video-factory");
+
+        companion object {
+            fun fromWireValue(value: String): WorkspaceOverlay =
+                entries.firstOrNull { it.wireValue == value } ?: NONE
+        }
     }
 }

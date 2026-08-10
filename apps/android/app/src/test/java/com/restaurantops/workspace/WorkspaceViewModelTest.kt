@@ -8,6 +8,61 @@ import org.junit.Test
 
 class WorkspaceViewModelTest {
     @Test
+    fun `restoration safely defaults unknown wire values and resolves legacy overlay conflicts`() {
+        val legacyRestoredViewModel = WorkspaceViewModel(
+            SavedStateHandle(
+                mapOf(
+                    "workspace_selected_tab" to "unknown-tab",
+                    "workspace_video_stage" to "unknown-stage",
+                    "workspace_is_diagnosis_open" to true,
+                    "workspace_is_video_factory_open" to true
+                )
+            )
+        )
+
+        assertEquals(WorkspaceTab.HOME, legacyRestoredViewModel.selectedTab)
+        assertEquals(VideoFactoryStage.TOPIC, legacyRestoredViewModel.videoStage)
+        assertTrue(legacyRestoredViewModel.isDiagnosisOpen)
+        assertFalse(legacyRestoredViewModel.isVideoFactoryOpen)
+
+        val diagnosisRestoredViewModel = WorkspaceViewModel(
+            SavedStateHandle(mapOf("workspace_overlay" to "diagnosis"))
+        )
+        assertTrue(diagnosisRestoredViewModel.isDiagnosisOpen)
+        assertFalse(diagnosisRestoredViewModel.isVideoFactoryOpen)
+
+        val videoRestoredViewModel = WorkspaceViewModel(
+            SavedStateHandle(mapOf("workspace_overlay" to "video-factory"))
+        )
+        assertFalse(videoRestoredViewModel.isDiagnosisOpen)
+        assertTrue(videoRestoredViewModel.isVideoFactoryOpen)
+
+        val unknownOverlayRestoredViewModel = WorkspaceViewModel(
+            SavedStateHandle(mapOf("workspace_overlay" to "unknown-overlay"))
+        )
+        assertFalse(unknownOverlayRestoredViewModel.isDiagnosisOpen)
+        assertFalse(unknownOverlayRestoredViewModel.isVideoFactoryOpen)
+    }
+
+    @Test
+    fun `workspace state persists explicit wire values and tasks are not exposed as mutable snapshot state`() {
+        val handle = SavedStateHandle()
+        val viewModel = WorkspaceViewModel(handle)
+
+        viewModel.selectTab(WorkspaceTab.TASKS)
+        viewModel.advanceVideoStage()
+        viewModel.openVideoFactory()
+        viewModel.createPriorityTask()
+
+        assertEquals("tasks", WorkspaceTab.TASKS.wireValue)
+        assertEquals("copy", VideoFactoryStage.COPY.wireValue)
+        assertEquals("tasks", handle.get<String>("workspace_selected_tab"))
+        assertEquals("copy", handle.get<String>("workspace_video_stage"))
+        assertEquals("video-factory", handle.get<String>("workspace_overlay"))
+        assertEquals(List::class.java, WorkspaceViewModel::class.java.getMethod("getTasks").returnType)
+    }
+
+    @Test
     fun `priority task and selected tab restore from saved state`() {
         val handle = SavedStateHandle()
         val viewModel = WorkspaceViewModel(handle)
