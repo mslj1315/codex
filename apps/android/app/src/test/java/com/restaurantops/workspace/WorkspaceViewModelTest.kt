@@ -136,6 +136,19 @@ class WorkspaceViewModelTest {
     }
 
     @Test
+    fun `creating the priority task from diagnosis state retains the diagnosis and one task`() {
+        val viewModel = WorkspaceViewModel(SavedStateHandle())
+
+        viewModel.openDiagnosis()
+        viewModel.createPriorityTask()
+        viewModel.createPriorityTask()
+
+        assertTrue(viewModel.isDiagnosisOpen)
+        assertFalse(viewModel.isVideoFactoryOpen)
+        assertEquals(1, viewModel.tasks.size)
+    }
+
+    @Test
     fun `overlay state is exclusive and close persists both overlays as closed`() {
         val handle = SavedStateHandle()
         val viewModel = WorkspaceViewModel(handle)

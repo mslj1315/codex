@@ -33,7 +33,10 @@ fun WorkspaceRoot(
     onReturnToOnboarding: () -> Unit
 ) {
     when {
-        viewModel.isDiagnosisOpen -> DiagnosisScreen(onBack = viewModel::closeOverlay)
+        viewModel.isDiagnosisOpen -> DiagnosisScreen(
+            onBack = viewModel::closeOverlay,
+            onCreateTask = viewModel::createPriorityTask
+        )
         viewModel.isVideoFactoryOpen -> VideoFactoryPlaceholder(onBack = viewModel::closeOverlay)
         else -> Scaffold(
             topBar = { TopAppBar(title = { Text("今日经营") }) },
@@ -171,7 +174,7 @@ private fun TasksScreen(tasks: List<LocalActionTask>, modifier: Modifier = Modif
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DiagnosisScreen(onBack: () -> Unit) {
+private fun DiagnosisScreen(onBack: () -> Unit, onCreateTask: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -193,6 +196,7 @@ private fun DiagnosisScreen(onBack: () -> Unit) {
             DiagnosisSection("1. 数据质量", "午市套餐核销数据完整度为 78%，请补齐渠道与时段记录。")
             DiagnosisSection("2. 诊断问题", "午市套餐核销下降 14%，需要核对套餐曝光与门店承接。")
             DiagnosisSection("3. 行动建议", "检查菜单入口、海报陈列和收银推荐话术，并记录每日核销。")
+            Button(onClick = onCreateTask) { Text("创建行动任务") }
             DiagnosisSection("4. 反思复盘", "明日午市结束后比较核销率与套餐曝光，确认行动是否有效。")
             DiagnosisSection("5. 一句话方向", "先补齐数据，再让午市套餐在顾客点单路径中更容易被看见。")
         }
