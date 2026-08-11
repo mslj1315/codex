@@ -26,9 +26,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.restaurantops.onboarding.BusinessType
@@ -46,7 +50,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                var isInWorkspace = rememberSaveable { false }
+                var isInWorkspace by rememberSaveable { mutableStateOf(false) }
                 if (isInWorkspace) {
                     WorkspaceRoot(
                         viewModel = workspaceViewModel,
@@ -169,7 +173,8 @@ private fun StepContent(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = draft.businessType == type,
-                        onClick = { onBusinessTypeSelected(type) }
+                        onClick = { onBusinessTypeSelected(type) },
+                        modifier = Modifier.testTag("business-type-${type.wireValue}")
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(type.displayName)

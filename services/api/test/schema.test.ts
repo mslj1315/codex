@@ -9,7 +9,7 @@ import {
   NotFoundError,
   ValidationError
 } from "../src/imports/repository.js";
-import type { Database } from "../src/db.js";
+import type { Database, Queryable } from "../src/db.js";
 
 describe("import repository", () => {
   let imports: ImportRepository;
@@ -112,6 +112,107 @@ describe("import repository", () => {
     expect(migration).toContain("RAISE EXCEPTION 'fact records are append-only'");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON fact_versions");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON fact_values");
+  });
+
+  it("normalizes PostgreSQL DATE values in batch responses", async () => {
+    const dateReturningDatabase = {
+      query: async () => ({
+        command: "INSERT", rowCount: 1, oid: 0, fields: [],
+        rows: [{
+          id: "batch_real_date", enterprise_id: "ent_demo", store_id: "store_demo",
+          actor_id: "actor_demo", source_type: "csv", status: "pending_confirmation",
+          range_start: postgresDateAtLocalMidnight(2026, 8, 1, "2026-07-31T16:00:00.000Z"),
+          range_end: postgresDateAtLocalMidnight(2026, 8, 7, "2026-08-06T16:00:00.000Z"),
+          confirmed_by_actor_id: null, confirmed_at: null,
+          created_at: new Date("2026-08-11T08:00:00.000Z"),
+          updated_at: new Date("2026-08-11T08:00:00.000Z")
+        }]
+      })
+    } as unknown as Queryable;
+
+    const batch = await new ImportRepository(dateReturningDatabase).createBatch({
+      id: "batch_real_date", enterpriseId: "ent_demo", storeId: "store_demo",
+      actorId: "actor_demo", sourceType: "csv", rangeStart: "2026-08-01", rangeEnd: "2026-08-07"
+    });
+
+    expect(batch).toMatchObject({ rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
+  });
+
+  it("normalizes PostgreSQL DATE values in candidate responses", async () => {
+    let queryCount = 0;
+    const dateReturningDatabase = {
+      query: async () => {
+        queryCount += 1;
+        return queryCount === 1
+          ? {
+              command: "SELECT", rowCount: 1, oid: 0, fields: [],
+              rows: [{ enterprise_id: "ent_demo", store_id: "store_demo" }]
+            }
+          : {
+              command: "INSERT", rowCount: 1, oid: 0, fields: [],
+              rows: [{
+                id: "candidate_real_date", batch_id: "batch_real_date",
+                enterprise_id: "ent_demo", store_id: "store_demo", metric_key: "orders",
+                metric_display_name: "Orders", value: 12, unit: "count",
+                range_start: postgresDateAtLocalMidnight(2026, 8, 1, "2026-07-31T16:00:00.000Z"),
+                range_end: postgresDateAtLocalMidnight(2026, 8, 7, "2026-08-06T16:00:00.000Z"),
+                source_locator: "A2", confidence: 0.98, issue_code: null, status: "ready",
+                confirmed_value: null, created_at: new Date("2026-08-11T08:00:00.000Z"),
+                updated_at: new Date("2026-08-11T08:00:00.000Z")
+              }]
+            };
+      }
+    } as unknown as Queryable;
+
+    const candidate = await new ImportRepository(dateReturningDatabase).createCandidate({
+      batchId: "batch_real_date", enterpriseId: "ent_demo", storeId: "store_demo",
+      metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count",
+      rangeStart: "2026-08-01", rangeEnd: "2026-08-07", sourceLocator: "A2",
+      confidence: 0.98, status: "ready"
+    });
+
+    expect(candidate).toMatchObject({ rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
+  });
+
+  it("normalizes PostgreSQL DATE values in fact responses", async () => {
+    let queryCount = 0;
+    const dateReturningDatabase = {
+      query: async () => {
+        queryCount += 1;
+        return queryCount === 1
+          ? {
+              command: "SELECT", rowCount: 1, oid: 0, fields: [],
+              rows: [{
+                id: "fact_real_date", enterprise_id: "ent_demo", store_id: "store_demo",
+                source_batch_id: "batch_real_date", confirmation_actor_id: "actor_demo",
+                confirmation_status: "confirmed", confirmed_at: new Date("2026-08-11T08:00:00.000Z"),
+                created_at: new Date("2026-08-11T08:00:00.000Z"),
+                updated_at: new Date("2026-08-11T08:00:00.000Z")
+              }]
+            }
+          : {
+              command: "SELECT", rowCount: 1, oid: 0, fields: [],
+              rows: [{
+                id: "value_real_date", fact_version_id: "fact_real_date",
+                enterprise_id: "ent_demo", store_id: "store_demo", metric_key: "orders",
+                value: 12, unit: "count",
+                range_start: postgresDateAtLocalMidnight(2026, 8, 1, "2026-07-31T16:00:00.000Z"),
+                range_end: postgresDateAtLocalMidnight(2026, 8, 7, "2026-08-06T16:00:00.000Z"),
+                source_candidate_id: "candidate_real_date", source_batch_id: "batch_real_date",
+                created_at: new Date("2026-08-11T08:00:00.000Z"),
+                updated_at: new Date("2026-08-11T08:00:00.000Z")
+              }]
+            };
+      }
+    } as unknown as Queryable;
+
+    const fact = await new ImportRepository(dateReturningDatabase).getFactVersion({
+      id: "fact_real_date", enterpriseId: "ent_demo", storeId: "store_demo"
+    });
+
+    expect(fact.values).toEqual([
+      expect.objectContaining({ rangeStart: "2026-08-01", rangeEnd: "2026-08-07" })
+    ]);
   });
 
   it("declares store-scoped import file identity and lifecycle timestamps", () => {
@@ -483,4 +584,12 @@ async function applyTestMigrations(database: Database): Promise<string> {
   }
 
   return migrations.join("\n");
+}
+
+function postgresDateAtLocalMidnight(year: number, month: number, day: number, utcIso: string): Date {
+  const value = new Date(utcIso);
+  value.getFullYear = () => year;
+  value.getMonth = () => month - 1;
+  value.getDate = () => day;
+  return value;
 }

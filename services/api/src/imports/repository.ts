@@ -478,8 +478,8 @@ function toBatch(row: Row): ImportBatch {
   return {
     id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id),
     actorId: string(row.actor_id), sourceType: row.source_type as ImportSourceType,
-    status: row.status as ImportBatchStatus, rangeStart: nullableString(row.range_start),
-    rangeEnd: nullableString(row.range_end), confirmedByActorId: nullableString(row.confirmed_by_actor_id),
+    status: row.status as ImportBatchStatus, rangeStart: nullableDateOnly(row.range_start),
+    rangeEnd: nullableDateOnly(row.range_end), confirmedByActorId: nullableString(row.confirmed_by_actor_id),
     confirmedAt: nullableDate(row.confirmed_at), createdAt: date(row.created_at), updatedAt: date(row.updated_at)
   };
 }
@@ -520,7 +520,7 @@ function toFactValue(row: Row): FactValue {
   return {
     id: string(row.id), factVersionId: string(row.fact_version_id), enterpriseId: string(row.enterprise_id),
     storeId: string(row.store_id), metricKey: string(row.metric_key), value: number(row.value), unit: string(row.unit),
-    rangeStart: string(row.range_start), rangeEnd: string(row.range_end), sourceCandidateId: string(row.source_candidate_id),
+    rangeStart: dateOnly(row.range_start), rangeEnd: dateOnly(row.range_end), sourceCandidateId: string(row.source_candidate_id),
     sourceBatchId: string(row.source_batch_id), createdAt: date(row.created_at), updatedAt: date(row.updated_at)
   };
 }
@@ -531,7 +531,14 @@ function nullableString(value: unknown): string | null { return value == null ? 
 function nullableNumber(value: unknown): number | null { return value == null ? null : number(value); }
 function date(value: unknown): Date { return new Date(string(value)); }
 function nullableDate(value: unknown): Date | null { return value == null ? null : date(value); }
-function dateOnly(value: unknown): string { return value instanceof Date ? value.toISOString().slice(0, 10) : string(value); }
+function dateOnly(value: unknown): string {
+  if (!(value instanceof Date)) return string(value);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function nullableDateOnly(value: unknown): string | null { return value == null ? null : dateOnly(value); }
 function assertSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new ValidationError(`${name} must be a JSON safe integer`);
