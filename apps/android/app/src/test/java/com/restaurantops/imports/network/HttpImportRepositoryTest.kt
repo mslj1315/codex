@@ -111,7 +111,12 @@ class HttpImportRepositoryTest {
     @Test
     fun `HTTP response failures become typed import request exceptions`() = runBlocking {
         val api = FakeImportApi().apply {
-            manualFailure = HttpException(Response.error<ImportBatchResponse>(422, okhttp3.ResponseBody.create(null, "invalid")))
+            manualFailure = HttpException(
+                Response.error<ImportBatchResponse>(
+                    422,
+                    okhttp3.ResponseBody.create(null, "{\"error\":\"Candidate unit does not match metric\"}")
+                )
+            )
         }
         val repository = HttpImportRepository(api)
 
@@ -123,6 +128,7 @@ class HttpImportRepositoryTest {
         }
 
         assertEquals(422, error.statusCode)
+        assertEquals("Candidate unit does not match metric", error.message)
     }
 
     @Test

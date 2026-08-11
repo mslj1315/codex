@@ -8,6 +8,7 @@ import com.restaurantops.imports.ImportRepository
 import com.restaurantops.imports.ImportSourceType
 import com.restaurantops.imports.ImportSummary
 import com.restaurantops.imports.ManualImportDraft
+import com.google.gson.Gson
 import java.io.IOException
 import retrofit2.HttpException
 
@@ -57,13 +58,25 @@ class HttpImportRepository(
     private suspend fun <T> request(block: suspend () -> T): T = try {
         block()
     } catch (error: HttpException) {
-        throw ImportRequestException(error.code(), "Import request failed (${error.code()})", error)
+        throw ImportRequestException(error.code(), error.apiErrorMessage(), error)
     } catch (error: IOException) {
         throw ImportRequestException(0, "Unable to reach the import service", error)
     }
 
     private data class ImportKey(val storeId: String, val importId: String)
 }
+
+private fun HttpException.apiErrorMessage(): String {
+    val fallback = "Import request failed (${code()})"
+    val body = response()?.errorBody() ?: return fallback
+    return try {
+        Gson().fromJson(body.charStream(), ApiErrorBody::class.java)?.error?.takeIf { it.isNotBlank() } ?: fallback
+    } catch (_: Exception) {
+        fallback
+    }
+}
+
+private data class ApiErrorBody(val error: String?)
 
 private fun ManualImportDraft.toRequest() = ManualImportRequest(
     rangeStart = rangeStart,
