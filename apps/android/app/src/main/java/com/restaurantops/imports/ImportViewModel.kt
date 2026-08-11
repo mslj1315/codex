@@ -100,6 +100,12 @@ class ImportViewModel(
                         status = if (isResolved) ImportCandidateStatus.READY else ImportCandidateStatus.NEEDS_CONFIRMATION
                     )
                 ))
+            } catch (error: ImportRequestException) {
+                if (error.statusCode == CONFLICT_STATUS) {
+                    reloadAfterConflict(storeId, currentSummary.id)
+                } else {
+                    showRequestError(error)
+                }
             } catch (error: Throwable) {
                 showRequestError(error)
             } finally {
@@ -164,6 +170,7 @@ class ImportViewModel(
         if (error is CancellationException) throw error
         requestError = when (error) {
             is ImportRequestException -> when (error.statusCode) {
+                TRANSPORT_STATUS -> CONNECTION_FAILURE_MESSAGE
                 FORBIDDEN_STATUS -> "本地开发门店上下文拒绝了该请求"
                 else -> error.message ?: CONNECTION_FAILURE_MESSAGE
             }
@@ -175,6 +182,7 @@ class ImportViewModel(
         val CONFIRMABLE_UNITS = setOf("yuan", "cents", "count", "times")
         const val FORBIDDEN_STATUS = 403
         const val CONFLICT_STATUS = 409
+        const val TRANSPORT_STATUS = 0
         const val CONNECTION_FAILURE_MESSAGE = "连接服务失败，请稍后重试"
     }
 }

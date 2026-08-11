@@ -189,6 +189,37 @@ class ImportViewModelTest {
         assertTrue(viewModel.isReadOnly)
     }
 
+    @Test
+    fun `candidate update conflict reloads the batch before actions resume`() = runTest {
+        val refreshed = summaryWithReadyAndUnresolved.copy(status = ImportBatchStatus.CONFIRMED)
+        val repository = UpdateConflictRepository(summaryWithReadyAndUnresolved, refreshed)
+        val viewModel = ImportViewModel(repository, this)
+
+        viewModel.load("store_demo", "import_1")
+        advanceUntilIdle()
+        viewModel.editCandidate("store_demo", "candidate_unresolved", 42, "yuan")
+        advanceUntilIdle()
+
+        assertEquals(refreshed, viewModel.summary)
+        assertEquals("数据已发生变化，已刷新当前导入记录", viewModel.requestError)
+        assertTrue(viewModel.isReadOnly)
+        assertFalse(viewModel.isLoading)
+    }
+
+    @Test
+    fun `transport failure uses the neutral connection message`() = runTest {
+        val repository = TransportFailingCreateRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository, this)
+
+        viewModel.load("store_demo", "import_1")
+        advanceUntilIdle()
+        viewModel.createManualImport("store_demo", manualDraft())
+        advanceUntilIdle()
+
+        assertEquals("连接服务失败，请稍后重试", viewModel.requestError)
+        assertEquals(summaryWithReadyAndUnresolved, viewModel.summary)
+    }
+
     private class FakeImportRepository(
         private val summary: ImportSummary
     ) : ImportRepository {
@@ -295,6 +326,33 @@ class ImportViewModelTest {
 
         fun releaseConfirmation() {
             confirmation.complete(Unit)
+        }
+    }
+
+    private class UpdateConflictRepository(
+        private val initial: ImportSummary,
+        private val refreshed: ImportSummary
+    ) : ImportRepository by FakeImportRepository(initial) {
+        private var loadCalls = 0
+
+        override suspend fun loadImport(storeId: String, importId: String): ImportSummary {
+            loadCalls += 1
+            return if (loadCalls == 1) initial else refreshed
+        }
+
+        override suspend fun updateCandidate(
+            storeId: String,
+            importId: String,
+            candidateId: String,
+            update: ImportCandidateUpdate
+        ): ImportSummary = throw ImportRequestException(409, "stale candidate")
+    }
+
+    private class TransportFailingCreateRepository(
+        private val summary: ImportSummary
+    ) : ImportRepository by FakeImportRepository(summary) {
+        override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary {
+            throw ImportRequestException(0, "socket closed")
         }
     }
 
