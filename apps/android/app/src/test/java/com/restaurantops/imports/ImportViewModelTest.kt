@@ -2,8 +2,10 @@ package com.restaurantops.imports
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.restaurantops.imports.files.ImportFileReader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
@@ -239,6 +241,137 @@ class ImportViewModelTest {
         assertEquals(summaryWithReadyAndUnresolved, viewModel.summary)
     }
 
+    @Test
+    fun `file selection prepares a file and clears stale errors`() = runTest {
+        val reader = FakeImportFileReader(preparedCsv)
+        val viewModel = ImportViewModel(FakeImportRepository(summaryWithReadyAndUnresolved), this, reader)
+
+        viewModel.selectFile("content://weekly", ImportSourceType.CSV)
+        advanceUntilIdle()
+
+        assertEquals(ImportSourceType.CSV, viewModel.selectedSource)
+        assertEquals(preparedCsv, viewModel.selectedFile)
+        assertNull(viewModel.fileSelectionError)
+        assertTrue(viewModel.canRunCommands)
+    }
+
+    @Test
+    fun `file selection failure is local and does not retain an older file`() = runTest {
+        val reader = FailingImportFileReader(ImportRequestException(422, "请选择 CSV 文件"))
+        val viewModel = ImportViewModel(FakeImportRepository(summaryWithReadyAndUnresolved), this, reader)
+
+        viewModel.selectFile("content://broken", ImportSourceType.CSV)
+        advanceUntilIdle()
+
+        assertNull(viewModel.selectedFile)
+        assertEquals("请选择 CSV 文件", viewModel.fileSelectionError)
+        assertNull(viewModel.requestError)
+    }
+
+    @Test
+    fun `default file reader reports that selection is unavailable`() = runTest {
+        val viewModel = ImportViewModel(FakeImportRepository(summaryWithReadyAndUnresolved), this)
+
+        viewModel.selectFile("content://weekly", ImportSourceType.CSV)
+        advanceUntilIdle()
+
+        assertNull(viewModel.selectedFile)
+        assertEquals("文件选择尚未启用", viewModel.fileSelectionError)
+    }
+
+    @Test
+    fun `file reading in flight blocks source switching repeated selection and manual import`() = runTest {
+        val reader = BlockingImportFileReader(preparedCsv)
+        val repository = BlockingFileRepository(fileSummary)
+        val viewModel = ImportViewModel(repository, this, reader)
+
+        viewModel.selectFile("content://weekly", ImportSourceType.CSV)
+        runCurrent()
+        viewModel.selectSource(ImportSourceType.MANUAL)
+        viewModel.selectFile("content://second", ImportSourceType.XLSX)
+        viewModel.createManualImport("store_demo", manualDraft())
+
+        assertEquals(ImportSourceType.CSV, viewModel.selectedSource)
+        assertEquals(1, reader.calls)
+        assertEquals(0, repository.manualCalls)
+        assertFalse(viewModel.canRunCommands)
+
+        reader.release()
+        advanceUntilIdle()
+        assertEquals(preparedCsv, viewModel.selectedFile)
+        assertTrue(viewModel.canRunCommands)
+    }
+
+    @Test
+    fun `file upload opens returned batch and reports a duplicate`() = runTest {
+        val repository = RecordingFileRepository(FileImportResult(fileSummary, duplicate = true))
+        val viewModel = ImportViewModel(repository, this, FakeImportFileReader(preparedCsv))
+        viewModel.selectFile("content://weekly", ImportSourceType.CSV)
+        advanceUntilIdle()
+
+        viewModel.uploadSelectedFile("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+
+        assertEquals(fileSummary, viewModel.summary)
+        assertEquals("已打开此前导入的报表", viewModel.fileUploadMessage)
+        assertNull(viewModel.selectedFile)
+        assertEquals("store_demo", repository.storeId)
+        assertEquals("2026-08-01", repository.draft?.rangeStart)
+        assertEquals("2026-08-07", repository.draft?.rangeEnd)
+        assertEquals(preparedCsv, repository.draft?.file)
+    }
+
+    @Test
+    fun `transport failure preserves selected file for retry and success clears it`() = runTest {
+        val repository = RetryFileRepository(fileSummary)
+        val viewModel = ImportViewModel(repository, this, FakeImportFileReader(preparedCsv))
+        viewModel.selectFile("content://weekly", ImportSourceType.CSV)
+        advanceUntilIdle()
+
+        viewModel.uploadSelectedFile("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+
+        assertEquals(preparedCsv, viewModel.selectedFile)
+        assertEquals("连接服务失败，请稍后重试", viewModel.requestError)
+        assertEquals(1, repository.calls)
+
+        viewModel.uploadSelectedFile("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+
+        assertEquals(2, repository.calls)
+        assertEquals(fileSummary, viewModel.summary)
+        assertNull(viewModel.selectedFile)
+        assertNull(viewModel.requestError)
+        assertNull(viewModel.fileUploadMessage)
+    }
+
+    @Test
+    fun `upload in flight blocks source switching repeated upload editing and confirmation`() = runTest {
+        val repository = BlockingFileRepository(fileSummary)
+        val viewModel = ImportViewModel(repository, this, FakeImportFileReader(preparedCsv))
+        viewModel.selectFile("content://weekly", ImportSourceType.CSV)
+        advanceUntilIdle()
+        viewModel.uploadSelectedFile("store_demo", "2026-08-01", "2026-08-07")
+        runCurrent()
+
+        viewModel.selectSource(ImportSourceType.MANUAL)
+        viewModel.uploadSelectedFile("store_demo", "2026-08-01", "2026-08-07")
+        viewModel.editCandidate("store_demo", "candidate_unresolved", 42, "yuan")
+        viewModel.confirmReady("store_demo")
+        viewModel.createManualImport("store_demo", manualDraft())
+
+        assertEquals(ImportSourceType.CSV, viewModel.selectedSource)
+        assertEquals(1, repository.fileCalls)
+        assertEquals(0, repository.updateCalls)
+        assertEquals(0, repository.confirmCalls)
+        assertEquals(0, repository.manualCalls)
+        assertFalse(viewModel.canRunCommands)
+
+        repository.release()
+        advanceUntilIdle()
+        assertTrue(viewModel.canRunCommands)
+    }
+
     private class FakeImportRepository(
         private val summary: ImportSummary
     ) : ImportRepository {
@@ -396,12 +529,109 @@ class ImportViewModelTest {
         }
     }
 
+    private class FakeImportFileReader(
+        private val prepared: PreparedImportFile
+    ) : ImportFileReader {
+        override suspend fun read(uri: String, sourceType: ImportSourceType): PreparedImportFile = prepared
+    }
+
+    private class FailingImportFileReader(
+        private val error: Throwable
+    ) : ImportFileReader {
+        override suspend fun read(uri: String, sourceType: ImportSourceType): PreparedImportFile = throw error
+    }
+
+    private class BlockingImportFileReader(
+        private val prepared: PreparedImportFile
+    ) : ImportFileReader {
+        private val completion = CompletableDeferred<Unit>()
+        var calls = 0
+
+        override suspend fun read(uri: String, sourceType: ImportSourceType): PreparedImportFile {
+            calls += 1
+            completion.await()
+            return prepared
+        }
+
+        fun release() = completion.complete(Unit)
+    }
+
+    private class RecordingFileRepository(
+        private val result: FileImportResult
+    ) : ImportRepository by FakeImportRepository(result.summary) {
+        var storeId: String? = null
+        var draft: FileImportDraft? = null
+
+        override suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult {
+            this.storeId = storeId
+            this.draft = draft
+            return result
+        }
+    }
+
+    private class RetryFileRepository(
+        private val summary: ImportSummary
+    ) : ImportRepository by FakeImportRepository(summary) {
+        var calls = 0
+
+        override suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult {
+            calls += 1
+            if (calls == 1) throw ImportRequestException(0, "socket closed")
+            return FileImportResult(summary, duplicate = false)
+        }
+    }
+
+    private class BlockingFileRepository(
+        private val summary: ImportSummary
+    ) : ImportRepository by FakeImportRepository(summary) {
+        private val completion = CompletableDeferred<Unit>()
+        var fileCalls = 0
+        var updateCalls = 0
+        var confirmCalls = 0
+        var manualCalls = 0
+
+        override suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult {
+            fileCalls += 1
+            completion.await()
+            return FileImportResult(summary, duplicate = false)
+        }
+
+        override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary {
+            manualCalls += 1
+            return summary
+        }
+
+        override suspend fun updateCandidate(
+            storeId: String,
+            importId: String,
+            candidateId: String,
+            update: ImportCandidateUpdate
+        ): ImportSummary {
+            updateCalls += 1
+            return summary
+        }
+
+        override suspend fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion {
+            confirmCalls += 1
+            return FactVersion("fact_1", importId, "confirmed")
+        }
+
+        fun release() = completion.complete(Unit)
+    }
+
     private companion object {
         fun testScope() = CoroutineScope(Dispatchers.Unconfined)
         fun manualDraft() = ManualImportDraft(
             rangeStart = "2026-08-01",
             rangeEnd = "2026-08-07",
             candidates = emptyList()
+        )
+        val preparedCsv = PreparedImportFile(
+            uri = "content://weekly",
+            displayName = "weekly.csv",
+            mimeType = "text/csv",
+            sizeBytes = 13,
+            bytes = "订单数\n12\n".toByteArray()
         )
         val summaryWithReadyAndUnresolved = ImportSummary(
             id = "import_1",
@@ -430,5 +660,6 @@ class ImportViewModelTest {
                 )
             )
         )
+        val fileSummary = summaryWithReadyAndUnresolved.copy(sourceType = ImportSourceType.CSV)
     }
 }

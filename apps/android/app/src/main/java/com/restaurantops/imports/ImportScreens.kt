@@ -1,5 +1,7 @@
 package com.restaurantops.imports
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,10 +25,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import com.restaurantops.imports.files.ImportFileRules
 import com.restaurantops.imports.network.ImportUnitBoundary
+import java.util.Locale
 
 private const val LOCAL_STORE_ID = "store_demo"
 
@@ -35,12 +40,17 @@ private const val LOCAL_STORE_ID = "store_demo"
 fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
     var revenueInput by rememberSaveable { mutableStateOf("48260") }
     var averageSpendInput by rememberSaveable { mutableStateOf("38") }
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { viewModel.selectFile(it.toString(), viewModel.selectedSource) }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("导入经营数据") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } }
+                navigationIcon = {
+                    TextButton(onClick = onBack, enabled = viewModel.canRunCommands) { Text("返回") }
+                }
             )
         }
     ) { contentPadding ->
@@ -52,26 +62,20 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("本地演示导入", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "手工录入会连接本机开发服务；CSV 和 Excel 仍只展示入口，不读取或上传文件。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text("经营报表导入", style = MaterialTheme.typography.titleMedium)
             if (viewModel.isLoading) {
-                Text("正在连接本机服务...", color = MaterialTheme.colorScheme.primary)
-            }
-            viewModel.requestError?.let { error ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        error,
-                        modifier = Modifier.padding(14.dp),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
+                Text("正在处理...", color = MaterialTheme.colorScheme.primary)
             }
             SourcePicker(
                 selectedSource = viewModel.selectedSource,
-                onSelectSource = viewModel::selectSource,
+                onSelectSource = { source ->
+                    if (source == ImportSourceType.MANUAL) {
+                        viewModel.selectSource(source)
+                    } else {
+                        if (source != viewModel.selectedSource) viewModel.selectSource(source)
+                        fileLauncher.launch(ImportFileRules.pickerMimeTypes(source))
+                    }
+                },
                 enabled = viewModel.canRunCommands
             )
 
@@ -87,10 +91,20 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                             LOCAL_STORE_ID,
                             localManualDraft(revenueInput, averageSpendInput)
                         )
-                    }
+                    },
+                    requestError = viewModel.requestError
                 )
-                ImportSourceType.CSV, ImportSourceType.XLSX -> LocalFilePlaceholder(
-                    source = viewModel.selectedSource
+                ImportSourceType.CSV, ImportSourceType.XLSX -> FileImportCard(
+                    source = viewModel.selectedSource,
+                    selectedFile = viewModel.selectedFile,
+                    enabled = viewModel.canRunCommands,
+                    selectionError = viewModel.fileSelectionError,
+                    requestError = viewModel.requestError,
+                    uploadMessage = viewModel.fileUploadMessage,
+                    onChooseFile = {
+                        fileLauncher.launch(ImportFileRules.pickerMimeTypes(viewModel.selectedSource))
+                    },
+                    onUpload = viewModel::uploadSelectedFile
                 )
             }
 
@@ -138,7 +152,8 @@ private fun ManualEntry(
     onRevenueChanged: (String) -> Unit,
     onAverageSpendChanged: (String) -> Unit,
     enabled: Boolean,
-    onCreateSummary: () -> Unit
+    onCreateSummary: () -> Unit,
+    requestError: String?
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -167,19 +182,92 @@ private fun ManualEntry(
             Button(onClick = onCreateSummary, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
                 Text("生成待确认项")
             }
+            requestError?.let { InlineMessage(it, isError = true) }
         }
     }
 }
 
 @Composable
-private fun LocalFilePlaceholder(source: ImportSourceType) {
+private fun FileImportCard(
+    source: ImportSourceType,
+    selectedFile: PreparedImportFile?,
+    enabled: Boolean,
+    selectionError: String?,
+    requestError: String?,
+    uploadMessage: String?,
+    onChooseFile: () -> Unit,
+    onUpload: (String, String, String) -> Unit
+) {
+    var rangeStart by rememberSaveable(source) { mutableStateOf("2026-08-01") }
+    var rangeEnd by rememberSaveable(source) { mutableStateOf("2026-08-07") }
+    val datePattern = Regex("\\d{4}-\\d{2}-\\d{2}")
+    val canUpload = selectedFile != null &&
+        rangeStart.matches(datePattern) &&
+        rangeEnd.matches(datePattern) &&
+        enabled
+
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(sourceLabel(source), style = MaterialTheme.typography.titleSmall)
-            Text("该来源仅展示入口；本地演示不会选择、读取或上传文件。")
-            Text("文件导入和服务端确认将在接入后启用。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = rangeStart,
+                onValueChange = { rangeStart = it },
+                label = { Text("开始日期") },
+                placeholder = { Text("YYYY-MM-DD") },
+                enabled = enabled,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = rangeEnd,
+                onValueChange = { rangeEnd = it },
+                label = { Text("结束日期") },
+                placeholder = { Text("YYYY-MM-DD") },
+                enabled = enabled,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            TextButton(onClick = onChooseFile, enabled = enabled) {
+                Text(if (selectedFile == null) "选择文件" else "重新选择")
+            }
+            selectedFile?.let { file ->
+                Text(
+                    file.displayName,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    humanFileSize(file.sizeBytes),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            selectionError?.let { InlineMessage(it, isError = true) }
+            requestError?.let { InlineMessage(it, isError = true) }
+            uploadMessage?.let { InlineMessage(it, isError = false) }
+            Button(
+                onClick = { onUpload(LOCAL_STORE_ID, rangeStart, rangeEnd) },
+                enabled = canUpload,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("上传并解析")
+            }
         }
     }
+}
+
+@Composable
+private fun InlineMessage(message: String, isError: Boolean) {
+    Text(
+        message,
+        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    )
+}
+
+private fun humanFileSize(sizeBytes: Long): String = when {
+    sizeBytes >= 1024 * 1024 -> String.format(Locale.US, "%.1f MiB", sizeBytes / (1024.0 * 1024.0))
+    sizeBytes >= 1024 -> String.format(Locale.US, "%.1f KiB", sizeBytes / 1024.0)
+    else -> "$sizeBytes B"
 }
 
 @Composable

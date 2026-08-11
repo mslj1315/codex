@@ -24,12 +24,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.restaurantops.imports.ImportScreen
 import com.restaurantops.imports.ImportViewModel
 import com.restaurantops.imports.LocalDemoImportRepository
+import com.restaurantops.imports.files.AndroidImportFileReader
 import com.restaurantops.BuildConfig
 import com.restaurantops.imports.network.HttpImportRepository
 import com.restaurantops.imports.network.ImportApi
@@ -43,7 +45,9 @@ fun WorkspaceRoot(
     viewModel: WorkspaceViewModel,
     onReturnToOnboarding: () -> Unit
 ) {
-    val importViewModel = remember {
+    val contentResolver = LocalContext.current.contentResolver
+    val importFileReader = remember(contentResolver) { AndroidImportFileReader(contentResolver) }
+    val importViewModel = remember(importFileReader) {
         val repository = if (
             LocalImportApiRuntime.canUseLocalApi(
                 isDebug = BuildConfig.DEBUG,
@@ -59,7 +63,7 @@ fun WorkspaceRoot(
         } else {
             LocalDemoImportRepository()
         }
-        ImportViewModel(repository)
+        ImportViewModel(repository, fileReader = importFileReader)
     }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
