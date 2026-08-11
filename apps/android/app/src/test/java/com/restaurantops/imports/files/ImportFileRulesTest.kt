@@ -41,6 +41,10 @@ class ImportFileRulesTest {
         assertEquals("请选择 CSV 文件", ImportFileRules.validate("report.xlsx", 1, ImportSourceType.CSV))
         assertEquals("请选择 Excel 文件", ImportFileRules.validate("report.csv", 1, ImportSourceType.XLSX))
         assertEquals("手工录入不接受文件", ImportFileRules.validate("report.csv", 1, ImportSourceType.MANUAL))
+        assertEquals("文件名包含无效字符", ImportFileRules.validate("report\r.csv", 1, ImportSourceType.CSV))
+        assertEquals("文件名包含无效字符", ImportFileRules.validate("report.csv\n", 1, ImportSourceType.CSV))
+        assertEquals("文件名包含无效字符", ImportFileRules.validate("report\u007f.csv", 1, ImportSourceType.CSV))
+        assertNull(ImportFileRules.validate("中文 report\".csv", 1, ImportSourceType.CSV))
     }
 
     @Test

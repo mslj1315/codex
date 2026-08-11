@@ -24,7 +24,9 @@ object ImportFileRules {
 
     fun validate(name: String?, size: Long?, sourceType: ImportSourceType): String? {
         if (sourceType == ImportSourceType.MANUAL) return "手工录入不接受文件"
-        val normalizedName = name?.trim()?.takeIf { it.isNotEmpty() } ?: return "无法读取文件名"
+        val rawName = name ?: return "无法读取文件名"
+        if (rawName.any { it.code in 0..31 || it.code == 127 }) return "文件名包含无效字符"
+        val normalizedName = rawName.trim().takeIf { it.isNotEmpty() } ?: return "无法读取文件名"
         val expectedExtension = when (sourceType) {
             ImportSourceType.CSV -> ".csv"
             ImportSourceType.XLSX -> ".xlsx"

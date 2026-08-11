@@ -15,6 +15,33 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
+
+internal object ImportProviderBoundary {
+    fun <T> metadata(block: () -> T): T = try {
+        block()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: ImportRequestException) {
+        throw error
+    } catch (error: IOException) {
+        throw ImportRequestException(422, "无法读取所选文件", error)
+    } catch (error: RuntimeException) {
+        throw ImportRequestException(422, "无法读取所选文件", error)
+    }
+
+    suspend fun <T> content(block: suspend () -> T): T = try {
+        block()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: ImportRequestException) {
+        throw error
+    } catch (error: IOException) {
+        throw ImportRequestException(422, "无法读取所选文件", error)
+    } catch (error: RuntimeException) {
+        throw ImportRequestException(422, "无法读取所选文件", error)
+    }
+}
 
 interface ImportFileReader {
     suspend fun read(uri: String, sourceType: ImportSourceType): PreparedImportFile
@@ -36,16 +63,8 @@ class AndroidImportFileReader(
             ImportFileRules.validate(metadata.displayName, metadata.sizeBytes, sourceType)?.let { message ->
                 throw ImportRequestException(422, message)
             }
-            val bytes = try {
+            val bytes = ImportProviderBoundary.content {
                 readImportFileBytes(metadata.sizeBytes) { contentResolver.openInputStream(contentUri) }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: ImportRequestException) {
-                throw error
-            } catch (error: IOException) {
-                throw ImportRequestException(422, "无法读取所选文件", error)
-            } catch (error: SecurityException) {
-                throw ImportRequestException(422, "无法读取所选文件", error)
             }
             PreparedImportFile(
                 uri = contentUri.toString(),
@@ -60,26 +79,20 @@ class AndroidImportFileReader(
             )
         }
 
-    private fun providerMimeType(uri: Uri): String? = try {
+    private fun providerMimeType(uri: Uri): String? = ImportProviderBoundary.metadata {
         contentResolver.getType(uri)
-    } catch (_: RuntimeException) {
-        null
     }
 
-    private fun readMetadata(uri: Uri): FileMetadata {
-        val cursor = try {
-            contentResolver.query(
-                uri,
-                arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
-                null,
-                null,
-                null
-            )
-        } catch (error: SecurityException) {
-            throw ImportRequestException(422, "无法读取所选文件", error)
-        } ?: throw ImportRequestException(422, "无法读取所选文件")
+    private fun readMetadata(uri: Uri): FileMetadata = ImportProviderBoundary.metadata {
+        val cursor = contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null,
+            null,
+            null
+        ) ?: throw ImportRequestException(422, "无法读取所选文件")
 
-        return cursor.use {
+        cursor.use {
             if (!it.moveToFirst()) throw ImportRequestException(422, "无法读取所选文件")
             val nameIndex = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             val sizeIndex = it.getColumnIndex(OpenableColumns.SIZE)
@@ -106,12 +119,22 @@ internal suspend fun readImportFileBytes(
     return stream.use { input ->
         val output = ByteArrayOutputStream(metadataSize.toInt())
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var consecutiveZeroReads = 0
         while (true) {
             currentCoroutineContext().ensureActive()
             val bytesUntilOverflow = ImportFileRules.MAX_BYTES - output.size() + 1
             val readLength = minOf(buffer.size.toLong(), bytesUntilOverflow).toInt()
             val count = input.read(buffer, 0, readLength)
             if (count < 0) break
+            if (count == 0) {
+                consecutiveZeroReads += 1
+                if (consecutiveZeroReads > MAX_CONSECUTIVE_ZERO_READ_RETRIES) {
+                    throw ImportRequestException(422, "无法读取所选文件")
+                }
+                yield()
+                continue
+            }
+            consecutiveZeroReads = 0
             if (output.size().toLong() + count > ImportFileRules.MAX_BYTES) {
                 throw ImportRequestException(422, "文件不能超过 5 MiB")
             }
@@ -121,3 +144,5 @@ internal suspend fun readImportFileBytes(
             ?: throw ImportRequestException(422, "无法读取文件大小")
     }
 }
+
+private const val MAX_CONSECUTIVE_ZERO_READ_RETRIES = 3

@@ -46,7 +46,7 @@ class HttpImportRepositoryTest {
         val result = repository.createFileImport(
             "store_file",
             fileDraft(
-                fileName = "weekly.CSV",
+                fileName = "weekly\" report.CSV",
                 mimeType = "invalid mime\r\n",
                 bytes = fileBytes
             )
@@ -54,7 +54,10 @@ class HttpImportRepositoryTest {
 
         assertEquals("store_file", api.fileStoreId)
         assertTrue(api.fileUpload!!.headers()!!["Content-Disposition"]!!.contains("name=\"upload\""))
-        assertTrue(api.fileUpload!!.headers()!!["Content-Disposition"]!!.contains("filename=\"weekly.CSV\""))
+        assertTrue(
+            api.fileUpload!!.headers()!!["Content-Disposition"]!!
+                .contains("filename=\"weekly%22 report.CSV\"")
+        )
         assertEquals("text/csv", api.fileUpload!!.body().contentType().toString())
         assertTrue(fileBytes.contentEquals(api.fileUpload!!.body().readBytes()))
         assertEquals("2026-08-01", api.fileRangeStart!!.readUtf8())
@@ -120,6 +123,23 @@ class HttpImportRepositoryTest {
             assertEquals(422, error.statusCode)
             assertEquals(0, api.fileCalls)
         }
+    }
+
+    @Test
+    fun `control characters in filename are typed validation errors before API call`() = runBlocking {
+        val api = FakeImportApi()
+        val repository = HttpImportRepository(api)
+
+        val error = try {
+            repository.createFileImport("store_file", fileDraft(fileName = "report\n.csv"))
+            error("Expected ImportRequestException")
+        } catch (expected: ImportRequestException) {
+            expected
+        }
+
+        assertEquals(422, error.statusCode)
+        assertEquals("文件名包含无效字符", error.message)
+        assertEquals(0, api.fileCalls)
     }
 
     @Test
