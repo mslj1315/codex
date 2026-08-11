@@ -33,6 +33,7 @@ import com.restaurantops.imports.LocalDemoImportRepository
 import com.restaurantops.BuildConfig
 import com.restaurantops.imports.network.HttpImportRepository
 import com.restaurantops.imports.network.ImportApi
+import com.restaurantops.imports.network.LocalImportApiRuntime
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -43,7 +44,12 @@ fun WorkspaceRoot(
     onReturnToOnboarding: () -> Unit
 ) {
     val importViewModel = remember {
-        val repository = if (BuildConfig.DEBUG) {
+        val repository = if (
+            LocalImportApiRuntime.canUseLocalApi(
+                isDebug = BuildConfig.DEBUG,
+                baseUrl = BuildConfig.LOCAL_API_BASE_URL
+            )
+        ) {
             val api = Retrofit.Builder()
                 .baseUrl(BuildConfig.LOCAL_API_BASE_URL)
                 .addConverterFactory(GsonConverterFactory.create())
