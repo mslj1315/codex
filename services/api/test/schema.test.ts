@@ -1,8 +1,9 @@
-import { readFile } from "node:fs/promises";
-import { newDb } from "pg-mem";
+import { readdir, readFile } from "node:fs/promises";
+import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ConflictError,
+  DuplicateImportFileError,
   ForbiddenError,
   ImportRepository,
   NotFoundError,
@@ -17,16 +18,15 @@ describe("import repository", () => {
 
   beforeEach(async () => {
     const memory = newDb();
+    memory.public.registerFunction({
+      name: "length",
+      args: [DataType.text],
+      returns: DataType.integer,
+      implementation: (value: string) => value.length
+    });
     const { Pool } = memory.adapters.createPg();
     const pool = new Pool();
-    migration = await readFile(
-      new URL("../migrations/001_imports.sql", import.meta.url),
-      "utf8"
-    );
-
-    // pg-mem supports relational constraints but not PostgreSQL PL/pgSQL triggers.
-    // Trigger execution and concurrent confirmations require a Docker PostgreSQL test run.
-    await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    migration = await applyTestMigrations(pool);
     database = pool;
     imports = new ImportRepository(pool);
   });
@@ -112,6 +112,217 @@ describe("import repository", () => {
     expect(migration).toContain("RAISE EXCEPTION 'fact records are append-only'");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON fact_versions");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON fact_values");
+  });
+
+  it("declares store-scoped import file identity and lifecycle timestamps", () => {
+    expect(migration).toContain("UNIQUE (batch_id)");
+    expect(migration).toContain("UNIQUE (enterprise_id, store_id, sha256_checksum)");
+    expect(migration).toContain("expires_at TIMESTAMPTZ NOT NULL");
+    expect(migration).toContain("cleaned_at TIMESTAMPTZ");
+  });
+
+  it("creates import file metadata and maps BIGINT and timestamps", async () => {
+    const batch = await imports.createBatch({
+      id: "batch_file_metadata",
+      enterpriseId: "ent_demo",
+      storeId: "store_demo",
+      actorId: "actor_demo",
+      sourceType: "csv"
+    });
+    const uploadedAt = new Date("2026-08-11T08:00:00.000Z");
+    const expiresAt = new Date("2026-11-09T08:00:00.000Z");
+
+    const file = await imports.createImportFile({
+      id: "file_metadata",
+      batchId: batch.id,
+      enterpriseId: "ent_demo",
+      storeId: "store_demo",
+      originalFileName: "weekly.csv",
+      normalizedMimeType: "text/csv",
+      byteCount: 5242880,
+      sha256Checksum: "a".repeat(64),
+      objectKey: "imports/ent_demo/store_demo/batch_file_metadata/a.csv",
+      uploadedAt,
+      expiresAt
+    });
+
+    expect(file).toEqual({
+      id: "file_metadata",
+      batchId: batch.id,
+      enterpriseId: "ent_demo",
+      storeId: "store_demo",
+      originalFileName: "weekly.csv",
+      normalizedMimeType: "text/csv",
+      byteCount: 5242880,
+      sha256Checksum: "a".repeat(64),
+      objectKey: "imports/ent_demo/store_demo/batch_file_metadata/a.csv",
+      uploadedAt,
+      expiresAt,
+      cleanedAt: null
+    });
+    expect(file.byteCount).toBeTypeOf("number");
+    expect(file.uploadedAt).toBeInstanceOf(Date);
+    expect(file.expiresAt).toBeInstanceOf(Date);
+  });
+
+  it("rejects a duplicate checksum in the same enterprise and store", async () => {
+    const checksum = "b".repeat(64);
+    const firstBatch = await imports.createBatch({
+      id: "batch_duplicate_first", enterpriseId: "ent_demo", storeId: "store_demo",
+      actorId: "actor_demo", sourceType: "csv"
+    });
+    const secondBatch = await imports.createBatch({
+      id: "batch_duplicate_second", enterpriseId: "ent_demo", storeId: "store_demo",
+      actorId: "actor_demo", sourceType: "csv"
+    });
+    const baseFile = {
+      enterpriseId: "ent_demo", storeId: "store_demo", originalFileName: "weekly.csv",
+      normalizedMimeType: "text/csv", byteCount: 12, sha256Checksum: checksum,
+      uploadedAt: new Date("2026-08-11T08:00:00.000Z"),
+      expiresAt: new Date("2026-11-09T08:00:00.000Z")
+    };
+
+    await imports.createImportFile({
+      ...baseFile, id: "file_duplicate_first", batchId: firstBatch.id,
+      objectKey: "imports/ent_demo/store_demo/batch_duplicate_first/b.csv"
+    });
+
+    await expect(imports.createImportFile({
+      ...baseFile, id: "file_duplicate_second", batchId: secondBatch.id,
+      objectKey: "imports/ent_demo/store_demo/batch_duplicate_second/b.csv"
+    })).rejects.toEqual(expect.objectContaining({
+      name: DuplicateImportFileError.name,
+      message: "Import file already exists for store"
+    }));
+  });
+
+  it("allows the same checksum in another store and finds the scoped batch", async () => {
+    const checksum = "c".repeat(64);
+    const firstBatch = await imports.createBatch({
+      id: "batch_store_first", enterpriseId: "ent_demo", storeId: "store_demo",
+      actorId: "actor_demo", sourceType: "csv"
+    });
+    const otherBatch = await imports.createBatch({
+      id: "batch_store_other", enterpriseId: "ent_demo", storeId: "store_other",
+      actorId: "actor_demo", sourceType: "csv"
+    });
+    const uploadedAt = new Date("2026-08-11T08:00:00.000Z");
+    const expiresAt = new Date("2026-11-09T08:00:00.000Z");
+
+    await imports.createImportFile({
+      id: "file_store_first", batchId: firstBatch.id, enterpriseId: "ent_demo", storeId: "store_demo",
+      originalFileName: "weekly.csv", normalizedMimeType: "text/csv", byteCount: 12,
+      sha256Checksum: checksum, objectKey: "imports/ent_demo/store_demo/batch_store_first/c.csv",
+      uploadedAt, expiresAt
+    });
+    await imports.createImportFile({
+      id: "file_store_other", batchId: otherBatch.id, enterpriseId: "ent_demo", storeId: "store_other",
+      originalFileName: "weekly.csv", normalizedMimeType: "text/csv", byteCount: 12,
+      sha256Checksum: checksum, objectKey: "imports/ent_demo/store_other/batch_store_other/c.csv",
+      uploadedAt, expiresAt
+    });
+
+    await expect(imports.findBatchByFileChecksum({
+      enterpriseId: "ent_demo", storeId: "store_demo", sha256Checksum: checksum
+    })).resolves.toMatchObject({ id: firstBatch.id, storeId: "store_demo" });
+    await expect(imports.findBatchByFileChecksum({
+      enterpriseId: "ent_demo", storeId: "missing", sha256Checksum: checksum
+    })).resolves.toBeNull();
+  });
+
+  it("creates file metadata with its batch and candidates in one transaction", async () => {
+    const uploadedAt = new Date("2026-08-11T08:00:00.000Z");
+    const expiresAt = new Date("2026-11-09T08:00:00.000Z");
+    const batch = await imports.createBatchWithCandidates(
+      {
+        id: "batch_transaction_success", enterpriseId: "ent_demo", storeId: "store_demo",
+        actorId: "actor_demo", sourceType: "csv", rangeStart: "2026-08-01", rangeEnd: "2026-08-07"
+      },
+      [{
+        metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count",
+        rangeStart: "2026-08-01", rangeEnd: "2026-08-07", sourceLocator: "row:1:orders",
+        confidence: 100, status: "ready"
+      }],
+      {
+        id: "file_transaction_success", batchId: "batch_transaction_success", enterpriseId: "ent_demo",
+        storeId: "store_demo", originalFileName: "weekly.csv", normalizedMimeType: "text/csv",
+        byteCount: 12, sha256Checksum: "d".repeat(64),
+        objectKey: "imports/ent_demo/store_demo/batch_transaction_success/d.csv", uploadedAt, expiresAt
+      }
+    );
+
+    expect(batch).toMatchObject({ id: "batch_transaction_success", candidates: [{ value: 12 }] });
+    expect(await database.query("SELECT id FROM import_files WHERE batch_id = $1", [batch.id]))
+      .toMatchObject({ rowCount: 1, rows: [{ id: "file_transaction_success" }] });
+  });
+
+  it("rejects file metadata whose batch or store scope differs from the new batch", async () => {
+    await expect(imports.createBatchWithCandidates(
+      {
+        id: "batch_scope_contract", enterpriseId: "ent_demo", storeId: "store_demo",
+        actorId: "actor_demo", sourceType: "csv"
+      },
+      [],
+      {
+        id: "file_scope_contract", batchId: "batch_other", enterpriseId: "ent_demo",
+        storeId: "store_other", originalFileName: "weekly.csv", normalizedMimeType: "text/csv",
+        byteCount: 12, sha256Checksum: "f".repeat(64),
+        objectKey: "imports/ent_demo/store_other/batch_other/f.csv",
+        uploadedAt: new Date("2026-08-11T08:00:00.000Z"),
+        expiresAt: new Date("2026-11-09T08:00:00.000Z")
+      }
+    )).rejects.toBeInstanceOf(ValidationError);
+
+    expect(await database.query("SELECT * FROM import_batches WHERE id = $1", ["batch_scope_contract"]))
+      .toMatchObject({ rows: [] });
+  });
+
+  it("rolls back batch and file metadata when a later candidate fails", async () => {
+    const uploadedAt = new Date("2026-08-11T08:00:00.000Z");
+    const expiresAt = new Date("2026-11-09T08:00:00.000Z");
+    const statements: string[] = [];
+    const connect = database.connect.bind(database);
+    database.connect = async () => {
+      const client = await connect();
+      const query = client.query.bind(client);
+      client.query = ((text: string, values?: readonly unknown[]) => {
+        statements.push(text.trim());
+        return query(text, values as unknown[]);
+      }) as typeof client.query;
+      return client;
+    };
+
+    await expect(imports.createBatchWithCandidates(
+      {
+        id: "batch_transaction_failure", enterpriseId: "ent_demo", storeId: "store_demo",
+        actorId: "actor_demo", sourceType: "csv", rangeStart: "2026-08-01", rangeEnd: "2026-08-07"
+      },
+      [{
+        metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count",
+        rangeStart: "2026-08-01", rangeEnd: "2026-08-07", sourceLocator: "row:1:orders",
+        confidence: 101, status: "ready"
+      }],
+      {
+        id: "file_transaction_failure", batchId: "batch_transaction_failure", enterpriseId: "ent_demo",
+        storeId: "store_demo", originalFileName: "weekly.csv", normalizedMimeType: "text/csv",
+        byteCount: 12, sha256Checksum: "e".repeat(64),
+        objectKey: "imports/ent_demo/store_demo/batch_transaction_failure/e.csv", uploadedAt, expiresAt
+      }
+    )).rejects.toThrow();
+
+    const beginIndex = statements.findIndex((statement) => statement === "BEGIN");
+    const batchIndex = statements.findIndex((statement) => statement.startsWith("INSERT INTO import_batches"));
+    const fileIndex = statements.findIndex((statement) => statement.startsWith("INSERT INTO import_files"));
+    const candidateIndex = statements.findIndex((statement) => statement.startsWith("INSERT INTO import_candidates"));
+    const rollbackIndex = statements.findIndex((statement) => statement === "ROLLBACK");
+
+    // pg-mem does not restore all cross-table writes, so verify the transaction protocol sent to PostgreSQL.
+    expect([beginIndex, batchIndex, fileIndex, candidateIndex, rollbackIndex]).toEqual(
+      [...[beginIndex, batchIndex, fileIndex, candidateIndex, rollbackIndex]].sort((left, right) => left - right)
+    );
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(rollbackIndex).toBeGreaterThan(candidateIndex);
+    expect(statements).not.toContain("COMMIT");
   });
 
   it("rejects a fact value whose candidate comes from another batch in the same store", async () => {
@@ -249,3 +460,21 @@ describe("import repository", () => {
     ]);
   });
 });
+
+async function applyTestMigrations(database: Database): Promise<string> {
+  const migrationsUrl = new URL("../migrations/", import.meta.url);
+  const fileNames = (await readdir(migrationsUrl))
+    .filter((fileName) => /^\d+.*\.sql$/.test(fileName))
+    .sort();
+  const migrations = await Promise.all(
+    fileNames.map((fileName) => readFile(new URL(fileName, migrationsUrl), "utf8"))
+  );
+
+  for (const migrationSql of migrations) {
+    // pg-mem supports relational constraints but not PostgreSQL PL/pgSQL triggers.
+    // Trigger execution and concurrent confirmations require a Docker PostgreSQL test run.
+    await database.query(migrationSql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+  }
+
+  return migrations.join("\n");
+}

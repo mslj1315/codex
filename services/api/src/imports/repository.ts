@@ -8,10 +8,17 @@ export type CandidateStatus = "ready" | "needs_confirmation" | "confirmed" | "re
 export class RepositoryError extends Error {}
 export class NotFoundError extends RepositoryError {}
 export class ConflictError extends RepositoryError {}
+export class DuplicateImportFileError extends ConflictError {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicateImportFileError";
+  }
+}
 export class ValidationError extends RepositoryError {}
 export class ForbiddenError extends RepositoryError {}
 
 export interface CreateBatchInput {
+  id?: string;
   enterpriseId: string;
   storeId: string;
   actorId: string;
@@ -23,6 +30,24 @@ export interface CreateBatchInput {
   originalFileChecksum?: string;
   rangeStart?: string;
   rangeEnd?: string;
+}
+
+export interface CreateImportFileInput {
+  id: string;
+  batchId: string;
+  enterpriseId: string;
+  storeId: string;
+  originalFileName: string;
+  normalizedMimeType: string;
+  byteCount: number;
+  sha256Checksum: string;
+  objectKey: string;
+  uploadedAt: Date;
+  expiresAt: Date;
+}
+
+export interface ImportFileRecord extends CreateImportFileInput {
+  cleanedAt: Date | null;
 }
 
 export interface ImportBatch {
@@ -128,7 +153,19 @@ type Row = Record<string, unknown>;
 export class ImportRepository {
   constructor(private readonly database: Queryable, private readonly transactionDatabase?: Database) {}
 
-  async createBatchWithCandidates(input: CreateBatchInput, candidates: readonly Omit<CreateCandidateInput, "batchId" | "enterpriseId" | "storeId">[]): Promise<ImportBatchDetails> {
+  async createBatchWithCandidates(
+    input: CreateBatchInput,
+    candidates: readonly Omit<CreateCandidateInput, "batchId" | "enterpriseId" | "storeId">[],
+    file?: CreateImportFileInput
+  ): Promise<ImportBatchDetails> {
+    if (file && (
+      input.id === undefined
+      || file.batchId !== input.id
+      || file.enterpriseId !== input.enterpriseId
+      || file.storeId !== input.storeId
+    )) {
+      throw new ValidationError("Import file scope must match its import batch");
+    }
     const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
     if (!database) throw new Error("Transactions require a database connection");
     const client = await database.connect();
@@ -136,6 +173,7 @@ export class ImportRepository {
       await client.query("BEGIN");
       const transaction = new ImportRepository(client);
       const batch = await transaction.createBatch(input);
+      if (file) await transaction.createImportFile(file);
       for (const candidate of candidates) await transaction.createCandidate({ ...candidate, batchId: batch.id, enterpriseId: input.enterpriseId, storeId: input.storeId });
       const details = await transaction.getBatch({ id: batch.id, enterpriseId: input.enterpriseId, storeId: input.storeId });
       await client.query("COMMIT");
@@ -155,13 +193,54 @@ export class ImportRepository {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending_confirmation', $11, $12)
       RETURNING *`,
       [
-        randomUUID(), input.enterpriseId, input.storeId, input.actorId, input.sourceType,
+        input.id ?? randomUUID(), input.enterpriseId, input.storeId, input.actorId, input.sourceType,
         input.originalFileKey ?? null, input.originalFileName ?? null, input.originalFileMimeType ?? null,
         input.originalFileSizeBytes ?? null, input.originalFileChecksum ?? null,
         input.rangeStart ?? null, input.rangeEnd ?? null
       ]
     );
     return toBatch(result.rows[0]);
+  }
+
+  async findBatchByFileChecksum(input: {
+    enterpriseId: string;
+    storeId: string;
+    sha256Checksum: string;
+  }): Promise<ImportBatchDetails | null> {
+    const result = await this.database.query<Row>(
+      `SELECT batch_id FROM import_files
+       WHERE enterprise_id = $1 AND store_id = $2 AND sha256_checksum = $3`,
+      [input.enterpriseId, input.storeId, input.sha256Checksum]
+    );
+    if (result.rowCount !== 1) return null;
+    return this.getBatch({
+      id: string(result.rows[0].batch_id),
+      enterpriseId: input.enterpriseId,
+      storeId: input.storeId
+    });
+  }
+
+  async createImportFile(input: CreateImportFileInput): Promise<ImportFileRecord> {
+    try {
+      const result = await this.database.query<Row>(
+        `INSERT INTO import_files (
+          id, batch_id, enterprise_id, store_id, original_file_name, normalized_mime_type,
+          byte_count, sha256_checksum, object_key, uploaded_at, expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING *`,
+        [
+          input.id, input.batchId, input.enterpriseId, input.storeId, input.originalFileName,
+          input.normalizedMimeType, input.byteCount, input.sha256Checksum, input.objectKey,
+          input.uploadedAt, input.expiresAt
+        ]
+      );
+      return toImportFile(result.rows[0]);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new DuplicateImportFileError("Import file already exists for store");
+      }
+      throw error;
+    }
   }
 
   async createCandidate(input: CreateCandidateInput): Promise<ImportCandidate> {
@@ -366,6 +445,16 @@ function toCandidate(row: Row): ImportCandidate {
     sourceLocator: string(row.source_locator), confidence: number(row.confidence), issueCode: nullableString(row.issue_code),
     status: row.status as CreateCandidateInput["status"], confirmedValue: nullableNumber(row.confirmed_value),
     createdAt: date(row.created_at), updatedAt: date(row.updated_at)
+  };
+}
+
+function toImportFile(row: Row): ImportFileRecord {
+  return {
+    id: string(row.id), batchId: string(row.batch_id), enterpriseId: string(row.enterprise_id),
+    storeId: string(row.store_id), originalFileName: string(row.original_file_name),
+    normalizedMimeType: string(row.normalized_mime_type), byteCount: number(row.byte_count),
+    sha256Checksum: string(row.sha256_checksum), objectKey: string(row.object_key),
+    uploadedAt: date(row.uploaded_at), expiresAt: date(row.expires_at), cleanedAt: nullableDate(row.cleaned_at)
   };
 }
 

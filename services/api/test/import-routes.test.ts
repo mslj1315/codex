@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { newDb } from "pg-mem";
+import { readdir, readFile } from "node:fs/promises";
+import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
@@ -10,10 +10,15 @@ describe("import API routes", () => {
 
   beforeEach(async () => {
     const memory = newDb();
+    memory.public.registerFunction({
+      name: "length",
+      args: [DataType.text],
+      returns: DataType.integer,
+      implementation: (value: string) => value.length
+    });
     const { Pool } = memory.adapters.createPg();
     pool = new Pool();
-    const migration = await readFile(new URL("../migrations/001_imports.sql", import.meta.url), "utf8");
-    await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    await applyTestMigrations(pool);
     app = buildServer({ database: pool, developmentMode: true });
   });
 
@@ -211,3 +216,16 @@ describe("import API routes", () => {
     expect(await pool.query("SELECT * FROM import_batches")).toMatchObject({ rows: [] });
   });
 });
+
+async function applyTestMigrations(database: Database): Promise<void> {
+  const migrationsUrl = new URL("../migrations/", import.meta.url);
+  const fileNames = (await readdir(migrationsUrl))
+    .filter((fileName) => /^\d+.*\.sql$/.test(fileName))
+    .sort();
+
+  for (const fileName of fileNames) {
+    const migration = await readFile(new URL(fileName, migrationsUrl), "utf8");
+    // pg-mem supports relational constraints but not PostgreSQL PL/pgSQL triggers.
+    await database.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+  }
+}
