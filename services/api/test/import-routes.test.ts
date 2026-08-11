@@ -124,7 +124,7 @@ describe("import API routes", () => {
       method: "POST",
       url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
       headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
-      payload: Buffer.from("this is not a recognized import\n")
+      payload: Buffer.from("订单数\n12\n")
     });
 
     expect(file.statusCode).toBe(503);
@@ -331,6 +331,64 @@ describe("import API routes", () => {
     expect((await pool.query("SELECT * FROM import_files")).rows).toHaveLength(0);
   });
 
+  it("returns 422 without persistence for non-ZIP XLSX content despite a CSV MIME type", async () => {
+    const boundary = "----invalid-xlsx-mime";
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: multipartFileBody(boundary, "report.xlsx", "text/csv", Buffer.from("not a zip archive"))
+    });
+
+    expect(response.statusCode).toBe(422);
+    await expectNoFilePersistence(pool, storage);
+  });
+
+  it("returns 422 without persistence for a damaged XLSX ZIP", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("weekly");
+    sheet.addRow(["订单数"]);
+    sheet.addRow([18]);
+    const valid = Buffer.from(await workbook.xlsx.writeBuffer());
+    const damaged = valid.subarray(0, Math.floor(valid.length / 2));
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "x-file-name": "damaged.xlsx"
+      },
+      payload: damaged
+    });
+
+    expect(response.statusCode).toBe(422);
+    await expectNoFilePersistence(pool, storage);
+  });
+
+  it("returns 422 without persistence for CSV bytes that are not valid UTF-8", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: { "content-type": "text/csv", "x-file-name": "invalid.csv" },
+      payload: Buffer.from([0xff, 0xfe, 0xfd, 0x0a])
+    });
+
+    expect(response.statusCode).toBe(422);
+    await expectNoFilePersistence(pool, storage);
+  });
+
+  it("returns 422 without persistence when a valid file has no supported metrics", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: { "content-type": "text/csv", "x-file-name": "weather.csv" },
+      payload: Buffer.from("天气\n晴\n")
+    });
+
+    expect(response.statusCode).toBe(422);
+    await expectNoFilePersistence(pool, storage);
+  });
+
   it("rejects an upload whose declared size exceeds the raw upload cap before parsing", async () => {
     const response = await app.inject({
       method: "POST",
@@ -437,4 +495,19 @@ async function createZip(contents: Buffer, fileName: string): Promise<Buffer> {
   zip.addBuffer(contents, fileName, { compress: true });
   zip.end();
   return archive;
+}
+
+function multipartFileBody(boundary: string, filename: string, mimeType: string, bytes: Buffer): Buffer {
+  return Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="upload"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`),
+    bytes,
+    Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="rangeStart"\r\n\r\n2026-08-01\r\n`),
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="rangeEnd"\r\n\r\n2026-08-07\r\n--${boundary}--\r\n`)
+  ]);
+}
+
+async function expectNoFilePersistence(database: Database, storage: FakeObjectStorage): Promise<void> {
+  expect(storage.objects.size).toBe(0);
+  expect((await database.query("SELECT * FROM import_batches")).rows).toHaveLength(0);
+  expect((await database.query("SELECT * FROM import_files")).rows).toHaveLength(0);
 }

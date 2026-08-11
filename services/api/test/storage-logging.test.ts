@@ -75,6 +75,36 @@ describe("object storage failure logging", () => {
     expect(logs.filter((entry) => entry.event === "import_object_storage_error")).toEqual([]);
     await app.close();
   });
+
+  it("returns the neutral 503 even when storage-error logging throws", async () => {
+    const app = buildServer({
+      database: databaseWithNoDuplicate(),
+      trustedContextResolver: async () => ({
+        enterpriseId: "ent_demo",
+        storeId: "store_demo",
+        actorId: "actor_demo"
+      }),
+      objectStorage: {
+        async putObject() { throw new Error("storage secret"); },
+        async deleteObject() { return "missing"; }
+      },
+      logger: {
+        level: "error",
+        stream: { write() { throw new Error("logger failed"); } }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
+      payload: Buffer.from("订单数\n12\n")
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: "Unable to store import file" });
+    await app.close();
+  });
 });
 
 function databaseWithoutSchema() {

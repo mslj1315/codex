@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_XLSX_BYTES, ParserInputError, parseCsv, parseRows, parseXlsx } from "../src/imports/parser.js";
+import { MAX_XLSX_BYTES, ParserInputError, parseCsv, parseCsvBytes, parseRows, parseXlsx } from "../src/imports/parser.js";
 import ExcelJS from "exceljs";
 import yazl from "yazl";
 
@@ -216,6 +216,12 @@ describe("import parser", () => {
     await expect(parseXlsx(new Uint8Array(MAX_XLSX_BYTES + 1), validRange)).rejects.toMatchObject({
       code: "xlsx_too_large"
     } satisfies Partial<ParserInputError>);
+  });
+
+  it("rejects invalid UTF-8 CSV bytes with a typed input error", () => {
+    expect(() => parseCsvBytes(Buffer.from([0xff, 0xfe, 0xfd]), validRange)).toThrowError(
+      expect.objectContaining({ code: "invalid_csv_encoding" })
+    );
   });
 
   it("rejects an XLSX archive whose declared expanded size exceeds the preflight budget", async () => {

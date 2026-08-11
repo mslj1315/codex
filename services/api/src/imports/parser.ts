@@ -20,7 +20,18 @@ export const MAX_XLSX_TOTAL_UNCOMPRESSED_BYTES = 12 * 1024 * 1024;
 export const MAX_XLSX_COMPRESSION_RATIO = 200;
 
 export class ParserInputError extends Error {
-  constructor(readonly code: "xlsx_too_large" | "xlsx_row_limit" | "xlsx_column_limit" | "xlsx_entry_limit" | "xlsx_expanded_too_large" | "xlsx_unsafe_path" | "xlsx_compression_ratio") {
+  constructor(readonly code:
+    | "xlsx_too_large"
+    | "xlsx_row_limit"
+    | "xlsx_column_limit"
+    | "xlsx_entry_limit"
+    | "xlsx_expanded_too_large"
+    | "xlsx_unsafe_path"
+    | "xlsx_compression_ratio"
+    | "invalid_xlsx"
+    | "invalid_csv_encoding"
+    | "no_recognized_candidates"
+  ) {
     super(code);
     this.name = "ParserInputError";
   }
@@ -86,13 +97,28 @@ export function parseCsv(input: string, options: ParseOptions): ParseResult {
   return { ...result, unknownHeaders: mergeUnknownHeaders(result.unknownHeaders, headers.filter((header) => !findMetric(header))) };
 }
 
+export function parseCsvBytes(input: Uint8Array, options: ParseOptions): ParseResult {
+  try {
+    return parseCsv(new TextDecoder("utf-8", { fatal: true }).decode(input), options);
+  } catch (error) {
+    if (error instanceof ParserInputError) throw error;
+    throw new ParserInputError("invalid_csv_encoding");
+  }
+}
+
 export async function parseXlsx(input: ArrayBuffer | Uint8Array, options: ParseOptions): Promise<ParseResult> {
   if (input.byteLength > MAX_XLSX_BYTES) throw new ParserInputError("xlsx_too_large");
   const workbook = new ExcelJS.Workbook();
   const workbookBytes = new Uint8Array(input.byteLength);
   workbookBytes.set(input instanceof Uint8Array ? input : new Uint8Array(input));
-  await preflightXlsxArchive(workbookBytes.buffer);
-  await workbook.xlsx.load(workbookBytes.buffer);
+  try {
+    await preflightXlsxArchive(workbookBytes.buffer);
+    await workbook.xlsx.load(workbookBytes.buffer);
+  } catch (error) {
+    if (error instanceof ParserInputError) throw error;
+    if (isResourceOrProgramError(error)) throw error;
+    throw new ParserInputError("invalid_xlsx");
+  }
   const worksheet = workbook.worksheets[0];
   if (!worksheet) return parseRows([], options);
   if (worksheet.rowCount - 1 > MAX_XLSX_ROWS) throw new ParserInputError("xlsx_row_limit");
@@ -281,6 +307,12 @@ function preflightXlsxArchive(buffer: ArrayBuffer): Promise<void> {
 
 function hasUnsafeArchivePath(fileName: string): boolean {
   return fileName.startsWith("/") || fileName.includes("\\") || fileName.includes("\0") || fileName.split("/").some((segment) => segment === "..");
+}
+
+function isResourceOrProgramError(error: unknown): boolean {
+  if (error instanceof RangeError || error instanceof TypeError) return true;
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return ["ENOMEM", "EMFILE", "ENFILE"].includes(String((error as { code?: unknown }).code));
 }
 
 function parseCsvRecords(input: string): string[][] {

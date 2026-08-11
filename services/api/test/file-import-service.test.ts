@@ -3,9 +3,11 @@ import { ImportService, type ImportServiceLogger } from "../src/imports/service.
 import {
   DuplicateImportFileError,
   type ImportBatchDetails,
+  NotFoundError,
   type ImportRepository
 } from "../src/imports/repository.js";
 import type { ObjectStorage, StoredObjectInput } from "../src/storage/object-storage.js";
+import { ObjectStorageError } from "../src/storage/object-storage.js";
 
 const context = { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" };
 const now = new Date("2026-08-11T03:04:05.000Z");
@@ -18,6 +20,43 @@ const fileInput = {
 };
 
 describe("ImportService file persistence compensation", () => {
+  it("deletes a possibly stored object when putObject saves bytes and then fails", async () => {
+    const repository = new FailingRepository([null], new Error("must not persist"));
+    const storage = new RecordingStorage();
+    const putFailure = Object.assign(new Error("put timeout secret"), { code: "ETIMEDOUT" });
+    storage.putFailureAfterStore = putFailure;
+    const service = createService(repository, storage);
+
+    await expect(service.createFile(context, fileInput)).rejects.toMatchObject({
+      name: "ObjectStorageError",
+      message: "Unable to store import file",
+      cause: putFailure
+    });
+    expect(storage.objects.size).toBe(0);
+    expect(storage.deletedKeys).toHaveLength(1);
+  });
+
+  it("keeps the put error when uncertain-object cleanup fails and logs only stable diagnostics", async () => {
+    const repository = new FailingRepository([null], new Error("must not persist"));
+    const storage = new RecordingStorage();
+    const putFailure = Object.assign(new Error("put timeout secret"), { code: "ETIMEDOUT" });
+    storage.putFailureAfterStore = putFailure;
+    storage.deleteFailure = Object.assign(new Error("delete credential secret"), { code: "AccessDenied" });
+    const logs: unknown[] = [];
+    const service = createService(repository, storage, { error: (entry) => logs.push(entry) });
+
+    const failure = await service.createFile(context, fileInput).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ObjectStorageError);
+    expect((failure as ObjectStorageError).cause).toBe(putFailure);
+    expect(logs).toEqual([expect.objectContaining({
+      event: "import_object_put_recovery_failed",
+      cause: { type: "Error", code: "AccessDenied" }
+    })]);
+    const serialized = JSON.stringify(logs);
+    expect(serialized).not.toContain("timeout secret");
+    expect(serialized).not.toContain("credential secret");
+  });
+
   it("rejects empty file bytes before duplicate lookup or storage", async () => {
     const repository = new FailingRepository([null], new Error("must not persist"));
     const storage = new RecordingStorage();
@@ -30,6 +69,30 @@ describe("ImportService file persistence compensation", () => {
     expect(storage.objects.size).toBe(0);
   });
 
+  it("encodes untrusted tenant and store IDs as single safe object-key segments", async () => {
+    const unusualContext = {
+      enterpriseId: "ent/../企业\u0000",
+      storeId: "../store/门店\u0001",
+      actorId: "actor"
+    };
+    const repository = new FailingRepository([null], new Error("must not persist"));
+    const storage = new RecordingStorage();
+    storage.putFailureAfterStore = new Error("stop after key capture");
+    const service = createService(repository, storage);
+
+    await expect(service.createFile(unusualContext, fileInput)).rejects.toBeInstanceOf(ObjectStorageError);
+    const key = storage.deletedKeys[0];
+    expect(key.split("/")).toHaveLength(5);
+    expect(key).not.toContain("..");
+    expect(key).not.toContain("企业");
+    expect(key).not.toContain("门店");
+    expect(key).not.toMatch(/[\u0000-\u001f]/);
+    expect(repository.lastChecksumScope).toMatchObject({
+      enterpriseId: unusualContext.enterpriseId,
+      storeId: unusualContext.storeId
+    });
+  });
+
   it("deletes the uploaded object and rethrows the original database error", async () => {
     const failure = new Error("database unavailable");
     const repository = new FailingRepository([null], failure);
@@ -39,6 +102,45 @@ describe("ImportService file persistence compensation", () => {
     await expect(service.createFile(context, fileInput)).rejects.toBe(failure);
     expect(storage.objects.size).toBe(0);
     expect(storage.deletedKeys).toHaveLength(1);
+  });
+
+  it("keeps the object and returns the committed batch when persistence response was lost", async () => {
+    const failure = new Error("commit response timeout private-marker");
+    const repository = new FailingRepository([null], failure, (id) => batchDetails(id));
+    const storage = new RecordingStorage();
+    const logs: unknown[] = [];
+    const service = createService(repository, storage, { error: (entry) => logs.push(entry) });
+
+    const result = await service.createFile(context, fileInput);
+    expect(result).toMatchObject({ batch: { id: expect.any(String) }, duplicate: false });
+    expect(storage.objects.size).toBe(1);
+    expect(storage.deletedKeys).toHaveLength(0);
+    expect(logs).toEqual([expect.objectContaining({
+      event: "import_persistence_recovered",
+      batchId: result.batch.id,
+      objectKey: expect.stringMatching(/^imports\/ent_demo\/store_demo\//)
+    })]);
+    expect(JSON.stringify(logs)).not.toContain("private-marker");
+  });
+
+  it("does not delete the object when persistence reconciliation is inconclusive", async () => {
+    const failure = new Error("commit response timeout private-marker");
+    const lookupFailure = Object.assign(new Error("database lookup credential"), { code: "ETIMEDOUT" });
+    const repository = new FailingRepository([null], failure, lookupFailure);
+    const storage = new RecordingStorage();
+    const logs: unknown[] = [];
+    const service = createService(repository, storage, { error: (entry) => logs.push(entry) });
+
+    await expect(service.createFile(context, fileInput)).rejects.toBe(failure);
+    expect(storage.objects.size).toBe(1);
+    expect(storage.deletedKeys).toHaveLength(0);
+    expect(logs).toEqual([expect.objectContaining({
+      event: "import_object_reconciliation_required",
+      cause: { type: "Error", code: "ETIMEDOUT" }
+    })]);
+    const serialized = JSON.stringify(logs);
+    expect(serialized).not.toContain("private-marker");
+    expect(serialized).not.toContain("credential");
   });
 
   it("preserves the original database error when compensation deletion fails", async () => {
@@ -119,23 +221,45 @@ describe("ImportService file persistence compensation", () => {
     expect(storage.objects.size).toBe(0);
     expect(repository.lookupCalls).toBe(2);
   });
+
+  it("propagates duplicate winner reload failures after deleting the losing object", async () => {
+    const conflict = new DuplicateImportFileError("duplicate conflict marker");
+    const reloadFailure = Object.assign(new Error("winner reload unavailable"), { code: "ETIMEDOUT" });
+    const repository = new FailingRepository([null, reloadFailure], conflict);
+    const storage = new RecordingStorage();
+    const service = createService(repository, storage);
+
+    await expect(service.createFile(context, fileInput)).rejects.toBe(reloadFailure);
+    expect(storage.objects.size).toBe(0);
+    expect(storage.deletedKeys).toHaveLength(1);
+  });
 });
 
 class FailingRepository {
   lookupCalls = 0;
+  lastChecksumScope: { enterpriseId: string; storeId: string } | undefined;
 
   constructor(
-    private readonly lookups: (ImportBatchDetails | null)[],
-    private readonly createFailure: unknown
+    private readonly lookups: (ImportBatchDetails | Error | null)[],
+    private readonly createFailure: unknown,
+    private readonly batchLookup: ImportBatchDetails | Error | ((id: string) => ImportBatchDetails) = new NotFoundError("Import batch not found")
   ) {}
 
-  async findBatchByFileChecksum(): Promise<ImportBatchDetails | null> {
+  async findBatchByFileChecksum(input?: { enterpriseId: string; storeId: string }): Promise<ImportBatchDetails | null> {
     this.lookupCalls += 1;
-    return this.lookups.shift() ?? null;
+    this.lastChecksumScope = input;
+    const lookup = this.lookups.shift() ?? null;
+    if (lookup instanceof Error) throw lookup;
+    return lookup;
   }
 
   async createBatchWithCandidates(): Promise<never> {
     throw this.createFailure;
+  }
+
+  async getBatch(input: { id: string }): Promise<ImportBatchDetails> {
+    if (this.batchLookup instanceof Error) throw this.batchLookup;
+    return typeof this.batchLookup === "function" ? this.batchLookup(input.id) : this.batchLookup;
   }
 }
 
@@ -143,9 +267,11 @@ class RecordingStorage implements ObjectStorage {
   readonly objects = new Map<string, StoredObjectInput>();
   readonly deletedKeys: string[] = [];
   deleteFailure: unknown;
+  putFailureAfterStore: unknown;
 
   async putObject(input: StoredObjectInput): Promise<void> {
     this.objects.set(input.key, { ...input, bytes: Buffer.from(input.bytes) });
+    if (this.putFailureAfterStore) throw this.putFailureAfterStore;
   }
 
   async deleteObject(key: string): Promise<"deleted" | "missing"> {

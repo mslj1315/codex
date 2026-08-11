@@ -85,15 +85,19 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ObjectStorageError) {
-      request.log.error({
-        event: "import_object_storage_error",
-        requestId: request.id,
-        route: request.routeOptions.url,
-        storageError: {
-          message: "Unable to store import file",
-          cause: redactedStorageCause(error.cause)
-        }
-      }, "Unable to store import file");
+      try {
+        request.log.error({
+          event: "import_object_storage_error",
+          requestId: request.id,
+          route: request.routeOptions.url,
+          storageError: {
+            message: "Unable to store import file",
+            cause: redactedStorageCause(error.cause)
+          }
+        }, "Unable to store import file");
+      } catch {
+        // Logging failure must not change the neutral storage response.
+      }
       return reply.code(503).send(errorBody("Unable to store import file"));
     }
     if (error instanceof ParserInputError) return reply.code(error.code === "xlsx_too_large" ? 413 : 422).send(errorBody(error.message));

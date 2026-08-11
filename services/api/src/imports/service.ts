@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { ParserInputError, parseCsv, parseXlsx } from "./parser.js";
+import { ParserInputError, parseCsvBytes, parseXlsx } from "./parser.js";
 import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput } from "./repository.js";
 import type { MetricKey } from "./models.js";
-import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
+import { DuplicateImportFileError, ImportRepository, NotFoundError, ValidationError } from "./repository.js";
 import {
   ObjectStorageError,
   type ObjectStorage
@@ -64,14 +64,15 @@ export class ImportService {
     if (duplicate) return { batch: duplicate, duplicate: true };
     const sourceType = fileType(input.filename, input.mimeType);
     const parsed = sourceType === "csv"
-      ? parseCsv(input.bytes.toString("utf8"), input)
+      ? parseCsvBytes(input.bytes, input)
       : await parseXlsx(input.bytes, input);
+    if (parsed.candidates.length === 0) throw new ParserInputError("no_recognized_candidates");
     const batchId = randomUUID();
     const uploadedAt = this.now();
     const normalizedMimeType = sourceType === "csv"
       ? "text/csv"
       : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    const objectKey = `imports/${context.enterpriseId}/${context.storeId}/${batchId}/${sha256Checksum}.${sourceType}`;
+    const objectKey = `imports/${objectKeySegment(context.enterpriseId)}/${objectKeySegment(context.storeId)}/${batchId}/${sha256Checksum}.${sourceType}`;
     const batchInput = {
       id: batchId,
       ...context, sourceType, rangeStart: input.rangeStart, rangeEnd: input.rangeEnd
@@ -80,9 +81,15 @@ export class ImportService {
     try {
       await this.objectStorage.putObject({ key: objectKey, bytes: input.bytes, contentType: normalizedMimeType });
     } catch (error) {
-      throw error instanceof ObjectStorageError
+      const storageError = error instanceof ObjectStorageError
         ? error
         : new ObjectStorageError("Unable to store import file", error);
+      await this.deleteObjectBestEffort(
+        objectKey,
+        "import_object_put_recovery_failed",
+        "Unable to clean up uncertain import object write"
+      );
+      throw storageError;
     }
     try {
       const batch = await this.imports.createBatchWithCandidates(batchInput, candidates, {
@@ -93,23 +100,55 @@ export class ImportService {
       });
       return { batch, duplicate: false };
     } catch (error) {
-      await this.compensateObjectWrite(objectKey);
       if (error instanceof DuplicateImportFileError) {
-        let winner: ImportBatchDetails | null = null;
+        await this.compensateObjectWrite(objectKey);
         try {
-          winner = await this.imports.findBatchByFileChecksum({
+          const winner = await this.imports.findBatchByFileChecksum({
             enterpriseId: context.enterpriseId,
             storeId: context.storeId,
             sha256Checksum
           });
-        } catch {
-          throw error;
+          if (winner) return { batch: winner, duplicate: true };
+        } catch (reloadError) {
+          throw reloadError instanceof Error
+            ? reloadError
+            : new Error("Unable to reload duplicate import", { cause: reloadError });
         }
-        if (winner) return { batch: winner, duplicate: true };
         throw error;
       }
-      if (error instanceof Error) throw error;
-      throw new Error("Import persistence failed", { cause: error });
+
+      const persistenceError = error instanceof Error
+        ? error
+        : new Error("Import persistence failed", { cause: error });
+      try {
+        const recovered = await this.imports.getBatch({
+          id: batchId,
+          enterpriseId: context.enterpriseId,
+          storeId: context.storeId
+        });
+        this.logBestEffort({
+          event: "import_persistence_recovered",
+          objectKey,
+          batchId,
+          enterpriseId: context.enterpriseId,
+          storeId: context.storeId
+        }, "Recovered committed import after persistence response failure");
+        return { batch: recovered, duplicate: false };
+      } catch (lookupError) {
+        if (lookupError instanceof NotFoundError) {
+          await this.compensateObjectWrite(objectKey);
+        } else {
+          this.logBestEffort({
+            event: "import_object_reconciliation_required",
+            objectKey,
+            batchId,
+            enterpriseId: context.enterpriseId,
+            storeId: context.storeId,
+            cause: diagnosticCause(lookupError)
+          }, "Import persistence result requires reconciliation");
+        }
+        throw persistenceError;
+      }
     }
   }
 
@@ -154,18 +193,26 @@ export class ImportService {
   }
 
   private async compensateObjectWrite(objectKey: string): Promise<void> {
+    await this.deleteObjectBestEffort(
+      objectKey,
+      "import_object_compensation_failed",
+      "Unable to compensate import object write"
+    );
+  }
+
+  private async deleteObjectBestEffort(objectKey: string, event: string, message: string): Promise<void> {
     try {
       await this.objectStorage.deleteObject(objectKey);
     } catch (error) {
-      try {
-        this.logger.error({
-          event: "import_object_compensation_failed",
-          objectKey,
-          cause: diagnosticCause(error)
-        }, "Unable to compensate import object write");
-      } catch {
-        // Logging must never replace the persistence failure being compensated.
-      }
+      this.logBestEffort({ event, objectKey, cause: diagnosticCause(error) }, message);
+    }
+  }
+
+  private logBestEffort(entry: Record<string, unknown>, message: string): void {
+    try {
+      this.logger.error(entry, message);
+    } catch {
+      // Logging must never replace the operation result being reported.
     }
   }
 }
@@ -196,6 +243,10 @@ function diagnosticToken(value: unknown): string | undefined {
   return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value)
     ? value
     : undefined;
+}
+
+function objectKeySegment(value: string): string {
+  return encodeURIComponent(value).replace(/\./g, "%2E");
 }
 
 const metricUnits: Record<MetricKey, "cents" | "count"> = { revenue: "cents", orders: "count", average_spend: "cents", package_sales: "cents", package_redemptions: "count", refunds: "cents", promotion_spend: "cents" };
