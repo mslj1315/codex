@@ -48,7 +48,11 @@ export interface CreateImportFileInput {
 
 export interface ImportFileRecord extends CreateImportFileInput {
   cleanedAt: Date | null;
+  cleanupAttemptedAt: Date | null;
+  cleanupFailureCount: number;
 }
+
+export const IMPORT_FILE_CLEANUP_RETRY_DELAY_MS = 60 * 60 * 1000;
 
 export interface ImportBatch {
   id: string;
@@ -244,26 +248,46 @@ export class ImportRepository {
   }
 
   async listExpiredImportFiles(now: Date, limit = 100): Promise<ImportFileRecord[]> {
+    assertValidDate(now, "Cleanup time");
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
       throw new ValidationError("Cleanup limit must be an integer between 1 and 1000");
     }
+    const retryCutoff = new Date(now.getTime() - IMPORT_FILE_CLEANUP_RETRY_DELAY_MS);
     const result = await this.database.query<Row>(
       `SELECT * FROM import_files
        WHERE cleaned_at IS NULL AND expires_at <= $1
-       ORDER BY expires_at, id
-       LIMIT $2`,
-      [now, limit]
+       AND (cleanup_attempted_at IS NULL OR cleanup_attempted_at <= $2)
+       ORDER BY CASE WHEN cleanup_attempted_at IS NULL THEN 0 ELSE 1 END,
+         cleanup_attempted_at, expires_at, id
+       LIMIT $3`,
+      [now, retryCutoff, limit]
     );
     return result.rows.map(toImportFile);
   }
 
-  async markImportFileCleaned(id: string, cleanedAt: Date): Promise<void> {
-    await this.database.query(
+  async markImportFileCleaned(id: string, cleanedAt: Date): Promise<boolean> {
+    assertValidDate(cleanedAt, "Cleanup time");
+    // Retain attempt counters after success as bounded operational history.
+    const result = await this.database.query(
       `UPDATE import_files
-       SET cleaned_at = COALESCE(cleaned_at, $1), updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2`,
+       SET cleaned_at = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND cleaned_at IS NULL`,
       [cleanedAt, id]
     );
+    return result.rowCount === 1;
+  }
+
+  async recordImportFileCleanupFailure(id: string, attemptedAt: Date): Promise<boolean> {
+    assertValidDate(attemptedAt, "Cleanup attempt time");
+    const result = await this.database.query(
+      `UPDATE import_files
+       SET cleanup_attempted_at = $1,
+         cleanup_failure_count = cleanup_failure_count + 1,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND cleaned_at IS NULL`,
+      [attemptedAt, id]
+    );
+    return result.rowCount === 1;
   }
 
   async createCandidate(input: CreateCandidateInput): Promise<ImportCandidate> {
@@ -477,7 +501,9 @@ function toImportFile(row: Row): ImportFileRecord {
     storeId: string(row.store_id), originalFileName: string(row.original_file_name),
     normalizedMimeType: string(row.normalized_mime_type), byteCount: number(row.byte_count),
     sha256Checksum: string(row.sha256_checksum), objectKey: string(row.object_key),
-    uploadedAt: date(row.uploaded_at), expiresAt: date(row.expires_at), cleanedAt: nullableDate(row.cleaned_at)
+    uploadedAt: date(row.uploaded_at), expiresAt: date(row.expires_at), cleanedAt: nullableDate(row.cleaned_at),
+    cleanupAttemptedAt: nullableDate(row.cleanup_attempted_at),
+    cleanupFailureCount: number(row.cleanup_failure_count)
   };
 }
 
@@ -509,6 +535,11 @@ function dateOnly(value: unknown): string { return value instanceof Date ? value
 function assertSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new ValidationError(`${name} must be a JSON safe integer`);
+  }
+}
+function assertValidDate(value: Date, name: string): void {
+  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+    throw new ValidationError(`${name} must be a valid date`);
   }
 }
 function isUniqueViolation(error: unknown): error is { code: string } {

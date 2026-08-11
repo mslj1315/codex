@@ -2,7 +2,10 @@ import { readdir, readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
-import { cleanupExpiredImportFiles } from "../src/imports/file-cleanup.js";
+import {
+  cleanupExpiredImportFiles,
+  IMPORT_FILE_CLEANUP_RETRY_DELAY_MS
+} from "../src/imports/file-cleanup.js";
 import {
   ImportRepository,
   ValidationError,
@@ -121,6 +124,37 @@ describe("expired import file cleanup", () => {
     expect(storage.objects.has(succeeded.objectKey)).toBe(false);
     expect(await cleanedAt(database, failed.id)).toBeNull();
     expect(await cleanedAt(database, succeeded.id)).toEqual(now);
+    expect(await cleanupState(database, failed.id)).toMatchObject({
+      cleanup_attempted_at: now,
+      cleanup_failure_count: 1
+    });
+  });
+
+  it("backs off a permanently failing oldest file so an unattempted file is not starved", async () => {
+    const failed = await createFile(imports, storage, "a_poison", new Date(now.getTime() - 20));
+    const pending = await createFile(imports, storage, "z_pending", new Date(now.getTime() - 10));
+    storage.deleteFailures.add(failed.objectKey);
+
+    await expect(cleanupExpiredImportFiles(imports, storage, now, 1)).resolves.toEqual({
+      scanned: 1, cleaned: 0, failed: 1
+    });
+    await expect(cleanupExpiredImportFiles(imports, storage, now, 1)).resolves.toEqual({
+      scanned: 1, cleaned: 1, failed: 0
+    });
+    expect(storage.objects.has(pending.objectKey)).toBe(false);
+
+    await expect(imports.listExpiredImportFiles(
+      new Date(now.getTime() + IMPORT_FILE_CLEANUP_RETRY_DELAY_MS - 1)
+    )).resolves.toEqual([]);
+    const retryAt = new Date(now.getTime() + IMPORT_FILE_CLEANUP_RETRY_DELAY_MS);
+    await expect(imports.listExpiredImportFiles(retryAt)).resolves.toMatchObject([{ id: failed.id }]);
+    await expect(cleanupExpiredImportFiles(imports, storage, retryAt, 1)).resolves.toEqual({
+      scanned: 1, cleaned: 0, failed: 1
+    });
+    expect(await cleanupState(database, failed.id)).toMatchObject({
+      cleanup_attempted_at: retryAt,
+      cleanup_failure_count: 2
+    });
   });
 
   it("retries after deletion succeeds but marking fails", async () => {
@@ -135,12 +169,21 @@ describe("expired import file cleanup", () => {
     expect(storage.objects.has(file.objectKey)).toBe(false);
     expect(await cleanedAt(database, file.id)).toBeNull();
 
-    await expect(cleanupExpiredImportFiles(imports, storage, now)).resolves.toEqual({
+    const retryAt = new Date(now.getTime() + IMPORT_FILE_CLEANUP_RETRY_DELAY_MS);
+    await expect(cleanupExpiredImportFiles(
+      imports,
+      storage,
+      retryAt
+    )).resolves.toEqual({
       scanned: 1,
       cleaned: 1,
       failed: 0
     });
-    expect(await cleanedAt(database, file.id)).toEqual(now);
+    expect(await cleanedAt(database, file.id)).toEqual(retryAt);
+    expect(await cleanupState(database, file.id)).toMatchObject({
+      cleanup_attempted_at: now,
+      cleanup_failure_count: 1
+    });
   });
 
   it("orders by expiry and id and processes no more than the limit", async () => {
@@ -165,6 +208,13 @@ describe("expired import file cleanup", () => {
     await expect(imports.listExpiredImportFiles(now, limit)).rejects.toBeInstanceOf(ValidationError);
   });
 
+  it("rejects invalid cleanup timestamps", async () => {
+    const invalid = new Date(Number.NaN);
+    await expect(imports.listExpiredImportFiles(invalid)).rejects.toBeInstanceOf(ValidationError);
+    await expect(imports.markImportFileCleaned("file", invalid)).rejects.toBeInstanceOf(ValidationError);
+    await expect(imports.recordImportFileCleanupFailure("file", invalid)).rejects.toBeInstanceOf(ValidationError);
+  });
+
   it("maps timestamps and marks metadata idempotently without replacing the first cleanup time", async () => {
     const file = await createFile(imports, storage, "idempotent", new Date(now.getTime() - 1));
     const first = new Date("2026-11-09T08:01:00.000Z");
@@ -175,9 +225,16 @@ describe("expired import file cleanup", () => {
     expect(mapped.expiresAt).toEqual(file.expiresAt);
     expect(mapped.cleanedAt).toBeNull();
 
-    await imports.markImportFileCleaned(file.id, first);
-    await imports.markImportFileCleaned(file.id, second);
+    await database.query("UPDATE import_files SET updated_at = $1 WHERE id = $2", [
+      new Date("2026-01-01T00:00:00.000Z"),
+      file.id
+    ]);
+    expect(await imports.markImportFileCleaned(file.id, first)).toBe(true);
+    const firstState = await cleanupState(database, file.id);
+    expect(await imports.markImportFileCleaned(file.id, second)).toBe(false);
+    const repeatedState = await cleanupState(database, file.id);
     expect(await cleanedAt(database, file.id)).toEqual(first);
+    expect(repeatedState.updated_at).toEqual(firstState.updated_at);
   });
 });
 
@@ -188,12 +245,12 @@ class MarkFailingRepository extends ImportRepository {
     super(database);
   }
 
-  override async markImportFileCleaned(id: string, cleanedAt: Date): Promise<void> {
+  override async markImportFileCleaned(id: string, cleanedAt: Date): Promise<boolean> {
     if (id === this.targetId && !this.failed) {
       this.failed = true;
       throw new Error("database mark failed");
     }
-    await super.markImportFileCleaned(id, cleanedAt);
+    return super.markImportFileCleaned(id, cleanedAt);
   }
 }
 
@@ -239,6 +296,25 @@ async function cleanedAt(database: Database, id: string): Promise<Date | null> {
     [id]
   );
   return result.rows[0].cleaned_at;
+}
+
+async function cleanupState(database: Database, id: string): Promise<{
+  cleaned_at: Date | null;
+  cleanup_attempted_at: Date | null;
+  cleanup_failure_count: number;
+  updated_at: Date;
+}> {
+  const result = await database.query<{
+    cleaned_at: Date | null;
+    cleanup_attempted_at: Date | null;
+    cleanup_failure_count: number;
+    updated_at: Date;
+  }>(
+    `SELECT cleaned_at, cleanup_attempted_at, cleanup_failure_count, updated_at
+     FROM import_files WHERE id = $1`,
+    [id]
+  );
+  return result.rows[0];
 }
 
 async function applyTestMigrations(database: Database): Promise<void> {

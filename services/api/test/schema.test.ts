@@ -119,6 +119,10 @@ describe("import repository", () => {
     expect(migration).toContain("UNIQUE (enterprise_id, store_id, sha256_checksum)");
     expect(migration).toContain("expires_at TIMESTAMPTZ NOT NULL");
     expect(migration).toContain("cleaned_at TIMESTAMPTZ");
+    expect(migration).toContain("cleanup_attempted_at TIMESTAMPTZ");
+    expect(migration).toContain("cleanup_failure_count INTEGER NOT NULL DEFAULT 0");
+    expect(migration).toContain("CHECK (cleanup_failure_count >= 0)");
+    expect(migration).toContain("import_files_cleanup_queue_idx");
   });
 
   it("creates import file metadata and maps BIGINT and timestamps", async () => {
@@ -158,7 +162,9 @@ describe("import repository", () => {
       objectKey: "imports/ent_demo/store_demo/batch_file_metadata/a.csv",
       uploadedAt,
       expiresAt,
-      cleanedAt: null
+      cleanedAt: null,
+      cleanupAttemptedAt: null,
+      cleanupFailureCount: 0
     });
     expect(file.byteCount).toBeTypeOf("number");
     expect(file.uploadedAt).toBeInstanceOf(Date);
