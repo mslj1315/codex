@@ -6,7 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import com.restaurantops.imports.network.ImportRequestException
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ImportViewModelTest {
     @Test
     fun `unresolved candidates remain outside bulk confirmation`() {
@@ -124,6 +131,64 @@ class ImportViewModelTest {
         assertEquals(listOf("candidate_unresolved"), viewModel.unresolvedCandidateIds)
     }
 
+    @Test
+    fun `validation failure preserves summary and shows the server message`() = runTest {
+        val repository = FailingCreateRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository, this)
+
+        viewModel.load("store_demo", "import_1")
+        advanceUntilIdle()
+        viewModel.createManualImport("store_demo", manualDraft())
+        advanceUntilIdle()
+
+        assertEquals(summaryWithReadyAndUnresolved, viewModel.summary)
+        assertEquals("营业额必须大于 0", viewModel.requestError)
+        assertFalse(viewModel.isLoading)
+    }
+
+    @Test
+    fun `conflict reloads the current batch and leaves it usable`() = runTest {
+        val refreshed = summaryWithReadyAndUnresolved.copy(
+            candidates = listOf(summaryWithReadyAndUnresolved.candidates.first().copy(value = 5_000_000))
+        )
+        val repository = ConflictThenSuccessRepository(summaryWithReadyAndUnresolved, refreshed)
+        val viewModel = ImportViewModel(repository, this)
+
+        viewModel.load("store_demo", "import_1")
+        advanceUntilIdle()
+        viewModel.confirmReady("store_demo")
+        advanceUntilIdle()
+
+        assertEquals(refreshed, viewModel.summary)
+        assertEquals("数据已发生变化，已刷新当前导入记录", viewModel.requestError)
+        assertFalse(viewModel.isLoading)
+
+        viewModel.confirmReady("store_demo")
+        advanceUntilIdle()
+        assertTrue(viewModel.isReadOnly)
+        assertEquals(2, repository.confirmCalls)
+    }
+
+    @Test
+    fun `duplicate confirmation is blocked while request is in flight`() = runTest {
+        val repository = BlockingConfirmRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository, this)
+
+        viewModel.load("store_demo", "import_1")
+        advanceUntilIdle()
+        viewModel.confirmReady("store_demo")
+        runCurrent()
+        viewModel.confirmReady("store_demo")
+
+        assertTrue(viewModel.isLoading)
+        assertEquals(1, repository.confirmCalls)
+
+        repository.releaseConfirmation()
+        advanceUntilIdle()
+        assertFalse(viewModel.isLoading)
+        assertTrue(viewModel.isReadOnly)
+    }
+
     private class FakeImportRepository(
         private val summary: ImportSummary
     ) : ImportRepository {
@@ -189,8 +254,57 @@ class ImportViewModelTest {
         override suspend fun loadLatestFacts(storeId: String): FactVersion = FactVersion("fact_1", "import_1", "confirmed")
     }
 
+    private class FailingCreateRepository(
+        private val summary: ImportSummary
+    ) : ImportRepository by FakeImportRepository(summary) {
+        override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary {
+            throw ImportRequestException(422, "营业额必须大于 0")
+        }
+    }
+
+    private class ConflictThenSuccessRepository(
+        private val initial: ImportSummary,
+        private val refreshed: ImportSummary
+    ) : ImportRepository by FakeImportRepository(initial) {
+        var confirmCalls = 0
+        var loadCalls = 0
+
+        override suspend fun loadImport(storeId: String, importId: String): ImportSummary {
+            loadCalls += 1
+            return if (loadCalls == 1) initial else refreshed
+        }
+
+        override suspend fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion {
+            confirmCalls += 1
+            if (confirmCalls == 1) throw ImportRequestException(409, "conflict")
+            return FactVersion("fact_1", importId, "confirmed")
+        }
+    }
+
+    private class BlockingConfirmRepository(
+        private val summary: ImportSummary
+    ) : ImportRepository by FakeImportRepository(summary) {
+        private val confirmation = CompletableDeferred<Unit>()
+        var confirmCalls = 0
+
+        override suspend fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion {
+            confirmCalls += 1
+            confirmation.await()
+            return FactVersion("fact_1", importId, "confirmed")
+        }
+
+        fun releaseConfirmation() {
+            confirmation.complete(Unit)
+        }
+    }
+
     private companion object {
         fun testScope() = CoroutineScope(Dispatchers.Unconfined)
+        fun manualDraft() = ManualImportDraft(
+            rangeStart = "2026-08-01",
+            rangeEnd = "2026-08-07",
+            candidates = emptyList()
+        )
         val summaryWithReadyAndUnresolved = ImportSummary(
             id = "import_1",
             sourceType = ImportSourceType.MANUAL,

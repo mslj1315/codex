@@ -5,7 +5,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.restaurantops.imports.network.ImportRequestException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class ImportViewModel(
@@ -19,6 +21,12 @@ class ImportViewModel(
         private set
 
     var confirmationMessage by mutableStateOf<String?>(null)
+        private set
+
+    var isLoading by mutableStateOf(false)
+        private set
+
+    var requestError by mutableStateOf<String?>(null)
         private set
 
     private var isConfirmed by mutableStateOf(false)
@@ -40,24 +48,36 @@ class ImportViewModel(
             .map { it.id }
 
     fun load(storeId: String, importId: String) {
+        if (!beginRequest()) return
         operationScope.launch {
-            summary = repository.loadImport(storeId, importId)
-            isConfirmed = summary?.status == ImportBatchStatus.CONFIRMED
-            confirmationMessage = null
+            try {
+                applySummary(repository.loadImport(storeId, importId))
+            } catch (error: Throwable) {
+                showRequestError(error)
+            } finally {
+                isLoading = false
+            }
         }
     }
 
     fun selectSource(sourceType: ImportSourceType) {
+        if (isLoading) return
         selectedSource = sourceType
         confirmationMessage = null
+        requestError = null
     }
 
     fun createManualImport(storeId: String, draft: ManualImportDraft) {
+        if (!beginRequest()) return
         operationScope.launch {
-            summary = repository.createManualImport(storeId, draft)
-            selectedSource = ImportSourceType.MANUAL
-            isConfirmed = false
-            confirmationMessage = null
+            try {
+                applySummary(repository.createManualImport(storeId, draft))
+                selectedSource = ImportSourceType.MANUAL
+            } catch (error: Throwable) {
+                showRequestError(error)
+            } finally {
+                isLoading = false
+            }
         }
     }
 
@@ -65,20 +85,26 @@ class ImportViewModel(
         val currentSummary = summary ?: return
         val candidate = currentSummary.candidates.firstOrNull { it.id == candidateId } ?: return
         if (candidate.status != ImportCandidateStatus.NEEDS_CONFIRMATION || isConfirmed) return
+        if (!beginRequest()) return
         val normalizedUnit = unit.trim().lowercase()
         val isResolved = value > 0 && normalizedUnit in CONFIRMABLE_UNITS
         operationScope.launch {
-            summary = repository.updateCandidate(
-                storeId = storeId,
-                importId = currentSummary.id,
-                candidateId = candidateId,
-                update = ImportCandidateUpdate(
-                    value = value,
-                    unit = normalizedUnit,
-                    status = if (isResolved) ImportCandidateStatus.READY else ImportCandidateStatus.NEEDS_CONFIRMATION
-                )
-            )
-            confirmationMessage = null
+            try {
+                applySummary(repository.updateCandidate(
+                    storeId = storeId,
+                    importId = currentSummary.id,
+                    candidateId = candidateId,
+                    update = ImportCandidateUpdate(
+                        value = value,
+                        unit = normalizedUnit,
+                        status = if (isResolved) ImportCandidateStatus.READY else ImportCandidateStatus.NEEDS_CONFIRMATION
+                    )
+                ))
+            } catch (error: Throwable) {
+                showRequestError(error)
+            } finally {
+                isLoading = false
+            }
         }
     }
 
@@ -87,15 +113,68 @@ class ImportViewModel(
         if (isConfirmed) return
         val candidateIds = readyCandidateIds
         if (candidateIds.isEmpty()) return
+        if (!beginRequest()) return
         operationScope.launch {
-            repository.confirm(storeId, currentSummary.id, candidateIds)
-            summary = currentSummary.copy(status = ImportBatchStatus.CONFIRMED)
-            isConfirmed = true
-            confirmationMessage = "\u5df2\u751f\u6210\u786e\u8ba4\u6570\u636e\u7248\u672c"
+            try {
+                repository.confirm(storeId, currentSummary.id, candidateIds)
+                applySummary(currentSummary.copy(status = ImportBatchStatus.CONFIRMED))
+                confirmationMessage = "\u5df2\u751f\u6210\u786e\u8ba4\u6570\u636e\u7248\u672c"
+            } catch (error: ImportRequestException) {
+                if (error.statusCode == CONFLICT_STATUS) {
+                    reloadAfterConflict(storeId, currentSummary.id)
+                } else {
+                    showRequestError(error)
+                    isLoading = false
+                }
+            } catch (error: Throwable) {
+                showRequestError(error)
+                isLoading = false
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    private suspend fun reloadAfterConflict(storeId: String, importId: String) {
+        try {
+            applySummary(repository.loadImport(storeId, importId))
+            requestError = "数据已发生变化，已刷新当前导入记录"
+        } catch (error: Throwable) {
+            showRequestError(error)
+        } finally {
+            isLoading = false
+        }
+    }
+
+    private fun beginRequest(): Boolean {
+        if (isLoading) return false
+        isLoading = true
+        requestError = null
+        confirmationMessage = null
+        return true
+    }
+
+    private fun applySummary(importSummary: ImportSummary) {
+        summary = importSummary
+        isConfirmed = importSummary.status == ImportBatchStatus.CONFIRMED
+        confirmationMessage = null
+    }
+
+    private fun showRequestError(error: Throwable) {
+        if (error is CancellationException) throw error
+        requestError = when (error) {
+            is ImportRequestException -> when (error.statusCode) {
+                FORBIDDEN_STATUS -> "本地开发门店上下文拒绝了该请求"
+                else -> error.message ?: CONNECTION_FAILURE_MESSAGE
+            }
+            else -> CONNECTION_FAILURE_MESSAGE
         }
     }
 
     private companion object {
         val CONFIRMABLE_UNITS = setOf("yuan", "cents", "count", "times")
+        const val FORBIDDEN_STATUS = 403
+        const val CONFLICT_STATUS = 409
+        const val CONNECTION_FAILURE_MESSAGE = "连接服务失败，请稍后重试"
     }
 }
