@@ -36,13 +36,13 @@ class ImportViewModel(
 
     val unresolvedCandidateIds: List<String>
         get() = summary?.candidates.orEmpty()
-            .filter { it.status != ImportCandidateStatus.READY }
+            .filter { it.status == ImportCandidateStatus.NEEDS_CONFIRMATION }
             .map { it.id }
 
     fun load(storeId: String, importId: String) {
         operationScope.launch {
             summary = repository.loadImport(storeId, importId)
-            isConfirmed = false
+            isConfirmed = summary?.status == ImportBatchStatus.CONFIRMED
             confirmationMessage = null
         }
     }
@@ -89,6 +89,7 @@ class ImportViewModel(
         if (candidateIds.isEmpty()) return
         operationScope.launch {
             repository.confirm(storeId, currentSummary.id, candidateIds)
+            summary = currentSummary.copy(status = ImportBatchStatus.CONFIRMED)
             isConfirmed = true
             confirmationMessage = "\u5df2\u751f\u6210\u786e\u8ba4\u6570\u636e\u7248\u672c"
         }

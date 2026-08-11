@@ -100,6 +100,30 @@ class ImportViewModelTest {
         assertEquals(listOf("candidate_unresolved"), viewModel.unresolvedCandidateIds)
     }
 
+    @Test
+    fun `loading a confirmed batch is read only and excludes terminal candidates from unresolved editors`() {
+        val confirmedSummary = summaryWithReadyAndUnresolved.copy(
+            status = ImportBatchStatus.CONFIRMED,
+            candidates = summaryWithReadyAndUnresolved.candidates + listOf(
+                summaryWithReadyAndUnresolved.candidates.first().copy(
+                    id = "candidate_confirmed",
+                    status = ImportCandidateStatus.CONFIRMED
+                ),
+                summaryWithReadyAndUnresolved.candidates.first().copy(
+                    id = "candidate_rejected",
+                    status = ImportCandidateStatus.REJECTED
+                )
+            )
+        )
+        val viewModel = ImportViewModel(FakeImportRepository(confirmedSummary), testScope())
+
+        viewModel.load("store_demo", "import_1")
+
+        assertTrue(viewModel.isReadOnly)
+        assertEquals(emptyList<String>(), viewModel.readyCandidateIds)
+        assertEquals(listOf("candidate_unresolved"), viewModel.unresolvedCandidateIds)
+    }
+
     private class FakeImportRepository(
         private val summary: ImportSummary
     ) : ImportRepository {

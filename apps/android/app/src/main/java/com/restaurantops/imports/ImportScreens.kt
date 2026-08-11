@@ -179,7 +179,7 @@ private fun ImportSummaryContent(
             Text("可批量确认 $readyCount 项 · 待确认 $unresolvedCount 项")
             Button(
                 onClick = onConfirmReady,
-                enabled = readyCount > 0,
+                enabled = readyCount > 0 && !isReadOnly,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("批量确认已就绪项（$readyCount）")
@@ -196,7 +196,7 @@ private fun ImportSummaryContent(
         }
     }
 
-    val unresolvedCandidates = summary.candidates.filter { it.status != ImportCandidateStatus.READY }
+    val unresolvedCandidates = summary.candidates.filter { it.status == ImportCandidateStatus.NEEDS_CONFIRMATION }
     if (unresolvedCandidates.isNotEmpty()) {
         Text("待确认项", style = MaterialTheme.typography.titleSmall)
         unresolvedCandidates.forEach { candidate ->

@@ -13,6 +13,11 @@ enum class ImportCandidateStatus {
     REJECTED
 }
 
+enum class ImportBatchStatus {
+    PENDING_CONFIRMATION,
+    CONFIRMED
+}
+
 data class ImportCandidate(
     val id: String,
     val metricKey: String,
@@ -30,6 +35,7 @@ data class ImportCandidate(
 data class ImportSummary(
     val id: String,
     val sourceType: ImportSourceType,
+    val status: ImportBatchStatus = ImportBatchStatus.PENDING_CONFIRMATION,
     val rangeStart: String,
     val rangeEnd: String,
     val candidates: List<ImportCandidate>

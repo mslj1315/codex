@@ -4,6 +4,7 @@ import com.restaurantops.imports.FactVersion
 import com.restaurantops.imports.ImportCandidate
 import com.restaurantops.imports.ImportCandidateStatus
 import com.restaurantops.imports.ImportCandidateUpdate
+import com.restaurantops.imports.ImportBatchStatus
 import com.restaurantops.imports.ImportRepository
 import com.restaurantops.imports.ImportSourceType
 import com.restaurantops.imports.ImportSummary
@@ -69,10 +70,12 @@ class HttpImportRepository(
 private fun HttpException.apiErrorMessage(): String {
     val fallback = "Import request failed (${code()})"
     val body = response()?.errorBody() ?: return fallback
-    return try {
-        Gson().fromJson(body.charStream(), ApiErrorBody::class.java)?.error?.takeIf { it.isNotBlank() } ?: fallback
-    } catch (_: Exception) {
-        fallback
+    return body.use { errorBody ->
+        try {
+            Gson().fromJson(errorBody.charStream(), ApiErrorBody::class.java)?.error?.takeIf { it.isNotBlank() } ?: fallback
+        } catch (_: Exception) {
+            fallback
+        }
     }
 }
 
@@ -107,6 +110,7 @@ private fun ImportCandidateUpdate.toRequest() = CandidateUpdateRequest(
 private fun ImportBatchResponse.toSummary() = ImportSummary(
     id = id,
     sourceType = sourceType.toSourceType(),
+    status = status.toBatchStatus(),
     rangeStart = requireNotNull(rangeStart) { "Import batch rangeStart is required" },
     rangeEnd = requireNotNull(rangeEnd) { "Import batch rangeEnd is required" },
     candidates = candidates.map { it.toCandidate() }
@@ -145,6 +149,12 @@ private fun String.toCandidateStatus() = when (this) {
     "confirmed" -> ImportCandidateStatus.CONFIRMED
     "rejected" -> ImportCandidateStatus.REJECTED
     else -> throw IllegalArgumentException("Unknown import candidate status: $this")
+}
+
+private fun String.toBatchStatus() = when (this) {
+    "pending_confirmation" -> ImportBatchStatus.PENDING_CONFIRMATION
+    "confirmed" -> ImportBatchStatus.CONFIRMED
+    else -> throw IllegalArgumentException("Unknown import batch status: $this")
 }
 
 private fun ImportCandidateStatus.toApiValue() = when (this) {

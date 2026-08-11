@@ -3,12 +3,14 @@ package com.restaurantops.imports.network
 import com.restaurantops.imports.ImportCandidate
 import com.restaurantops.imports.ImportCandidateStatus
 import com.restaurantops.imports.ImportCandidateUpdate
+import com.restaurantops.imports.ImportBatchStatus
 import com.restaurantops.imports.ImportSourceType
 import com.restaurantops.imports.ManualImportDraft
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
@@ -64,6 +66,7 @@ class HttpImportRepositoryTest {
         assertNull(result.candidates[0].rangeEnd)
         assertEquals(ImportCandidateStatus.REJECTED, result.candidates[1].status)
         assertEquals("invalid_value", result.candidates[1].issueCode)
+        assertEquals(ImportBatchStatus.PENDING_CONFIRMATION, result.status)
     }
 
     @Test
@@ -132,6 +135,17 @@ class HttpImportRepositoryTest {
     }
 
     @Test
+    fun `HTTP error parsing closes the response body when JSON is valid or malformed`() = runBlocking {
+        val validBody = TrackingResponseBody("{\"error\":\"Invalid range\"}")
+        val malformedBody = TrackingResponseBody("not json")
+        assertImportFailure(validBody)
+        assertImportFailure(malformedBody)
+
+        assertTrue(validBody.closed)
+        assertTrue(malformedBody.closed)
+    }
+
+    @Test
     fun `import API declares the local service contract without client identity fields`() {
         val api = ImportApi::class.java
 
@@ -185,6 +199,19 @@ class HttpImportRepositoryTest {
     private fun Any.fieldNames(): Set<String> =
         javaClass.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }.map { it.name }.toSet()
 
+    private suspend fun assertImportFailure(body: okhttp3.ResponseBody) {
+        val api = FakeImportApi().apply {
+            manualFailure = HttpException(Response.error<ImportBatchResponse>(422, body))
+        }
+        val failingRepository = HttpImportRepository(api)
+        try {
+            failingRepository.createManualImport("store_demo", ManualImportDraft("2026-08-01", "2026-08-07", listOf(domainCandidate())))
+            error("Expected ImportRequestException")
+        } catch (_: ImportRequestException) {
+            // Expected.
+        }
+    }
+
     private companion object {
     fun domainCandidate(value: Long = 1L) = ImportCandidate(
         id = "candidate_1", metricKey = "revenue", metricDisplayName = "Revenue", value = value,
@@ -195,6 +222,21 @@ class HttpImportRepositoryTest {
         id = "batch_1", sourceType = "manual", status = "pending_confirmation",
         rangeStart = "2026-08-01", rangeEnd = "2026-08-07", candidates = candidates
     )
+
+    private class TrackingResponseBody(private val content: String) : okhttp3.ResponseBody() {
+        var closed = false
+
+        override fun contentType(): okhttp3.MediaType? = null
+
+        override fun contentLength(): Long = content.length.toLong()
+
+        override fun source(): okio.BufferedSource = okio.Buffer().writeUtf8(content)
+
+        override fun close() {
+            closed = true
+            super.close()
+        }
+    }
 
     fun candidateResponse(
         id: String = "candidate_1", value: Long = 1L, status: String = "needs_confirmation",
