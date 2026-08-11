@@ -28,7 +28,7 @@ export interface ImportRouteOptions {
 }
 
 export async function registerImportRoutes(app: FastifyInstance, options: ImportRouteOptions): Promise<void> {
-  const service = new ImportService(new ImportRepository(options.database), options.objectStorage, options.now);
+  const service = new ImportService(new ImportRepository(options.database), options.objectStorage, options.now, app.log);
   app.decorateRequest("trustedContext", undefined);
   app.addHook("onRequest", async (request, reply) => {
     request.trustedContext = await options.contextResolver(request);
@@ -69,8 +69,8 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     }
     if (!bytes || !filename || !mimeType) throw new ValidationError("A file is required");
     if (bytes.byteLength > MAX_UPLOAD_BYTES) return reply.code(413).send(errorBody("Upload exceeds maximum size"));
-    const batch = await service.createFile(context, { bytes, filename, mimeType, rangeStart: stringField(fields, "rangeStart"), rangeEnd: stringField(fields, "rangeEnd"), currencyUnit: optionalCurrency(fields.currencyUnit) });
-    return reply.code(201).send(batch);
+    const result = await service.createFile(context, { bytes, filename, mimeType, rangeStart: stringField(fields, "rangeStart"), rangeEnd: stringField(fields, "rangeEnd"), currencyUnit: optionalCurrency(fields.currencyUnit) });
+    return reply.code(result.duplicate ? 200 : 201).send({ ...result.batch, duplicate: result.duplicate });
   });
   app.get("/v1/stores/:storeId/imports/:batchId", async (request) => service.getBatch(scopedContext(request), stringParam(request, "batchId")));
   app.patch("/v1/stores/:storeId/imports/:batchId/candidates/:candidateId", async (request) => service.updateCandidate(scopedContext(request), stringParam(request, "batchId"), stringParam(request, "candidateId"), record(request.body)));

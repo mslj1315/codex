@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ParserInputError, parseCsv, parseXlsx } from "./parser.js";
 import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput } from "./repository.js";
 import type { MetricKey } from "./models.js";
-import { ImportRepository, ValidationError } from "./repository.js";
+import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
 import {
-  isUnavailableObjectStorage,
   ObjectStorageError,
   type ObjectStorage
 } from "../storage/object-storage.js";
@@ -27,11 +26,23 @@ export interface CandidateDraft {
   status?: "ready" | "needs_confirmation";
 }
 
+export interface FileImportResult {
+  batch: ImportBatchDetails;
+  duplicate: boolean;
+}
+
+export const RAW_FILE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+export interface ImportServiceLogger {
+  error(entry: Record<string, unknown>, message?: string): void;
+}
+
 export class ImportService {
   constructor(
     private readonly imports: ImportRepository,
     private readonly objectStorage: ObjectStorage,
-    private readonly now: () => Date
+    private readonly now: () => Date,
+    private readonly logger: ImportServiceLogger
   ) {}
 
   async createManual(context: TrustedContext, input: { rangeStart: string; rangeEnd: string; candidates: CandidateDraft[] }): Promise<ImportBatchDetails> {
@@ -41,24 +52,65 @@ export class ImportService {
     return this.imports.createBatchWithCandidates({ ...context, sourceType: "manual", rangeStart: input.rangeStart, rangeEnd: input.rangeEnd }, candidates);
   }
 
-  async createFile(context: TrustedContext, input: { bytes: Buffer; filename: string; mimeType: string; rangeStart: string; rangeEnd: string; currencyUnit?: "yuan" | "cents" }): Promise<ImportBatchDetails> {
-    if (isUnavailableObjectStorage(this.objectStorage)) {
-      throw new ObjectStorageError("Unable to store import file");
-    }
+  async createFile(context: TrustedContext, input: { bytes: Buffer; filename: string; mimeType: string; rangeStart: string; rangeEnd: string; currencyUnit?: "yuan" | "cents" }): Promise<FileImportResult> {
     assertRange(input.rangeStart, input.rangeEnd);
+    if (input.bytes.byteLength === 0) throw new ValidationError("File bytes are required");
+    const sha256Checksum = createHash("sha256").update(input.bytes).digest("hex");
+    const duplicate = await this.imports.findBatchByFileChecksum({
+      enterpriseId: context.enterpriseId,
+      storeId: context.storeId,
+      sha256Checksum
+    });
+    if (duplicate) return { batch: duplicate, duplicate: true };
     const sourceType = fileType(input.filename, input.mimeType);
     const parsed = sourceType === "csv"
       ? parseCsv(input.bytes.toString("utf8"), input)
       : await parseXlsx(input.bytes, input);
+    const batchId = randomUUID();
+    const uploadedAt = this.now();
+    const normalizedMimeType = sourceType === "csv"
+      ? "text/csv"
+      : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const objectKey = `imports/${context.enterpriseId}/${context.storeId}/${batchId}/${sha256Checksum}.${sourceType}`;
     const batchInput = {
-      ...context, sourceType, rangeStart: input.rangeStart, rangeEnd: input.rangeEnd,
-      // Design limitation: this is metadata-only until object storage is integrated.
-      originalFileKey: `test-placeholder/${createHash("sha256").update(input.bytes).digest("hex")}`,
-      originalFileName: input.filename, originalFileMimeType: input.mimeType, originalFileSizeBytes: input.bytes.byteLength,
-      originalFileChecksum: createHash("sha256").update(input.bytes).digest("hex")
+      id: batchId,
+      ...context, sourceType, rangeStart: input.rangeStart, rangeEnd: input.rangeEnd
     };
     const candidates = parsed.candidates.map((candidate) => this.prepareCandidate(candidate, input.rangeStart, input.rangeEnd));
-    return this.imports.createBatchWithCandidates(batchInput, candidates);
+    try {
+      await this.objectStorage.putObject({ key: objectKey, bytes: input.bytes, contentType: normalizedMimeType });
+    } catch (error) {
+      throw error instanceof ObjectStorageError
+        ? error
+        : new ObjectStorageError("Unable to store import file", error);
+    }
+    try {
+      const batch = await this.imports.createBatchWithCandidates(batchInput, candidates, {
+        id: randomUUID(), batchId, enterpriseId: context.enterpriseId, storeId: context.storeId,
+        originalFileName: input.filename, normalizedMimeType, byteCount: input.bytes.byteLength,
+        sha256Checksum, objectKey, uploadedAt,
+        expiresAt: new Date(uploadedAt.getTime() + RAW_FILE_RETENTION_MS)
+      });
+      return { batch, duplicate: false };
+    } catch (error) {
+      await this.compensateObjectWrite(objectKey);
+      if (error instanceof DuplicateImportFileError) {
+        let winner: ImportBatchDetails | null = null;
+        try {
+          winner = await this.imports.findBatchByFileChecksum({
+            enterpriseId: context.enterpriseId,
+            storeId: context.storeId,
+            sha256Checksum
+          });
+        } catch {
+          throw error;
+        }
+        if (winner) return { batch: winner, duplicate: true };
+        throw error;
+      }
+      if (error instanceof Error) throw error;
+      throw new Error("Import persistence failed", { cause: error });
+    }
   }
 
   getBatch(context: TrustedContext, batchId: string) { return this.imports.getBatch({ id: batchId, enterpriseId: context.enterpriseId, storeId: context.storeId }); }
@@ -100,17 +152,50 @@ export class ImportService {
     if (prepared.status === "ready") validateResolvedCandidate(prepared);
     return prepared;
   }
+
+  private async compensateObjectWrite(objectKey: string): Promise<void> {
+    try {
+      await this.objectStorage.deleteObject(objectKey);
+    } catch (error) {
+      try {
+        this.logger.error({
+          event: "import_object_compensation_failed",
+          objectKey,
+          cause: diagnosticCause(error)
+        }, "Unable to compensate import object write");
+      } catch {
+        // Logging must never replace the persistence failure being compensated.
+      }
+    }
+  }
 }
 
 function fileType(filename: string, mimeType: string): ImportSourceType {
   const lower = filename.toLowerCase();
-  if (lower.endsWith(".csv") || mimeType === "text/csv") return "csv";
-  if (lower.endsWith(".xlsx") || mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
+  if (lower.endsWith(".csv")) return "csv";
+  if (lower.endsWith(".xlsx")) return "xlsx";
+  if (mimeType === "text/csv") return "csv";
+  if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
   throw new ValidationError("Only CSV and XLSX files are supported");
 }
 function assertRange(start: string, end: string): void {
   const startTime = Date.parse(`${start}T00:00:00Z`); const endTime = Date.parse(`${end}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || !Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime > endTime) throw new ValidationError("Invalid date range");
+}
+
+function diagnosticCause(cause: unknown): { type: string; code?: string } {
+  const candidate = typeof cause === "object" && cause !== null
+    ? cause as { name?: unknown; code?: unknown }
+    : undefined;
+  const type = diagnosticToken(candidate?.name) ?? (cause === undefined ? "Unknown" : "Error");
+  const code = diagnosticToken(candidate?.code);
+  return code ? { type, code } : { type };
+}
+
+function diagnosticToken(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value)
+    ? value
+    : undefined;
 }
 
 const metricUnits: Record<MetricKey, "cents" | "count"> = { revenue: "cents", orders: "count", average_spend: "cents", package_sales: "cents", package_redemptions: "count", refunds: "cents", promotion_spend: "cents" };

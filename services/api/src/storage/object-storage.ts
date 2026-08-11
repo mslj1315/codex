@@ -27,7 +27,3 @@ export const unavailableObjectStorage: ObjectStorage = {
     throw new ObjectStorageError("Unable to delete import file");
   }
 };
-
-export function isUnavailableObjectStorage(storage: ObjectStorage): boolean {
-  return storage === unavailableObjectStorage;
-}

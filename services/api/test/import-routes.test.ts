@@ -1,18 +1,17 @@
 import { readdir, readFile } from "node:fs/promises";
+import ExcelJS from "exceljs";
 import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
+import yazl from "yazl";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
-import type { ObjectStorage } from "../src/storage/object-storage.js";
-
-const configuredStorage: ObjectStorage = {
-  async putObject() {},
-  async deleteObject() { return "missing"; }
-};
+import { FakeObjectStorage } from "./support/fake-object-storage.js";
 
 describe("import API routes", () => {
   let app: ReturnType<typeof buildServer>;
   let pool: Database;
+  let storage: FakeObjectStorage;
+  const now = new Date("2026-08-11T03:04:05.000Z");
 
   beforeEach(async () => {
     const memory = newDb();
@@ -25,7 +24,8 @@ describe("import API routes", () => {
     const { Pool } = memory.adapters.createPg();
     pool = new Pool();
     await applyTestMigrations(pool);
-    app = buildServer({ database: pool, developmentMode: true, objectStorage: configuredStorage });
+    storage = new FakeObjectStorage();
+    app = buildServer({ database: pool, developmentMode: true, objectStorage: storage, now: () => now });
   });
 
   it("does not expose import routes without an explicit trusted context provider", async () => {
@@ -106,7 +106,7 @@ describe("import API routes", () => {
     expect(response.json()).toMatchObject({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" });
   });
 
-  it("keeps manual imports available but rejects file imports before parsing when storage is unconfigured", async () => {
+  it("keeps manual imports available but routes unconfigured file storage through a neutral 503", async () => {
     const unconfigured = buildServer({ database: pool, developmentMode: true });
     const manual = await unconfigured.inject({
       method: "POST",
@@ -159,14 +159,176 @@ describe("import API routes", () => {
   });
 
   it("parses a bounded raw CSV upload into source-backed candidates", async () => {
+    const bytes = Buffer.from("订单数\n12\n");
     const response = await app.inject({
       method: "POST",
       url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
       headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
-      payload: Buffer.from("订单数\n12\n")
+      payload: bytes
     });
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ sourceType: "csv", candidates: [expect.objectContaining({ metricKey: "orders", value: 12, sourceLocator: "row:1:订单数" })] });
+    expect(response.json()).toMatchObject({
+      sourceType: "csv",
+      duplicate: false,
+      candidates: [expect.objectContaining({ metricKey: "orders", value: 12, sourceLocator: "row:1:订单数" })]
+    });
+    expect(storage.objects.size).toBe(1);
+    const [object] = storage.objects.values();
+    expect(object).toMatchObject({ contentType: "text/csv" });
+    expect(object.key).toMatch(/^imports\/ent_demo\/store_demo\/[0-9a-f-]{36}\/[0-9a-f]{64}\.csv$/);
+    expect(object.bytes).not.toBe(bytes);
+    expect(object.bytes.equals(bytes)).toBe(true);
+
+    const files = await pool.query("SELECT * FROM import_files");
+    expect(files.rows).toHaveLength(1);
+    expect(files.rows[0]).toMatchObject({
+      original_file_name: "weekly.csv",
+      normalized_mime_type: "text/csv",
+      byte_count: bytes.byteLength,
+      object_key: object.key
+    });
+    expect(new Date(files.rows[0].uploaded_at as string)).toEqual(now);
+    expect(new Date(files.rows[0].expires_at as string)).toEqual(new Date("2026-11-09T03:04:05.000Z"));
+  });
+
+  it("stores XLSX bytes with the normalized content type and xlsx object suffix", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("weekly");
+    sheet.addRow(["订单数"]);
+    sheet.addRow([18]);
+    const bytes = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "x-file-name": "weekly.xlsx"
+      },
+      payload: bytes
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ sourceType: "xlsx", duplicate: false });
+    const [object] = storage.objects.values();
+    expect(object.key).toMatch(/\.xlsx$/);
+    expect(object.contentType).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    expect(object.bytes.equals(bytes)).toBe(true);
+  });
+
+  it("uses the filename extension rather than an arbitrary multipart MIME type", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("weekly");
+    sheet.addRow(["订单数"]);
+    sheet.addRow([18]);
+    const bytes = Buffer.from(await workbook.xlsx.writeBuffer());
+    const boundary = "----untrusted-mime";
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="upload"; filename="weekly.xlsx"\r\nContent-Type: text/csv\r\n\r\n`),
+      bytes,
+      Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="rangeStart"\r\n\r\n2026-08-01\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="rangeEnd"\r\n\r\n2026-08-07\r\n--${boundary}--\r\n`)
+    ]);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file",
+      headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ sourceType: "xlsx", duplicate: false });
+    const [object] = storage.objects.values();
+    expect(object.key).toMatch(/\.xlsx$/);
+    expect(object.contentType).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  });
+
+  it("reopens a same-store duplicate before file type detection or parsing", async () => {
+    const bytes = Buffer.from("订单数\n12\n");
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
+      payload: bytes
+    });
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "x-file-name": "renamed.xlsx"
+      },
+      payload: bytes
+    });
+
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({ id: first.json().id, duplicate: true });
+    expect(storage.objects.size).toBe(1);
+    expect((await pool.query("SELECT * FROM import_batches")).rows).toHaveLength(1);
+    expect((await pool.query("SELECT * FROM import_files")).rows).toHaveLength(1);
+  });
+
+  it("scopes duplicate identity to enterprise and store", async () => {
+    const bytes = Buffer.from("订单数\n12\n");
+    const upload = (server: ReturnType<typeof buildServer>, storeId: string) => server.inject({
+      method: "POST",
+      url: `/v1/stores/${storeId}/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07`,
+      headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
+      payload: bytes
+    });
+    const otherStore = buildServer({
+      database: pool,
+      trustedContextResolver: async () => ({ enterpriseId: "ent_demo", storeId: "store_other", actorId: "actor_demo" }),
+      objectStorage: storage,
+      now: () => now
+    });
+    const otherEnterprise = buildServer({
+      database: pool,
+      trustedContextResolver: async () => ({ enterpriseId: "ent_other", storeId: "store_demo", actorId: "actor_other" }),
+      objectStorage: storage,
+      now: () => now
+    });
+
+    expect((await upload(app, "store_demo")).statusCode).toBe(201);
+    expect((await upload(otherStore, "store_other")).statusCode).toBe(201);
+    expect((await upload(otherEnterprise, "store_demo")).statusCode).toBe(201);
+    expect(storage.objects.size).toBe(3);
+    expect((await pool.query("SELECT * FROM import_batches")).rows).toHaveLength(3);
+    await otherStore.close();
+    await otherEnterprise.close();
+  });
+
+  it("creates independent batches for different contents in the same period", async () => {
+    for (const value of [12, 13]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+        headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
+        payload: Buffer.from(`订单数\n${value}\n`)
+      });
+      expect(response.statusCode).toBe(201);
+    }
+    expect(storage.objects.size).toBe(2);
+    expect((await pool.query("SELECT * FROM import_batches")).rows).toHaveLength(2);
+  });
+
+  it("does not store or persist an XLSX archive rejected by parser preflight", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: {
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "x-file-name": "expanded.xlsx"
+      },
+      payload: await createZip(Buffer.alloc(6 * 1024 * 1024), "xl/sharedStrings.xml")
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(storage.objects.size).toBe(0);
+    expect((await pool.query("SELECT * FROM import_batches")).rows).toHaveLength(0);
+    expect((await pool.query("SELECT * FROM import_files")).rows).toHaveLength(0);
   });
 
   it("rejects an upload whose declared size exceeds the raw upload cap before parsing", async () => {
@@ -262,4 +424,17 @@ async function applyTestMigrations(database: Database): Promise<void> {
     // pg-mem supports relational constraints but not PostgreSQL PL/pgSQL triggers.
     await database.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
   }
+}
+
+async function createZip(contents: Buffer, fileName: string): Promise<Buffer> {
+  const zip = new yazl.ZipFile();
+  const chunks: Buffer[] = [];
+  zip.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk));
+  const archive = new Promise<Buffer>((resolve, reject) => {
+    zip.outputStream.on("end", () => resolve(Buffer.concat(chunks)));
+    zip.outputStream.on("error", reject);
+  });
+  zip.addBuffer(contents, fileName, { compress: true });
+  zip.end();
+  return archive;
 }

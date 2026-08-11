@@ -1,7 +1,7 @@
 import { newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
-import { ObjectStorageError } from "../src/storage/object-storage.js";
+import type { Database } from "../src/db.js";
 
 describe("object storage failure logging", () => {
   it("logs one redacted structured storage error while returning a neutral 503", async () => {
@@ -12,9 +12,15 @@ describe("object storage failure logging", () => {
       bytes: Buffer.from("raw-file-marker")
     });
     const app = buildServer({
-      database: databaseWithoutSchema(),
-      trustedContextResolver: async () => {
-        throw new ObjectStorageError("private-secret-marker", cause);
+      database: databaseWithNoDuplicate(),
+      trustedContextResolver: async () => ({
+        enterpriseId: "ent_demo",
+        storeId: "store_demo",
+        actorId: "actor_demo"
+      }),
+      objectStorage: {
+        async putObject() { throw cause; },
+        async deleteObject() { return "missing"; }
       },
       logger: captureErrorLogs(logs)
     });
@@ -23,7 +29,7 @@ describe("object storage failure logging", () => {
       method: "POST",
       url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
       headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
-      payload: Buffer.from("raw-file-marker")
+      payload: Buffer.from("订单数\n12\nraw-file-marker")
     });
 
     expect(response.statusCode).toBe(503);
@@ -75,6 +81,17 @@ function databaseWithoutSchema() {
   const memory = newDb();
   const { Pool } = memory.adapters.createPg();
   return new Pool();
+}
+
+function databaseWithNoDuplicate(): Database {
+  return {
+    async query() {
+      return { command: "SELECT", rowCount: 0, oid: 0, fields: [], rows: [] };
+    },
+    async connect() {
+      throw new Error("putObject failure must happen before persistence");
+    }
+  } as Database;
 }
 
 function captureErrorLogs(logs: Record<string, unknown>[]) {
