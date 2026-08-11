@@ -22,6 +22,8 @@ class ImportUnitBoundaryTest {
             ApiUnitValue(12L, "count"),
             ImportUnitBoundary.parseDisplayInput("orders", "12", "count")
         )
+        assertNull(ImportUnitBoundary.parseDisplayInput("revenue", "0", "yuan"))
+        assertNull(ImportUnitBoundary.parseDisplayInput("average_spend", "-0.01", "yuan"))
         assertNull(ImportUnitBoundary.parseDisplayInput("average_spend", "38.999", "yuan"))
     }
 }

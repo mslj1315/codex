@@ -50,10 +50,10 @@ internal object ImportUnitBoundary {
                 } catch (_: ArithmeticException) {
                     null
                 }
-                cents?.let { ApiUnitValue(it, "cents") }
+                cents?.takeIf { it > 0 }?.let { ApiUnitValue(it, "cents") }
             }
             metricKey in monetaryMetrics && normalizedUnit == "cents" ->
-                valueInput.trim().toLongOrNull()?.let { ApiUnitValue(it, "cents") }
+                valueInput.trim().toLongOrNull()?.takeIf { it > 0 }?.let { ApiUnitValue(it, "cents") }
             metricKey in countMetrics && normalizedUnit == "count" ->
                 valueInput.trim().toLongOrNull()?.let { ApiUnitValue(it, "count") }
             else -> null
