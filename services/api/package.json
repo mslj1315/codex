@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "cleanup:imports": "tsx src/cleanup-import-files.ts",
     "migrate": "tsx src/migrate.ts",
     "start": "tsx src/server.ts",
     "test": "vitest run",
