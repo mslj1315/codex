@@ -30,6 +30,11 @@ import androidx.compose.ui.unit.dp
 import com.restaurantops.imports.ImportScreen
 import com.restaurantops.imports.ImportViewModel
 import com.restaurantops.imports.LocalDemoImportRepository
+import com.restaurantops.BuildConfig
+import com.restaurantops.imports.network.HttpImportRepository
+import com.restaurantops.imports.network.ImportApi
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,7 +42,19 @@ fun WorkspaceRoot(
     viewModel: WorkspaceViewModel,
     onReturnToOnboarding: () -> Unit
 ) {
-    val importViewModel = remember { ImportViewModel(LocalDemoImportRepository()) }
+    val importViewModel = remember {
+        val repository = if (BuildConfig.DEBUG) {
+            val api = Retrofit.Builder()
+                .baseUrl(BuildConfig.LOCAL_API_BASE_URL)
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+                .create(ImportApi::class.java)
+            HttpImportRepository(api)
+        } else {
+            LocalDemoImportRepository()
+        }
+        ImportViewModel(repository)
+    }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
             onBack = viewModel::closeOverlay,

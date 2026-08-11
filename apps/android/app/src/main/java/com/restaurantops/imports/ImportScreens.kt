@@ -53,12 +53,25 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
         ) {
             Text("本地演示导入", style = MaterialTheme.typography.titleMedium)
             Text(
-                "当前仅在本机创建演示数据，不读取、上传或同步文件，也不会调用 AI、服务端或网络。",
+                "手工录入会连接本机开发服务；CSV 和 Excel 仍只展示入口，不读取或上传文件。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (viewModel.isLoading) {
+                Text("正在连接本机服务...", color = MaterialTheme.colorScheme.primary)
+            }
+            viewModel.requestError?.let { error ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        error,
+                        modifier = Modifier.padding(14.dp),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
             SourcePicker(
                 selectedSource = viewModel.selectedSource,
-                onSelectSource = viewModel::selectSource
+                onSelectSource = viewModel::selectSource,
+                enabled = viewModel.canRunCommands
             )
 
             when (viewModel.selectedSource) {
@@ -67,6 +80,7 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                     averageSpendInput = averageSpendInput,
                     onRevenueChanged = { revenueInput = it },
                     onAverageSpendChanged = { averageSpendInput = it },
+                    enabled = viewModel.canRunCommands,
                     onCreateSummary = {
                         viewModel.createManualImport(
                             LOCAL_STORE_ID,
@@ -85,6 +99,7 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                     readyCount = viewModel.readyCandidateIds.size,
                     unresolvedCount = viewModel.unresolvedCandidateIds.size,
                     isReadOnly = viewModel.isReadOnly,
+                    commandsEnabled = viewModel.canRunCommands,
                     confirmationMessage = viewModel.confirmationMessage,
                     onConfirmReady = { viewModel.confirmReady(LOCAL_STORE_ID) },
                     onEditCandidate = { candidate, value, unit ->
@@ -97,12 +112,16 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SourcePicker(selectedSource: ImportSourceType, onSelectSource: (ImportSourceType) -> Unit) {
+private fun SourcePicker(
+    selectedSource: ImportSourceType,
+    onSelectSource: (ImportSourceType) -> Unit,
+    enabled: Boolean
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("选择数据来源", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ImportSourceType.entries.forEach { source ->
-                TextButton(onClick = { onSelectSource(source) }) {
+                TextButton(onClick = { onSelectSource(source) }, enabled = enabled) {
                     val prefix = if (source == selectedSource) "已选：" else ""
                     Text(prefix + sourceLabel(source))
                 }
@@ -117,6 +136,7 @@ private fun ManualEntry(
     averageSpendInput: String,
     onRevenueChanged: (String) -> Unit,
     onAverageSpendChanged: (String) -> Unit,
+    enabled: Boolean,
     onCreateSummary: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -131,6 +151,7 @@ private fun ManualEntry(
                 label = { Text("营业额（元）") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true,
+                enabled = enabled,
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
@@ -139,10 +160,11 @@ private fun ManualEntry(
                 label = { Text("客单价（元）") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true,
+                enabled = enabled,
                 modifier = Modifier.fillMaxWidth()
             )
-            Button(onClick = onCreateSummary, modifier = Modifier.fillMaxWidth()) {
-                Text("生成本地待确认项")
+            Button(onClick = onCreateSummary, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+                Text("生成待确认项")
             }
         }
     }
@@ -165,6 +187,7 @@ private fun ImportSummaryContent(
     readyCount: Int,
     unresolvedCount: Int,
     isReadOnly: Boolean,
+    commandsEnabled: Boolean,
     confirmationMessage: String?,
     onConfirmReady: () -> Unit,
     onEditCandidate: (ImportCandidate, Long, String) -> Unit
@@ -179,7 +202,7 @@ private fun ImportSummaryContent(
             Text("可批量确认 $readyCount 项 · 待确认 $unresolvedCount 项")
             Button(
                 onClick = onConfirmReady,
-                enabled = readyCount > 0 && !isReadOnly,
+                enabled = readyCount > 0 && !isReadOnly && commandsEnabled,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("批量确认已就绪项（$readyCount）")
@@ -203,6 +226,7 @@ private fun ImportSummaryContent(
             EditableCandidateCard(
                 candidate = candidate,
                 isReadOnly = isReadOnly,
+                commandsEnabled = commandsEnabled,
                 onSave = onEditCandidate
             )
         }
@@ -223,6 +247,7 @@ private fun CandidateCard(candidate: ImportCandidate) {
 private fun EditableCandidateCard(
     candidate: ImportCandidate,
     isReadOnly: Boolean,
+    commandsEnabled: Boolean,
     onSave: (ImportCandidate, Long, String) -> Unit
 ) {
     var valueInput by rememberSaveable(candidate.id) { mutableStateOf(candidate.value.toString()) }
@@ -245,6 +270,7 @@ private fun EditableCandidateCard(
                     label = { Text("确认数值") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
+                    enabled = commandsEnabled,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -252,10 +278,12 @@ private fun EditableCandidateCard(
                     onValueChange = { unitInput = it },
                     label = { Text("确认单位：yuan / cents / count / times") },
                     singleLine = true,
+                    enabled = commandsEnabled,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
                     onClick = { onSave(candidate, valueInput.toLongOrNull() ?: 0L, unitInput) },
+                    enabled = commandsEnabled,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("保存并加入已就绪项")

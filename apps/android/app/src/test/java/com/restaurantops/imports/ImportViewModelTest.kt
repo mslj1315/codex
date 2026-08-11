@@ -190,6 +190,25 @@ class ImportViewModelTest {
     }
 
     @Test
+    fun `commands are unavailable while a request preserves the unresolved candidates`() = runTest {
+        val repository = BlockingLoadRepository(summaryWithReadyAndUnresolved)
+        val viewModel = ImportViewModel(repository, this)
+
+        viewModel.load("store_demo", "import_1")
+        runCurrent()
+
+        assertTrue(viewModel.isLoading)
+        assertFalse(viewModel.canRunCommands)
+        assertEquals(emptyList<String>(), viewModel.unresolvedCandidateIds)
+
+        repository.releaseLoad()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.canRunCommands)
+        assertEquals(listOf("candidate_unresolved"), viewModel.unresolvedCandidateIds)
+    }
+
+    @Test
     fun `candidate update conflict reloads the batch before actions resume`() = runTest {
         val refreshed = summaryWithReadyAndUnresolved.copy(status = ImportBatchStatus.CONFIRMED)
         val repository = UpdateConflictRepository(summaryWithReadyAndUnresolved, refreshed)
@@ -326,6 +345,21 @@ class ImportViewModelTest {
 
         fun releaseConfirmation() {
             confirmation.complete(Unit)
+        }
+    }
+
+    private class BlockingLoadRepository(
+        private val summary: ImportSummary
+    ) : ImportRepository by FakeImportRepository(summary) {
+        private val load = CompletableDeferred<Unit>()
+
+        override suspend fun loadImport(storeId: String, importId: String): ImportSummary {
+            load.await()
+            return summary
+        }
+
+        fun releaseLoad() {
+            load.complete(Unit)
         }
     }
 
