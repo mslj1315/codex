@@ -54,6 +54,10 @@ export interface ImportFileRecord extends CreateImportFileInput {
 
 export const IMPORT_FILE_CLEANUP_RETRY_DELAY_MS = 60 * 60 * 1000;
 export const IMPORT_OBJECT_RECONCILIATION_RETRY_DELAY_MS = 60 * 60 * 1000;
+const RECONCILIATION_ERROR_TYPES = new Set(["StorageError", "DatabaseError", "NotFoundError", "UnknownError"]);
+const RECONCILIATION_ERROR_CODES = new Set([
+  "access_denied", "connection_refused", "not_found", "service_unavailable", "timeout", "unknown"
+]);
 
 export type ImportObjectReconciliationKind = "delete_orphan" | "verify_batch_then_delete";
 export type ImportObjectReconciliationState = "pending" | "resolved";
@@ -387,14 +391,14 @@ export class ImportRepository {
     errorCode: string | null
   ): Promise<boolean> {
     assertValidDate(attemptedAt, "Reconciliation attempt time");
-    assertSafeDiagnostic(errorType, "Reconciliation error type");
-    assertSafeDiagnostic(errorCode, "Reconciliation error code");
+    const normalizedErrorType = normalizeReconciliationErrorType(errorType);
+    const normalizedErrorCode = normalizeReconciliationErrorCode(errorCode);
     const result = await this.database.query(
       `UPDATE import_object_reconciliation_jobs
        SET attempted_at = $1, failure_count = failure_count + 1,
          last_error_type = $2, last_error_code = $3, updated_at = CURRENT_TIMESTAMP
        WHERE id = $4 AND state = 'pending'`,
-      [attemptedAt, errorType, errorCode, id]
+      [attemptedAt, normalizedErrorType, normalizedErrorCode, id]
     );
     return result.rowCount === 1;
   }
@@ -682,10 +686,11 @@ function assertResolution(value: string): asserts value is ImportObjectReconcili
     throw new ValidationError("Reconciliation resolution is invalid");
   }
 }
-function assertSafeDiagnostic(value: string | null, name: string): void {
-  if (value !== null && (!/^[A-Za-z0-9_.:-]{1,128}$/.test(value))) {
-    throw new ValidationError(`${name} must be a safe diagnostic token`);
-  }
+function normalizeReconciliationErrorType(value: string | null): string | null {
+  return value !== null && RECONCILIATION_ERROR_TYPES.has(value) ? value : null;
+}
+function normalizeReconciliationErrorCode(value: string | null): string | null {
+  return value !== null && RECONCILIATION_ERROR_CODES.has(value) ? value : null;
 }
 function isUniqueViolation(error: unknown): error is { code: string } {
   return typeof error === "object" && error !== null && "code" in error && (error as { code: unknown }).code === "23505";

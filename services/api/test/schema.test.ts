@@ -312,7 +312,7 @@ describe("import repository", () => {
     }] });
   });
 
-  it("rejects invalid reconciliation timestamps and unsafe diagnostics", async () => {
+  it("normalizes reconciliation diagnostics to finite stable tokens", async () => {
     const job = await imports.enqueueImportObjectReconciliationJob(reconciliationJobInput({
       id: "reconciliation_validation", objectKey: "imports/reconciliation/validation"
     }));
@@ -321,8 +321,23 @@ describe("import repository", () => {
     await expect(imports.listEligibleImportObjectReconciliationJobs(invalid)).rejects.toBeInstanceOf(ValidationError);
     await expect(imports.resolveImportObjectReconciliationJob(job.id, invalid, "object_removed"))
       .rejects.toBeInstanceOf(ValidationError);
-    await expect(imports.recordImportObjectReconciliationFailure(job.id, new Date(), "Storage Error", "access denied"))
-      .rejects.toBeInstanceOf(ValidationError);
+    await expect(imports.recordImportObjectReconciliationFailure(
+      job.id, new Date("2026-08-12T12:00:00.000Z"), "StorageError", "access_denied"
+    )).resolves.toBe(true);
+    await expect(database.query(
+      `SELECT last_error_type, last_error_code
+       FROM import_object_reconciliation_jobs WHERE id = $1`, [job.id]
+    )).resolves.toMatchObject({ rows: [{
+      last_error_type: "StorageError", last_error_code: "access_denied"
+    }] });
+    await expect(imports.recordImportObjectReconciliationFailure(
+      job.id, new Date("2026-08-12T13:00:00.000Z"), "sk_live_51N9gAFakeOpaqueSecret", "raw_error_payload"
+    )).resolves.toBe(true);
+
+    await expect(database.query(
+      `SELECT last_error_type, last_error_code
+       FROM import_object_reconciliation_jobs WHERE id = $1`, [job.id]
+    )).resolves.toMatchObject({ rows: [{ last_error_type: null, last_error_code: null }] });
   });
 
   it("creates import file metadata and maps BIGINT and timestamps", async () => {
