@@ -20,6 +20,16 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    buildTypes {
+        debug {
+            buildConfigField("String", "LOCAL_API_BASE_URL", "\"http://10.0.2.2:3000/\"")
+        }
+        release {
+            buildConfigField("String", "LOCAL_API_BASE_URL", "\"\"")
+        }
     }
 
     compileOptions {
@@ -40,6 +50,9 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
 }
