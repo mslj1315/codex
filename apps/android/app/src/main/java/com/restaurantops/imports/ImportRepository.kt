@@ -5,6 +5,8 @@ interface ImportRepository {
 
     suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary
 
+    suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult
+
     suspend fun updateCandidate(
         storeId: String,
         importId: String,

@@ -4,10 +4,17 @@ import com.restaurantops.imports.ImportCandidate
 import com.restaurantops.imports.ImportCandidateStatus
 import com.restaurantops.imports.ImportCandidateUpdate
 import com.restaurantops.imports.ImportBatchStatus
+import com.restaurantops.imports.FileImportDraft
 import com.restaurantops.imports.ImportSourceType
 import com.restaurantops.imports.ManualImportDraft
+import com.restaurantops.imports.PreparedImportFile
+import com.restaurantops.imports.files.ImportFileRules
 import kotlinx.coroutines.runBlocking
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import okio.Buffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -16,11 +23,105 @@ import retrofit2.HttpException
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.PATCH
+import retrofit2.http.Part
 import retrofit2.http.POST
 import retrofit2.http.Path
 
 class HttpImportRepositoryTest {
+    @Test
+    fun `file import sends exact multipart contract maps duplicate and caches summary`() = runBlocking {
+        val fileBytes = byteArrayOf(0, 1, 2, 127, -1)
+        val api = FakeImportApi().apply {
+            fileResponse = batchResponse(
+                sourceType = "csv",
+                duplicate = true,
+                candidates = listOf(candidateResponse())
+            )
+            updatedCandidate = candidateResponse(value = 42, status = "ready")
+        }
+        val repository = HttpImportRepository(api)
+
+        val result = repository.createFileImport(
+            "store_file",
+            fileDraft(
+                fileName = "weekly.CSV",
+                mimeType = "invalid mime\r\n",
+                bytes = fileBytes
+            )
+        )
+
+        assertEquals("store_file", api.fileStoreId)
+        assertTrue(api.fileUpload!!.headers()!!["Content-Disposition"]!!.contains("name=\"upload\""))
+        assertTrue(api.fileUpload!!.headers()!!["Content-Disposition"]!!.contains("filename=\"weekly.CSV\""))
+        assertEquals("text/csv", api.fileUpload!!.body().contentType().toString())
+        assertTrue(fileBytes.contentEquals(api.fileUpload!!.body().readBytes()))
+        assertEquals("2026-08-01", api.fileRangeStart!!.readUtf8())
+        assertEquals("2026-08-07", api.fileRangeEnd!!.readUtf8())
+        assertEquals("text/plain; charset=utf-8", api.fileRangeStart!!.contentType().toString())
+        assertTrue(result.duplicate)
+        assertEquals(ImportSourceType.CSV, result.summary.sourceType)
+
+        repository.updateCandidate("store_file", result.summary.id, "candidate_1", ImportCandidateUpdate(value = 42))
+        assertEquals(0, api.loadCalls)
+    }
+
+    @Test
+    fun `manual response remains compatible when duplicate is absent`() {
+        assertFalse(batchResponse(candidates = listOf(candidateResponse())).duplicate)
+    }
+
+    @Test
+    fun `file HTTP error is mapped and failed summary is not cached`() = runBlocking {
+        val api = FakeImportApi().apply {
+            fileFailure = HttpException(
+                Response.error<ImportBatchResponse>(
+                    503,
+                    okhttp3.ResponseBody.create(null, "{\"error\":\"Object storage unavailable\"}")
+                )
+            )
+        }
+        val repository = HttpImportRepository(api)
+
+        val error = try {
+            repository.createFileImport("store_file", fileDraft())
+            error("Expected ImportRequestException")
+        } catch (expected: ImportRequestException) {
+            expected
+        }
+
+        assertEquals(503, error.statusCode)
+        assertEquals("Object storage unavailable", error.message)
+        repository.updateCandidate("store_file", "batch_1", "candidate_1", ImportCandidateUpdate(value = 2))
+        assertEquals(1, api.loadCalls)
+    }
+
+    @Test
+    fun `invalid file drafts are rejected before the API call`() = runBlocking {
+        val invalidDrafts = listOf(
+            fileDraft(bytes = byteArrayOf()),
+            fileDraft(bytes = ByteArray((ImportFileRules.MAX_BYTES + 1).toInt())),
+            fileDraft(fileName = "report.xlsx"),
+            fileDraft(sizeBytes = 2)
+        )
+
+        invalidDrafts.forEach { draft ->
+            val api = FakeImportApi()
+            val repository = HttpImportRepository(api)
+
+            val error = try {
+                repository.createFileImport("store_file", draft)
+                error("Expected ImportRequestException")
+            } catch (expected: ImportRequestException) {
+                expected
+            }
+
+            assertEquals(422, error.statusCode)
+            assertEquals(0, api.fileCalls)
+        }
+    }
+
     @Test
     fun `manual import maps candidates without sending client identity`() = runBlocking {
         val api = FakeImportApi().apply {
@@ -223,6 +324,11 @@ class HttpImportRepositoryTest {
             "/v1/stores/{storeId}/imports/manual"
         )
         assertEndpoint(
+            api.method("createFileImport"),
+            POST::class.java,
+            "/v1/stores/{storeId}/imports/file"
+        )
+        assertEndpoint(
             api.method("loadImport"),
             GET::class.java,
             "/v1/stores/{storeId}/imports/{batchId}"
@@ -249,6 +355,11 @@ class HttpImportRepositoryTest {
         assertNotNull(create.getAnnotation(POST::class.java))
         assertNotNull(create.parameterAnnotations[1].filterIsInstance<Body>().singleOrNull())
         assertEquals(1, create.parameterAnnotations[0].filterIsInstance<Path>().size)
+        val createFile = api.method("createFileImport")
+        assertNotNull(createFile.getAnnotation(Multipart::class.java))
+        assertEquals("", createFile.parameterAnnotations[1].filterIsInstance<Part>().single().value)
+        assertEquals("rangeStart", createFile.parameterAnnotations[2].filterIsInstance<Part>().single().value)
+        assertEquals("rangeEnd", createFile.parameterAnnotations[3].filterIsInstance<Part>().single().value)
     }
 
     private fun assertEndpoint(method: java.lang.reflect.Method, annotation: Class<out Annotation>, expectedPath: String) {
@@ -281,6 +392,23 @@ class HttpImportRepositoryTest {
     }
 
     private companion object {
+    fun fileDraft(
+        fileName: String = "report.csv",
+        mimeType: String = "text/csv",
+        bytes: ByteArray = byteArrayOf(1, 2, 3),
+        sizeBytes: Long = bytes.size.toLong()
+    ) = FileImportDraft(
+        rangeStart = "2026-08-01",
+        rangeEnd = "2026-08-07",
+        file = PreparedImportFile(
+            uri = "content://picker/report",
+            displayName = fileName,
+            mimeType = mimeType,
+            sizeBytes = sizeBytes,
+            bytes = bytes
+        )
+    )
+
     fun domainCandidate(
         metricKey: String = "revenue",
         value: Long = 1L,
@@ -290,10 +418,19 @@ class HttpImportRepositoryTest {
         unit = unit, confidence = 100, status = ImportCandidateStatus.READY
     )
 
-    fun batchResponse(candidates: List<ImportCandidateResponse>) = ImportBatchResponse(
-        id = "batch_1", sourceType = "manual", status = "pending_confirmation",
-        rangeStart = "2026-08-01", rangeEnd = "2026-08-07", candidates = candidates
+    fun batchResponse(
+        candidates: List<ImportCandidateResponse>,
+        sourceType: String = "manual",
+        duplicate: Boolean = false
+    ) = ImportBatchResponse(
+        id = "batch_1", sourceType = sourceType, status = "pending_confirmation",
+        rangeStart = "2026-08-01", rangeEnd = "2026-08-07", candidates = candidates,
+        duplicate = duplicate
     )
+
+    private fun RequestBody.readBytes(): ByteArray = Buffer().also { writeTo(it) }.readByteArray()
+
+    private fun RequestBody.readUtf8(): String = Buffer().also { writeTo(it) }.readUtf8()
 
     private class TrackingResponseBody(private val content: String) : okhttp3.ResponseBody() {
         var closed = false
@@ -325,6 +462,14 @@ class HttpImportRepositoryTest {
         var updatedCandidate: ImportCandidateResponse = candidateResponse()
         var factResponse: FactVersionResponse = FactVersionResponse("fact_1", "batch_1", "confirmed", emptyList())
         var manualRequest: ManualImportRequest? = null
+        var fileResponse: ImportBatchResponse = batchResponse(listOf(candidateResponse()), sourceType = "csv")
+        var fileStoreId: String? = null
+        var fileUpload: MultipartBody.Part? = null
+        var fileRangeStart: RequestBody? = null
+        var fileRangeEnd: RequestBody? = null
+        var fileFailure: Throwable? = null
+        var fileCalls: Int = 0
+        var loadCalls: Int = 0
         var updateRequest: CandidateUpdateRequest? = null
         var confirmRequest: ConfirmImportRequest? = null
         var manualFailure: Throwable? = null
@@ -335,7 +480,25 @@ class HttpImportRepositoryTest {
             return manualResponse
         }
 
-        override suspend fun loadImport(storeId: String, batchId: String): ImportBatchResponse = loadedResponse
+        override suspend fun createFileImport(
+            storeId: String,
+            upload: MultipartBody.Part,
+            rangeStart: RequestBody,
+            rangeEnd: RequestBody
+        ): ImportBatchResponse {
+            fileCalls += 1
+            fileStoreId = storeId
+            fileUpload = upload
+            fileRangeStart = rangeStart
+            fileRangeEnd = rangeEnd
+            fileFailure?.let { throw it }
+            return fileResponse
+        }
+
+        override suspend fun loadImport(storeId: String, batchId: String): ImportBatchResponse {
+            loadCalls += 1
+            return loadedResponse
+        }
 
         override suspend fun updateCandidate(storeId: String, batchId: String, candidateId: String, request: CandidateUpdateRequest): ImportCandidateResponse {
             updateRequest = request

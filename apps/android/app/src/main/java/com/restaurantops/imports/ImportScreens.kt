@@ -353,6 +353,10 @@ class LocalDemoImportRepository : ImportRepository {
         return requireNotNull(storedSummary)
     }
 
+    override suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult {
+        throw com.restaurantops.imports.network.ImportRequestException(503, "文件上传服务暂不可用")
+    }
+
     override suspend fun updateCandidate(
         storeId: String,
         importId: String,

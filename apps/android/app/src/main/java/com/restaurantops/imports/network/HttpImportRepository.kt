@@ -1,6 +1,8 @@
 package com.restaurantops.imports.network
 
 import com.restaurantops.imports.FactVersion
+import com.restaurantops.imports.FileImportDraft
+import com.restaurantops.imports.FileImportResult
 import com.restaurantops.imports.ImportCandidate
 import com.restaurantops.imports.ImportCandidateStatus
 import com.restaurantops.imports.ImportCandidateUpdate
@@ -9,8 +11,13 @@ import com.restaurantops.imports.ImportRepository
 import com.restaurantops.imports.ImportSourceType
 import com.restaurantops.imports.ImportSummary
 import com.restaurantops.imports.ManualImportDraft
+import com.restaurantops.imports.files.ImportFileRules
 import com.google.gson.Gson
 import java.io.IOException
+import java.util.Locale
+import okhttp3.MediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import retrofit2.HttpException
 
 class ImportRequestException(
@@ -31,6 +38,35 @@ class HttpImportRepository(
     override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = request {
         api.createManualImport(storeId, draft.toRequest()).toSummary()
     }.also { summaries[ImportKey(storeId, it.id)] = it }
+
+    override suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult {
+        val sourceType = draft.validatedSourceType()
+        val standardMimeType = ImportFileRules.normalizedMimeType(
+            draft.file.displayName,
+            sourceType,
+            draft.file.mimeType
+        )
+        val mediaType = MediaType.parse(draft.file.mimeType)
+            ?.takeIf { sourceType.matchesMimeType(it.toString()) }
+            ?: requireNotNull(MediaType.parse(standardMimeType))
+        val upload = MultipartBody.Part.createFormData(
+            "upload",
+            draft.file.displayName,
+            RequestBody.create(mediaType, draft.file.bytes)
+        )
+        val textPlain = requireNotNull(MediaType.parse("text/plain"))
+        val response = request {
+            api.createFileImport(
+                storeId = storeId,
+                upload = upload,
+                rangeStart = RequestBody.create(textPlain, draft.rangeStart),
+                rangeEnd = RequestBody.create(textPlain, draft.rangeEnd)
+            )
+        }
+        val summary = response.toSummary()
+        summaries[ImportKey(storeId, summary.id)] = summary
+        return FileImportResult(summary = summary, duplicate = response.duplicate)
+    }
 
     override suspend fun updateCandidate(
         storeId: String,
@@ -81,6 +117,43 @@ private fun HttpException.apiErrorMessage(): String {
 }
 
 private data class ApiErrorBody(val error: String?)
+
+private fun FileImportDraft.validatedSourceType(): ImportSourceType {
+    val normalizedMimeType = file.mimeType.trim().lowercase(Locale.ROOT)
+    val mimeSourceType = when (normalizedMimeType) {
+        "text/csv", "text/comma-separated-values", "application/csv", "application/vnd.ms-excel" ->
+            ImportSourceType.CSV
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> ImportSourceType.XLSX
+        else -> null
+    }
+    val extensionSourceType = when {
+        file.displayName.lowercase(Locale.ROOT).endsWith(".csv") -> ImportSourceType.CSV
+        file.displayName.lowercase(Locale.ROOT).endsWith(".xlsx") -> ImportSourceType.XLSX
+        else -> throw ImportRequestException(422, "请选择 CSV 或 Excel 文件")
+    }
+    val sourceType = mimeSourceType ?: extensionSourceType
+    ImportFileRules.validate(file.displayName, file.bytes.size.toLong(), sourceType)?.let { message ->
+        throw ImportRequestException(422, message)
+    }
+    if (file.sizeBytes != file.bytes.size.toLong()) {
+        throw ImportRequestException(422, "无法读取文件大小")
+    }
+    return sourceType
+}
+
+private fun ImportSourceType.matchesMimeType(mimeType: String): Boolean = when (this) {
+    ImportSourceType.CSV -> mimeType.lowercase(Locale.ROOT) in setOf(
+        "text/csv",
+        "text/comma-separated-values",
+        "application/csv",
+        "application/vnd.ms-excel"
+    )
+    ImportSourceType.XLSX -> mimeType.equals(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ignoreCase = true
+    )
+    ImportSourceType.MANUAL -> false
+}
 
 private fun ManualImportDraft.toRequest() = ManualImportRequest(
     rangeStart = rangeStart,

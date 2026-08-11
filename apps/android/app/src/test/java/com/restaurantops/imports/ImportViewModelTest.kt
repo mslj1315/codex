@@ -246,6 +246,9 @@ class ImportViewModelTest {
 
         override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = summary
 
+        override suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult =
+            FileImportResult(summary, duplicate = false)
+
         override suspend fun updateCandidate(
             storeId: String,
             importId: String,
@@ -272,6 +275,9 @@ class ImportViewModelTest {
         override suspend fun loadImport(storeId: String, importId: String): ImportSummary = original
 
         override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = original
+
+        override suspend fun createFileImport(storeId: String, draft: FileImportDraft): FileImportResult =
+            FileImportResult(original, duplicate = false)
 
         override suspend fun updateCandidate(
             storeId: String,

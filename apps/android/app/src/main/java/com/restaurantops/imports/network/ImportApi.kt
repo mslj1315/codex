@@ -1,8 +1,12 @@
 package com.restaurantops.imports.network
 
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.PATCH
+import retrofit2.http.Part
 import retrofit2.http.POST
 import retrofit2.http.Path
 
@@ -11,6 +15,15 @@ interface ImportApi {
     suspend fun createManualImport(
         @Path("storeId") storeId: String,
         @Body request: ManualImportRequest
+    ): ImportBatchResponse
+
+    @Multipart
+    @POST("/v1/stores/{storeId}/imports/file")
+    suspend fun createFileImport(
+        @Path("storeId") storeId: String,
+        @Part upload: MultipartBody.Part,
+        @Part("rangeStart") rangeStart: RequestBody,
+        @Part("rangeEnd") rangeEnd: RequestBody
     ): ImportBatchResponse
 
     @GET("/v1/stores/{storeId}/imports/{batchId}")
@@ -76,7 +89,8 @@ data class ImportBatchResponse(
     val status: String,
     val rangeStart: String?,
     val rangeEnd: String?,
-    val candidates: List<ImportCandidateResponse>
+    val candidates: List<ImportCandidateResponse>,
+    val duplicate: Boolean = false
 )
 
 data class ImportCandidateResponse(

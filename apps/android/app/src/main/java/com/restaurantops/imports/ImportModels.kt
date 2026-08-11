@@ -53,6 +53,25 @@ data class ManualImportDraft(
     val candidates: List<ImportCandidate>
 )
 
+data class PreparedImportFile(
+    val uri: String,
+    val displayName: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val bytes: ByteArray
+)
+
+data class FileImportDraft(
+    val rangeStart: String,
+    val rangeEnd: String,
+    val file: PreparedImportFile
+)
+
+data class FileImportResult(
+    val summary: ImportSummary,
+    val duplicate: Boolean
+)
+
 data class ImportCandidateUpdate(
     val value: Long? = null,
     val unit: String? = null,
