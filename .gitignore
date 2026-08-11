@@ -1,5 +1,6 @@
 # Codex working state and temporary downloads
 .superpowers/
+.worktrees/
 work/
 outputs/
 
