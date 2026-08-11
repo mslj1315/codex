@@ -32,17 +32,19 @@ services:
       context: ./services/api
     environment:
       PORT: 3000
+      LOCAL_CONTAINER_DEVELOPMENT_MODE: "true"
       DATABASE_URL: ${DATABASE_URL}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: sh -c "npm run migrate && npm start"
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_started
     ports:
-      - "${API_PORT:-3000}:3000"
+      - "127.0.0.1:${API_PORT:-3000}:3000"
 
 volumes:
   postgres_data:

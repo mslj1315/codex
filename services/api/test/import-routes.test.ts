@@ -23,6 +23,22 @@ describe("import API routes", () => {
     expect(response.statusCode).toBe(404);
   });
 
+  it("allows the local Compose context only when explicitly enabled", async () => {
+    const localCompose = buildServer({ database: pool, localContainerDevelopmentMode: true });
+    const response = await localCompose.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/manual",
+      remoteAddress: "172.18.0.1",
+      payload: {
+        rangeStart: "2026-08-01",
+        rangeEnd: "2026-08-07",
+        candidates: [{ metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+  });
+
   it("creates a manual batch then confirms its ready candidate into an immutable fact version", async () => {
     const created = await app.inject({
       method: "POST",

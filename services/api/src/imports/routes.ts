@@ -9,6 +9,11 @@ export type TrustedContextResolver = (request: FastifyRequest) => Promise<Truste
 export const developmentContextResolver: TrustedContextResolver = async (request) => isLoopback(request.ip)
   ? { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" }
   : undefined;
+export const localContainerContextResolver: TrustedContextResolver = async () => ({
+  enterpriseId: "ent_demo",
+  storeId: "store_demo",
+  actorId: "actor_demo"
+});
 
 declare module "fastify" {
   interface FastifyRequest { trustedContext?: TrustedContext; }
