@@ -226,6 +226,105 @@ describe("import repository", () => {
     expect(migration).toContain("import_files_cleanup_queue_idx");
   });
 
+  it("declares a durable pending reconciliation queue keyed by object", () => {
+    expect(migration).toContain("CREATE TABLE import_object_reconciliation_jobs");
+    expect(migration).toContain("object_key TEXT NOT NULL UNIQUE");
+    expect(migration).toContain("kind IN ('delete_orphan', 'verify_batch_then_delete')");
+    expect(migration).toContain("state IN ('pending', 'resolved')");
+    expect(migration).toContain("not_before TIMESTAMPTZ NOT NULL");
+    expect(migration).toContain("failure_count INTEGER NOT NULL DEFAULT 0");
+    expect(migration).toContain("import_object_reconciliation_queue_idx");
+    expect(migration).toContain("WHERE state = 'pending'");
+  });
+
+  it("enqueues one reconciliation job per object key", async () => {
+    const input = reconciliationJobInput({ id: "reconciliation_first" });
+
+    const first = await imports.enqueueImportObjectReconciliationJob(input);
+    const duplicate = await imports.enqueueImportObjectReconciliationJob({
+      ...input,
+      id: "reconciliation_duplicate",
+      kind: "verify_batch_then_delete"
+    });
+
+    expect(first).toMatchObject({
+      id: "reconciliation_first",
+      objectKey: input.objectKey,
+      kind: "delete_orphan",
+      state: "pending",
+      attemptedAt: null,
+      failureCount: 0,
+      resolvedAt: null,
+      resolution: null,
+      lastErrorType: null,
+      lastErrorCode: null
+    });
+    expect(duplicate).toEqual(first);
+    await expect(database.query("SELECT id FROM import_object_reconciliation_jobs"))
+      .resolves.toMatchObject({ rowCount: 1, rows: [{ id: "reconciliation_first" }] });
+  });
+
+  it("lists eligible reconciliation jobs with fresh work before one-hour retries", async () => {
+    const now = new Date("2026-08-12T12:00:00.000Z");
+    const fresh = await imports.enqueueImportObjectReconciliationJob(reconciliationJobInput({
+      id: "reconciliation_fresh", objectKey: "imports/reconciliation/fresh", notBefore: now
+    }));
+    const oldRetry = await imports.enqueueImportObjectReconciliationJob(reconciliationJobInput({
+      id: "reconciliation_old_retry", objectKey: "imports/reconciliation/old-retry", notBefore: now
+    }));
+    const recentRetry = await imports.enqueueImportObjectReconciliationJob(reconciliationJobInput({
+      id: "reconciliation_recent_retry", objectKey: "imports/reconciliation/recent-retry", notBefore: now
+    }));
+    await imports.recordImportObjectReconciliationFailure(oldRetry.id, new Date("2026-08-12T10:59:59.000Z"), "StorageError", "timeout");
+    await imports.recordImportObjectReconciliationFailure(recentRetry.id, new Date("2026-08-12T11:00:01.000Z"), "StorageError", "timeout");
+
+    await expect(imports.listEligibleImportObjectReconciliationJobs(now)).resolves.toMatchObject([
+      { id: fresh.id },
+      { id: oldRetry.id }
+    ]);
+  });
+
+  it("resolves pending reconciliation jobs once and retains bounded failure diagnostics", async () => {
+    const now = new Date("2026-08-12T12:00:00.000Z");
+    const job = await imports.enqueueImportObjectReconciliationJob(reconciliationJobInput({
+      id: "reconciliation_resolution", objectKey: "imports/reconciliation/resolution", notBefore: now
+    }));
+
+    await expect(imports.recordImportObjectReconciliationFailure(
+      job.id, now, "StorageError", "access_denied"
+    )).resolves.toBe(true);
+    await expect(imports.resolveImportObjectReconciliationJob(
+      job.id, now, "object_removed"
+    )).resolves.toBe(true);
+    await expect(imports.resolveImportObjectReconciliationJob(
+      job.id, new Date("2026-08-12T13:00:00.000Z"), "persistence_committed"
+    )).resolves.toBe(false);
+    await expect(imports.recordImportObjectReconciliationFailure(
+      job.id, new Date("2026-08-12T13:00:00.000Z"), "StorageError", "access_denied"
+    )).resolves.toBe(false);
+
+    await expect(database.query(
+      `SELECT state, resolution, failure_count, last_error_type, last_error_code
+       FROM import_object_reconciliation_jobs WHERE id = $1`, [job.id]
+    )).resolves.toMatchObject({ rows: [{
+      state: "resolved", resolution: "object_removed", failure_count: 1,
+      last_error_type: "StorageError", last_error_code: "access_denied"
+    }] });
+  });
+
+  it("rejects invalid reconciliation timestamps and unsafe diagnostics", async () => {
+    const job = await imports.enqueueImportObjectReconciliationJob(reconciliationJobInput({
+      id: "reconciliation_validation", objectKey: "imports/reconciliation/validation"
+    }));
+    const invalid = new Date("invalid");
+
+    await expect(imports.listEligibleImportObjectReconciliationJobs(invalid)).rejects.toBeInstanceOf(ValidationError);
+    await expect(imports.resolveImportObjectReconciliationJob(job.id, invalid, "object_removed"))
+      .rejects.toBeInstanceOf(ValidationError);
+    await expect(imports.recordImportObjectReconciliationFailure(job.id, new Date(), "Storage Error", "access denied"))
+      .rejects.toBeInstanceOf(ValidationError);
+  });
+
   it("creates import file metadata and maps BIGINT and timestamps", async () => {
     const batch = await imports.createBatch({
       id: "batch_file_metadata",
@@ -592,4 +691,30 @@ function postgresDateAtLocalMidnight(year: number, month: number, day: number, u
   value.getMonth = () => month - 1;
   value.getDate = () => day;
   return value;
+}
+
+function reconciliationJobInput(overrides: {
+  id: string;
+  objectKey?: string;
+  notBefore?: Date;
+}): {
+  id: string;
+  enterpriseId: string;
+  storeId: string;
+  batchId: string;
+  sha256Checksum: string;
+  objectKey: string;
+  kind: "delete_orphan";
+  notBefore: Date;
+} {
+  return {
+    id: overrides.id,
+    enterpriseId: "ent_demo",
+    storeId: "store_demo",
+    batchId: "batch_reconciliation",
+    sha256Checksum: "a".repeat(64),
+    objectKey: overrides.objectKey ?? `imports/reconciliation/${overrides.id}`,
+    kind: "delete_orphan",
+    notBefore: overrides.notBefore ?? new Date("2026-08-12T12:00:00.000Z")
+  };
 }

@@ -53,6 +53,34 @@ export interface ImportFileRecord extends CreateImportFileInput {
 }
 
 export const IMPORT_FILE_CLEANUP_RETRY_DELAY_MS = 60 * 60 * 1000;
+export const IMPORT_OBJECT_RECONCILIATION_RETRY_DELAY_MS = 60 * 60 * 1000;
+
+export type ImportObjectReconciliationKind = "delete_orphan" | "verify_batch_then_delete";
+export type ImportObjectReconciliationState = "pending" | "resolved";
+export type ImportObjectReconciliationResolution = "object_removed" | "persistence_committed";
+
+export interface CreateImportObjectReconciliationJob {
+  id: string;
+  enterpriseId: string;
+  storeId: string;
+  batchId: string;
+  sha256Checksum: string;
+  objectKey: string;
+  kind: ImportObjectReconciliationKind;
+  notBefore: Date;
+}
+
+export interface ImportObjectReconciliationJob extends CreateImportObjectReconciliationJob {
+  state: ImportObjectReconciliationState;
+  attemptedAt: Date | null;
+  failureCount: number;
+  resolvedAt: Date | null;
+  resolution: ImportObjectReconciliationResolution | null;
+  lastErrorType: string | null;
+  lastErrorCode: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export interface ImportBatch {
   id: string;
@@ -290,6 +318,87 @@ export class ImportRepository {
     return result.rowCount === 1;
   }
 
+  async enqueueImportObjectReconciliationJob(
+    input: CreateImportObjectReconciliationJob
+  ): Promise<ImportObjectReconciliationJob> {
+    assertValidDate(input.notBefore, "Reconciliation not-before time");
+    try {
+      const result = await this.database.query<Row>(
+        `INSERT INTO import_object_reconciliation_jobs (
+          id, enterprise_id, store_id, batch_id, sha256_checksum, object_key, kind, not_before
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *`,
+        [
+          input.id, input.enterpriseId, input.storeId, input.batchId, input.sha256Checksum,
+          input.objectKey, input.kind, input.notBefore
+        ]
+      );
+      return toImportObjectReconciliationJob(result.rows[0]);
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      const existing = await this.database.query<Row>(
+        "SELECT * FROM import_object_reconciliation_jobs WHERE object_key = $1",
+        [input.objectKey]
+      );
+      if (existing.rowCount === 1) return toImportObjectReconciliationJob(existing.rows[0]);
+      throw error;
+    }
+  }
+
+  async listEligibleImportObjectReconciliationJobs(
+    now: Date,
+    limit = 100
+  ): Promise<ImportObjectReconciliationJob[]> {
+    assertValidDate(now, "Reconciliation time");
+    assertQueueLimit(limit, "Reconciliation limit");
+    const retryCutoff = new Date(now.getTime() - IMPORT_OBJECT_RECONCILIATION_RETRY_DELAY_MS);
+    const result = await this.database.query<Row>(
+      `SELECT * FROM import_object_reconciliation_jobs
+       WHERE state = 'pending' AND not_before <= $1
+       AND (attempted_at IS NULL OR attempted_at <= $2)
+       ORDER BY CASE WHEN attempted_at IS NULL THEN 0 ELSE 1 END,
+         attempted_at, not_before, created_at, id
+       LIMIT $3`,
+      [now, retryCutoff, limit]
+    );
+    return result.rows.map(toImportObjectReconciliationJob);
+  }
+
+  async resolveImportObjectReconciliationJob(
+    id: string,
+    resolvedAt: Date,
+    resolution: ImportObjectReconciliationResolution
+  ): Promise<boolean> {
+    assertValidDate(resolvedAt, "Reconciliation resolution time");
+    assertResolution(resolution);
+    const result = await this.database.query(
+      `UPDATE import_object_reconciliation_jobs
+       SET state = 'resolved', resolved_at = $1, resolution = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3 AND state = 'pending'`,
+      [resolvedAt, resolution, id]
+    );
+    return result.rowCount === 1;
+  }
+
+  async recordImportObjectReconciliationFailure(
+    id: string,
+    attemptedAt: Date,
+    errorType: string | null,
+    errorCode: string | null
+  ): Promise<boolean> {
+    assertValidDate(attemptedAt, "Reconciliation attempt time");
+    assertSafeDiagnostic(errorType, "Reconciliation error type");
+    assertSafeDiagnostic(errorCode, "Reconciliation error code");
+    const result = await this.database.query(
+      `UPDATE import_object_reconciliation_jobs
+       SET attempted_at = $1, failure_count = failure_count + 1,
+         last_error_type = $2, last_error_code = $3, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4 AND state = 'pending'`,
+      [attemptedAt, errorType, errorCode, id]
+    );
+    return result.rowCount === 1;
+  }
+
   async createCandidate(input: CreateCandidateInput): Promise<ImportCandidate> {
     assertSafeInteger(input.value, "Candidate value");
     const batchResult = await this.database.query<Row>(
@@ -507,6 +616,20 @@ function toImportFile(row: Row): ImportFileRecord {
   };
 }
 
+function toImportObjectReconciliationJob(row: Row): ImportObjectReconciliationJob {
+  return {
+    id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id),
+    batchId: string(row.batch_id), sha256Checksum: string(row.sha256_checksum), objectKey: string(row.object_key),
+    kind: row.kind as ImportObjectReconciliationKind,
+    state: row.state as ImportObjectReconciliationState,
+    notBefore: date(row.not_before), attemptedAt: nullableDate(row.attempted_at),
+    failureCount: number(row.failure_count), resolvedAt: nullableDate(row.resolved_at),
+    resolution: row.resolution as ImportObjectReconciliationResolution | null,
+    lastErrorType: nullableString(row.last_error_type), lastErrorCode: nullableString(row.last_error_code),
+    createdAt: date(row.created_at), updatedAt: date(row.updated_at)
+  };
+}
+
 function toFactVersion(row: Row): Omit<FactVersion, "values"> {
   return {
     id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id),
@@ -547,6 +670,21 @@ function assertSafeInteger(value: number, name: string): void {
 function assertValidDate(value: Date, name: string): void {
   if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
     throw new ValidationError(`${name} must be a valid date`);
+  }
+}
+function assertQueueLimit(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 1 || value > 1000) {
+    throw new ValidationError(`${name} must be an integer between 1 and 1000`);
+  }
+}
+function assertResolution(value: string): asserts value is ImportObjectReconciliationResolution {
+  if (value !== "object_removed" && value !== "persistence_committed") {
+    throw new ValidationError("Reconciliation resolution is invalid");
+  }
+}
+function assertSafeDiagnostic(value: string | null, name: string): void {
+  if (value !== null && (!/^[A-Za-z0-9_.:-]{1,128}$/.test(value))) {
+    throw new ValidationError(`${name} must be a safe diagnostic token`);
   }
 }
 function isUniqueViolation(error: unknown): error is { code: string } {
