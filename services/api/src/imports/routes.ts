@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Database } from "../db.js";
 import { ParserInputError, ImportService, type TrustedContext } from "./service.js";
 import { ConflictError, ForbiddenError, ImportRepository, NotFoundError, ValidationError } from "./repository.js";
+import { ObjectStorageError, type ObjectStorage } from "../storage/object-storage.js";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export type TrustedContextResolver = (request: FastifyRequest) => Promise<TrustedContext | undefined>;
@@ -19,11 +20,18 @@ declare module "fastify" {
   interface FastifyRequest { trustedContext?: TrustedContext; }
 }
 
-export async function registerImportRoutes(app: FastifyInstance, database: Database, contextResolver: TrustedContextResolver): Promise<void> {
-  const service = new ImportService(new ImportRepository(database));
+export interface ImportRouteOptions {
+  database: Database;
+  contextResolver: TrustedContextResolver;
+  objectStorage: ObjectStorage;
+  now: () => Date;
+}
+
+export async function registerImportRoutes(app: FastifyInstance, options: ImportRouteOptions): Promise<void> {
+  const service = new ImportService(new ImportRepository(options.database), options.objectStorage, options.now);
   app.decorateRequest("trustedContext", undefined);
   app.addHook("onRequest", async (request, reply) => {
-    request.trustedContext = await contextResolver(request);
+    request.trustedContext = await options.contextResolver(request);
     if (!request.trustedContext) return reply.code(403).send(errorBody("No trusted request context"));
   });
   app.addHook("onRequest", async (request, reply) => {
@@ -76,6 +84,7 @@ export async function registerImportRoutes(app: FastifyInstance, database: Datab
   app.get("/v1/stores/:storeId/facts/latest", async (request) => service.getLatest(scopedContext(request)));
 
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ObjectStorageError) return reply.code(503).send(errorBody(error.message));
     if (error instanceof ParserInputError) return reply.code(error.code === "xlsx_too_large" ? 413 : 422).send(errorBody(error.message));
     if (error instanceof NotFoundError) return reply.code(404).send(errorBody(error.message));
     if (error instanceof ForbiddenError) return reply.code(403).send(errorBody(error.message));

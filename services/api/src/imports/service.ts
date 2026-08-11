@@ -3,6 +3,11 @@ import { ParserInputError, parseCsv, parseXlsx } from "./parser.js";
 import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput } from "./repository.js";
 import type { MetricKey } from "./models.js";
 import { ImportRepository, ValidationError } from "./repository.js";
+import {
+  isUnavailableObjectStorage,
+  ObjectStorageError,
+  type ObjectStorage
+} from "../storage/object-storage.js";
 
 export interface TrustedContext {
   enterpriseId: string;
@@ -23,7 +28,11 @@ export interface CandidateDraft {
 }
 
 export class ImportService {
-  constructor(private readonly imports: ImportRepository) {}
+  constructor(
+    private readonly imports: ImportRepository,
+    private readonly objectStorage: ObjectStorage,
+    private readonly now: () => Date
+  ) {}
 
   async createManual(context: TrustedContext, input: { rangeStart: string; rangeEnd: string; candidates: CandidateDraft[] }): Promise<ImportBatchDetails> {
     assertRange(input.rangeStart, input.rangeEnd);
@@ -33,6 +42,9 @@ export class ImportService {
   }
 
   async createFile(context: TrustedContext, input: { bytes: Buffer; filename: string; mimeType: string; rangeStart: string; rangeEnd: string; currencyUnit?: "yuan" | "cents" }): Promise<ImportBatchDetails> {
+    if (isUnavailableObjectStorage(this.objectStorage)) {
+      throw new ObjectStorageError("Unable to store import file");
+    }
     assertRange(input.rangeStart, input.rangeEnd);
     const sourceType = fileType(input.filename, input.mimeType);
     const parsed = sourceType === "csv"

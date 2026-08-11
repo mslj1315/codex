@@ -3,6 +3,12 @@ import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
+import type { ObjectStorage } from "../src/storage/object-storage.js";
+
+const configuredStorage: ObjectStorage = {
+  async putObject() {},
+  async deleteObject() { return "missing"; }
+};
 
 describe("import API routes", () => {
   let app: ReturnType<typeof buildServer>;
@@ -19,7 +25,7 @@ describe("import API routes", () => {
     const { Pool } = memory.adapters.createPg();
     pool = new Pool();
     await applyTestMigrations(pool);
-    app = buildServer({ database: pool, developmentMode: true });
+    app = buildServer({ database: pool, developmentMode: true, objectStorage: configuredStorage });
   });
 
   it("does not expose import routes without an explicit trusted context provider", async () => {
@@ -98,6 +104,34 @@ describe("import API routes", () => {
     });
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" });
+  });
+
+  it("keeps manual imports available but rejects file imports before parsing when storage is unconfigured", async () => {
+    const unconfigured = buildServer({ database: pool, developmentMode: true });
+    const manual = await unconfigured.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/manual",
+      payload: {
+        rangeStart: "2026-08-01",
+        rangeEnd: "2026-08-07",
+        candidates: [{ metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready" }]
+      }
+    });
+
+    expect(manual.statusCode).toBe(201);
+
+    const file = await unconfigured.inject({
+      method: "POST",
+      url: "/v1/stores/store_demo/imports/file?rangeStart=2026-08-01&rangeEnd=2026-08-07",
+      headers: { "content-type": "text/csv", "x-file-name": "weekly.csv" },
+      payload: Buffer.from("this is not a recognized import\n")
+    });
+
+    expect(file.statusCode).toBe(503);
+    expect(file.json()).toEqual({ error: "Unable to store import file" });
+    expect((await pool.query("SELECT source_type FROM import_batches ORDER BY created_at")).rows).toEqual([
+      { source_type: "manual" }
+    ]);
   });
 
   it("rejects confirmation of an unresolved candidate", async () => {

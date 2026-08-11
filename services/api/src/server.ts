@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { createDatabase, type Database } from "./db.js";
 import { registerImportRoutes } from "./imports/routes.js";
 import { developmentContextResolver, localContainerContextResolver, type TrustedContextResolver } from "./imports/routes.js";
+import { type ObjectStorage, unavailableObjectStorage } from "./storage/object-storage.js";
+import { createMinioObjectStorageFromEnv } from "./storage/minio-object-storage.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -10,6 +12,8 @@ export interface ServerOptions {
   developmentMode?: boolean;
   localContainerDevelopmentMode?: boolean;
   trustedContextResolver?: TrustedContextResolver;
+  objectStorage?: ObjectStorage;
+  now?: () => Date;
 }
 
 export function buildServer(options: ServerOptions = {}) {
@@ -24,7 +28,14 @@ export function buildServer(options: ServerOptions = {}) {
         ? developmentContextResolver
         : undefined
   );
-  if (database && contextResolver) app.register((instance) => registerImportRoutes(instance, database, contextResolver));
+  if (database && contextResolver) {
+    app.register((instance) => registerImportRoutes(instance, {
+      database,
+      contextResolver,
+      objectStorage: options.objectStorage ?? unavailableObjectStorage,
+      now: options.now ?? (() => new Date())
+    }));
+  }
 
   return app;
 }
@@ -33,7 +44,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const app = buildServer({
     databaseUrl: process.env.DATABASE_URL,
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
-    localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true"
+    localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
+    objectStorage: createMinioObjectStorageFromEnv(process.env)
   });
   const port = Number(process.env.PORT ?? 3000);
 
