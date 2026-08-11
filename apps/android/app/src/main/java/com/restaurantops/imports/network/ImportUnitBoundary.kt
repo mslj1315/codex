@@ -1,6 +1,7 @@
 package com.restaurantops.imports.network
 
 import com.restaurantops.imports.ImportCandidateUpdate
+import java.math.BigDecimal
 
 internal object ImportUnitBoundary {
     private const val CENTS_PER_YUAN = 100L
@@ -29,6 +30,36 @@ internal object ImportUnitBoundary {
         }
     }
 
+    fun displayValue(metricKey: String, value: Long, unit: String): String =
+        if (metricKey in monetaryMetrics && unit == "cents") centsToYuan(value) else value.toString()
+
+    fun displayUnit(metricKey: String, unit: String): String =
+        if (metricKey in monetaryMetrics && unit == "cents") "元" else unit
+
+    fun displayInputUnit(metricKey: String, unit: String): String =
+        if (metricKey in monetaryMetrics && unit == "cents") "yuan" else unit
+
+    fun parseDisplayInput(metricKey: String, valueInput: String, unit: String): ApiUnitValue? {
+        val normalizedUnit = unit.trim().lowercase()
+        return when {
+            metricKey in monetaryMetrics && normalizedUnit == "yuan" -> {
+                val cents = try {
+                    BigDecimal(valueInput.trim()).movePointRight(2).longValueExact()
+                } catch (_: NumberFormatException) {
+                    null
+                } catch (_: ArithmeticException) {
+                    null
+                }
+                cents?.let { ApiUnitValue(it, "cents") }
+            }
+            metricKey in monetaryMetrics && normalizedUnit == "cents" ->
+                valueInput.trim().toLongOrNull()?.let { ApiUnitValue(it, "cents") }
+            metricKey in countMetrics && normalizedUnit == "count" ->
+                valueInput.trim().toLongOrNull()?.let { ApiUnitValue(it, "count") }
+            else -> null
+        }
+    }
+
     fun normalizeUpdate(metricKey: String, update: ImportCandidateUpdate): CandidateUpdateRequest {
         val suppliedUnit = update.unit ?: return CandidateUpdateRequest(
             value = update.value,
@@ -52,6 +83,13 @@ internal object ImportUnitBoundary {
             throw ImportRequestException(422, "金额超出可导入范围")
         }
         return value * CENTS_PER_YUAN
+    }
+
+    private fun centsToYuan(value: Long): String {
+        val whole = value / CENTS_PER_YUAN
+        val fraction = kotlin.math.abs(value % CENTS_PER_YUAN)
+        val sign = if (value < 0 && whole == 0L) "-" else ""
+        return if (fraction == 0L) whole.toString() else "$sign$whole.${fraction.toString().padStart(2, '0')}"
     }
 
     private fun invalidUnit(metricKey: String, unit: String): Nothing =

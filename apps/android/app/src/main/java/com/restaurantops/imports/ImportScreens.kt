@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import com.restaurantops.imports.network.ImportUnitBoundary
 
 private const val LOCAL_STORE_ID = "store_demo"
 
@@ -235,10 +236,12 @@ private fun ImportSummaryContent(
 
 @Composable
 private fun CandidateCard(candidate: ImportCandidate) {
+    val displayValue = ImportUnitBoundary.displayValue(candidate.metricKey, candidate.value, candidate.unit)
+    val displayUnit = ImportUnitBoundary.displayUnit(candidate.metricKey, candidate.unit)
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(candidate.metricDisplayName, style = MaterialTheme.typography.titleSmall)
-            Text("${candidate.value} ${candidate.unit} · 置信度 ${candidate.confidence}%")
+            Text("$displayValue $displayUnit · 置信度 ${candidate.confidence}%")
         }
     }
 }
@@ -250,8 +253,13 @@ private fun EditableCandidateCard(
     commandsEnabled: Boolean,
     onSave: (ImportCandidate, Long, String) -> Unit
 ) {
-    var valueInput by rememberSaveable(candidate.id) { mutableStateOf(candidate.value.toString()) }
-    var unitInput by rememberSaveable(candidate.id) { mutableStateOf("") }
+    var valueInput by rememberSaveable(candidate.id) {
+        mutableStateOf(ImportUnitBoundary.displayValue(candidate.metricKey, candidate.value, candidate.unit))
+    }
+    var unitInput by rememberSaveable(candidate.id) {
+        mutableStateOf(ImportUnitBoundary.displayInputUnit(candidate.metricKey, candidate.unit))
+    }
+    val parsedInput = ImportUnitBoundary.parseDisplayInput(candidate.metricKey, valueInput, unitInput)
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -267,8 +275,8 @@ private fun EditableCandidateCard(
                 OutlinedTextField(
                     value = valueInput,
                     onValueChange = { valueInput = it },
-                    label = { Text("确认数值") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    label = { Text("确认数值（${ImportUnitBoundary.displayUnit(candidate.metricKey, candidate.unit)}）") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     enabled = commandsEnabled,
                     modifier = Modifier.fillMaxWidth()
@@ -282,8 +290,8 @@ private fun EditableCandidateCard(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
-                    onClick = { onSave(candidate, valueInput.toLongOrNull() ?: 0L, unitInput) },
-                    enabled = commandsEnabled,
+                    onClick = { parsedInput?.let { onSave(candidate, it.value, it.unit) } },
+                    enabled = commandsEnabled && parsedInput != null,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("保存并加入已就绪项")
