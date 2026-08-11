@@ -88,8 +88,8 @@ data class ImportCandidateResponse(
     val confidence: Int,
     val status: String,
     val issueCode: String?,
-    val rangeStart: String,
-    val rangeEnd: String,
+    val rangeStart: String?,
+    val rangeEnd: String?,
     val sourceLocator: String?
 )
 

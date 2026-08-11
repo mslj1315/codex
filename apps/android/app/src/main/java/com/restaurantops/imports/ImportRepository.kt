@@ -1,16 +1,18 @@
 package com.restaurantops.imports
 
 interface ImportRepository {
-    fun loadImport(storeId: String, importId: String): ImportSummary
+    suspend fun loadImport(storeId: String, importId: String): ImportSummary
 
-    fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary
+    suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary
 
-    fun updateCandidate(
+    suspend fun updateCandidate(
         storeId: String,
         importId: String,
         candidateId: String,
         update: ImportCandidateUpdate
     ): ImportSummary
 
-    fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion
+    suspend fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion
+
+    suspend fun loadLatestFacts(storeId: String): FactVersion
 }

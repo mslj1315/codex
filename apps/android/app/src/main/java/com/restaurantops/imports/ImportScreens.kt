@@ -304,10 +304,10 @@ private fun sourceLabel(source: ImportSourceType): String = when (source) {
 class LocalDemoImportRepository : ImportRepository {
     private var storedSummary: ImportSummary? = null
 
-    override fun loadImport(storeId: String, importId: String): ImportSummary =
+    override suspend fun loadImport(storeId: String, importId: String): ImportSummary =
         requireNotNull(storedSummary) { "本地演示中没有该导入记录" }
 
-    override fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary {
+    override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary {
         storedSummary = ImportSummary(
             id = "local_manual_import",
             sourceType = ImportSourceType.MANUAL,
@@ -318,7 +318,7 @@ class LocalDemoImportRepository : ImportRepository {
         return requireNotNull(storedSummary)
     }
 
-    override fun updateCandidate(
+    override suspend fun updateCandidate(
         storeId: String,
         importId: String,
         candidateId: String,
@@ -335,6 +335,9 @@ class LocalDemoImportRepository : ImportRepository {
         return requireNotNull(storedSummary)
     }
 
-    override fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion =
+    override suspend fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion =
         FactVersion("local_fact_version", importId, "confirmed")
+
+    override suspend fun loadLatestFacts(storeId: String): FactVersion =
+        FactVersion("local_fact_version", "local_manual_import", "confirmed")
 }

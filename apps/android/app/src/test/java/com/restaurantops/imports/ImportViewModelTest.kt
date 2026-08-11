@@ -4,12 +4,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 
 class ImportViewModelTest {
     @Test
     fun `unresolved candidates remain outside bulk confirmation`() {
         val repository = FakeImportRepository(summaryWithReadyAndUnresolved)
-        val viewModel = ImportViewModel(repository)
+        val viewModel = ImportViewModel(repository, testScope())
 
         viewModel.load("store_demo", "import_1")
 
@@ -20,7 +22,7 @@ class ImportViewModelTest {
     @Test
     fun `editing an unresolved candidate leaves ready candidates unchanged`() {
         val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
-        val viewModel = ImportViewModel(repository)
+        val viewModel = ImportViewModel(repository, testScope())
 
         viewModel.load("store_demo", "import_1")
         viewModel.editCandidate(
@@ -42,7 +44,7 @@ class ImportViewModelTest {
     @Test
     fun `editing a ready candidate is rejected before reaching the repository`() {
         val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
-        val viewModel = ImportViewModel(repository)
+        val viewModel = ImportViewModel(repository, testScope())
 
         viewModel.load("store_demo", "import_1")
         viewModel.editCandidate(
@@ -60,7 +62,7 @@ class ImportViewModelTest {
     @Test
     fun `bulk confirmation submits only ready candidates`() {
         val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
-        val viewModel = ImportViewModel(repository)
+        val viewModel = ImportViewModel(repository, testScope())
 
         viewModel.load("store_demo", "import_1")
         viewModel.confirmReady("store_demo")
@@ -72,7 +74,7 @@ class ImportViewModelTest {
     @Test
     fun `confirmation is one-shot and removes ready candidates from eligibility`() {
         val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
-        val viewModel = ImportViewModel(repository)
+        val viewModel = ImportViewModel(repository, testScope())
 
         viewModel.load("store_demo", "import_1")
         viewModel.confirmReady("store_demo")
@@ -86,7 +88,7 @@ class ImportViewModelTest {
     @Test
     fun `confirmation switches the local import to read only while preserving unresolved items`() {
         val repository = EditingFakeImportRepository(summaryWithReadyAndUnresolved)
-        val viewModel = ImportViewModel(repository)
+        val viewModel = ImportViewModel(repository, testScope())
 
         viewModel.load("store_demo", "import_1")
         assertFalse(viewModel.isReadOnly)
@@ -101,22 +103,24 @@ class ImportViewModelTest {
     private class FakeImportRepository(
         private val summary: ImportSummary
     ) : ImportRepository {
-        override fun loadImport(storeId: String, importId: String): ImportSummary = summary
+        override suspend fun loadImport(storeId: String, importId: String): ImportSummary = summary
 
-        override fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = summary
+        override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = summary
 
-        override fun updateCandidate(
+        override suspend fun updateCandidate(
             storeId: String,
             importId: String,
             candidateId: String,
             update: ImportCandidateUpdate
         ): ImportSummary = summary
 
-        override fun confirm(
+        override suspend fun confirm(
             storeId: String,
             importId: String,
             candidateIds: List<String>
         ): FactVersion = FactVersion("fact_1", "import_1", "confirmed")
+
+        override suspend fun loadLatestFacts(storeId: String): FactVersion = FactVersion("fact_1", "import_1", "confirmed")
     }
 
     private class EditingFakeImportRepository(
@@ -126,11 +130,11 @@ class ImportViewModelTest {
         var updateCalls: Int = 0
         var confirmCalls: Int = 0
 
-        override fun loadImport(storeId: String, importId: String): ImportSummary = original
+        override suspend fun loadImport(storeId: String, importId: String): ImportSummary = original
 
-        override fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = original
+        override suspend fun createManualImport(storeId: String, draft: ManualImportDraft): ImportSummary = original
 
-        override fun updateCandidate(
+        override suspend fun updateCandidate(
             storeId: String,
             importId: String,
             candidateId: String,
@@ -152,14 +156,17 @@ class ImportViewModelTest {
             )
         }
 
-        override fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion {
+        override suspend fun confirm(storeId: String, importId: String, candidateIds: List<String>): FactVersion {
             confirmCalls += 1
             confirmedIds = candidateIds
             return FactVersion("fact_1", "import_1", "confirmed")
         }
+
+        override suspend fun loadLatestFacts(storeId: String): FactVersion = FactVersion("fact_1", "import_1", "confirmed")
     }
 
     private companion object {
+        fun testScope() = CoroutineScope(Dispatchers.Unconfined)
         val summaryWithReadyAndUnresolved = ImportSummary(
             id = "import_1",
             sourceType = ImportSourceType.MANUAL,

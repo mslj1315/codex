@@ -8,7 +8,9 @@ enum class ImportSourceType {
 
 enum class ImportCandidateStatus {
     READY,
-    NEEDS_CONFIRMATION
+    NEEDS_CONFIRMATION,
+    CONFIRMED,
+    REJECTED
 }
 
 data class ImportCandidate(
