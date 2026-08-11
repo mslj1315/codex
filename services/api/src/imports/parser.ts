@@ -97,13 +97,18 @@ export function parseCsv(input: string, options: ParseOptions): ParseResult {
   return { ...result, unknownHeaders: mergeUnknownHeaders(result.unknownHeaders, headers.filter((header) => !findMetric(header))) };
 }
 
-export function parseCsvBytes(input: Uint8Array, options: ParseOptions): ParseResult {
+export function parseCsvBytes(
+  input: Uint8Array,
+  options: ParseOptions,
+  parse: (decoded: string, parseOptions: ParseOptions) => ParseResult = parseCsv
+): ParseResult {
+  let decoded: string;
   try {
-    return parseCsv(new TextDecoder("utf-8", { fatal: true }).decode(input), options);
-  } catch (error) {
-    if (error instanceof ParserInputError) throw error;
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(input);
+  } catch {
     throw new ParserInputError("invalid_csv_encoding");
   }
+  return parse(decoded, options);
 }
 
 export async function parseXlsx(input: ArrayBuffer | Uint8Array, options: ParseOptions): Promise<ParseResult> {

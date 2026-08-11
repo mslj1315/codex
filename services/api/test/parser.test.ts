@@ -224,6 +224,40 @@ describe("import parser", () => {
     );
   });
 
+  it("decodes valid UTF-8 before calling the supplied CSV parser", () => {
+    const expected = { candidates: [], unknownHeaders: ["sentinel"] };
+    const result = parseCsvBytes(
+      Buffer.from("订单数\n12\n"),
+      validRange,
+      (decoded, options) => {
+        expect(decoded).toBe("订单数\n12\n");
+        expect(options).toBe(validRange);
+        return expected;
+      }
+    );
+
+    expect(result).toBe(expected);
+  });
+
+  it("preserves CSV parser failures instead of rewriting them as encoding errors", () => {
+    const failures = [
+      new TypeError("parser type sentinel"),
+      new RangeError("parser range sentinel"),
+      new Error("parser resource sentinel"),
+      new ParserInputError("no_recognized_candidates")
+    ];
+
+    for (const failure of failures) {
+      let caught: unknown;
+      try {
+        parseCsvBytes(Buffer.from("订单数\n12\n"), validRange, () => { throw failure; });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(failure);
+    }
+  });
+
   it("rejects an XLSX archive whose declared expanded size exceeds the preflight budget", async () => {
     const zip = new yazl.ZipFile();
     const chunks: Buffer[] = [];
