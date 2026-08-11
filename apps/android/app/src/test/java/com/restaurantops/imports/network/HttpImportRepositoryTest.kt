@@ -47,6 +47,29 @@ class HttpImportRepositoryTest {
     }
 
     @Test
+    fun `manual monetary values in yuan are sent as whole cents`() = runBlocking {
+        val api = FakeImportApi()
+        val repository = HttpImportRepository(api)
+
+        repository.createManualImport(
+            storeId = "store_demo",
+            draft = ManualImportDraft(
+                rangeStart = "2026-08-01",
+                rangeEnd = "2026-08-07",
+                candidates = listOf(
+                    domainCandidate(metricKey = "revenue", value = 48_260L, unit = "yuan"),
+                    domainCandidate(metricKey = "average_spend", value = 38L, unit = "yuan")
+                )
+            )
+        )
+
+        assertEquals(4_826_000L, api.manualRequest!!.candidates[0].value)
+        assertEquals("cents", api.manualRequest!!.candidates[0].unit)
+        assertEquals(3_800L, api.manualRequest!!.candidates[1].value)
+        assertEquals("cents", api.manualRequest!!.candidates[1].unit)
+    }
+
+    @Test
     fun `batch mapping retains nullable fields and terminal candidate statuses`() = runBlocking {
         val api = FakeImportApi().apply {
             loadedResponse = batchResponse(
@@ -89,6 +112,51 @@ class HttpImportRepositoryTest {
         assertEquals(2, result.candidates.size)
         assertEquals(ImportCandidateStatus.NEEDS_CONFIRMATION, result.candidates.first { it.id == "other" }.status)
         assertEquals("ready", api.updateRequest!!.status)
+    }
+
+    @Test
+    fun `monetary candidate edits in yuan are patched as cents`() = runBlocking {
+        val api = FakeImportApi().apply {
+            loadedResponse = batchResponse(candidates = listOf(
+                candidateResponse(metricKey = "average_spend", value = 38L, unit = "unknown")
+            ))
+            updatedCandidate = candidateResponse(metricKey = "average_spend", value = 3_800L, unit = "cents", status = "ready")
+        }
+        val repository = HttpImportRepository(api)
+        repository.loadImport("store_demo", "batch_1")
+
+        repository.updateCandidate(
+            storeId = "store_demo",
+            importId = "batch_1",
+            candidateId = "candidate_1",
+            update = ImportCandidateUpdate(value = 38L, unit = "yuan", status = ImportCandidateStatus.READY)
+        )
+
+        assertEquals(3_800L, api.updateRequest!!.value)
+        assertEquals("cents", api.updateRequest!!.unit)
+    }
+
+    @Test
+    fun `overflowing yuan input is rejected before any manual API call`() = runBlocking {
+        val api = FakeImportApi()
+        val repository = HttpImportRepository(api)
+
+        val error = try {
+            repository.createManualImport(
+                "store_demo",
+                ManualImportDraft(
+                    "2026-08-01",
+                    "2026-08-07",
+                    listOf(domainCandidate(value = Long.MAX_VALUE / 100 + 1, unit = "yuan"))
+                )
+            )
+            error("Expected ImportRequestException")
+        } catch (expected: ImportRequestException) {
+            expected
+        }
+
+        assertEquals(422, error.statusCode)
+        assertNull(api.manualRequest)
     }
 
     @Test
@@ -213,9 +281,13 @@ class HttpImportRepositoryTest {
     }
 
     private companion object {
-    fun domainCandidate(value: Long = 1L) = ImportCandidate(
-        id = "candidate_1", metricKey = "revenue", metricDisplayName = "Revenue", value = value,
-        unit = "cents", confidence = 100, status = ImportCandidateStatus.READY
+    fun domainCandidate(
+        metricKey: String = "revenue",
+        value: Long = 1L,
+        unit: String = "cents"
+    ) = ImportCandidate(
+        id = "candidate_1", metricKey = metricKey, metricDisplayName = "Revenue", value = value,
+        unit = unit, confidence = 100, status = ImportCandidateStatus.READY
     )
 
     fun batchResponse(candidates: List<ImportCandidateResponse>) = ImportBatchResponse(
@@ -239,10 +311,10 @@ class HttpImportRepositoryTest {
     }
 
     fun candidateResponse(
-        id: String = "candidate_1", value: Long = 1L, status: String = "needs_confirmation",
+        id: String = "candidate_1", metricKey: String = "revenue", value: Long = 1L, unit: String = "cents", status: String = "needs_confirmation",
         issueCode: String? = "unit_missing", rangeStart: String? = "2026-08-01", rangeEnd: String? = "2026-08-07"
     ) = ImportCandidateResponse(
-        id = id, metricKey = "revenue", metricDisplayName = "Revenue", value = value, unit = "cents",
+        id = id, metricKey = metricKey, metricDisplayName = "Revenue", value = value, unit = unit,
         confidence = 80, status = status, issueCode = issueCode, rangeStart = rangeStart,
         rangeEnd = rangeEnd, sourceLocator = "manual:revenue"
     )

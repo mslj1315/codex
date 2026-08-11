@@ -314,10 +314,9 @@ private fun localManualDraft(revenueInput: String, averageSpendInput: String): M
                 metricKey = "average_spend",
                 metricDisplayName = "客单价",
                 value = averageSpendYuan,
-                unit = "unknown",
-                confidence = 0,
-                status = ImportCandidateStatus.NEEDS_CONFIRMATION,
-                issueCode = "unit_missing"
+                unit = "yuan",
+                confidence = 100,
+                status = ImportCandidateStatus.READY
             )
         )
     )

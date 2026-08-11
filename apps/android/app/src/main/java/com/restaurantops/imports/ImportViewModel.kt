@@ -182,7 +182,7 @@ class ImportViewModel(
     }
 
     private companion object {
-        val CONFIRMABLE_UNITS = setOf("yuan", "cents", "count", "times")
+        val CONFIRMABLE_UNITS = setOf("yuan", "cents", "count")
         const val FORBIDDEN_STATUS = 403
         const val CONFLICT_STATUS = 409
         const val TRANSPORT_STATUS = 0

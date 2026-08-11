@@ -40,7 +40,8 @@ class HttpImportRepository(
     ): ImportSummary {
         val key = ImportKey(storeId, importId)
         val current = summaries[key] ?: loadImport(storeId, importId)
-        val updated = request { api.updateCandidate(storeId, importId, candidateId, update.toRequest()).toCandidate() }
+        val updateRequest = ImportUnitBoundary.normalizeUpdate(current.candidates.first { it.id == candidateId }.metricKey, update)
+        val updated = request { api.updateCandidate(storeId, importId, candidateId, updateRequest).toCandidate() }
         val summary = current.copy(candidates = current.candidates.map { candidate ->
             if (candidate.id == candidateId) updated else candidate
         })
@@ -85,11 +86,12 @@ private fun ManualImportDraft.toRequest() = ManualImportRequest(
     rangeStart = rangeStart,
     rangeEnd = rangeEnd,
     candidates = candidates.map { candidate ->
+        val normalized = ImportUnitBoundary.normalize(candidate.metricKey, candidate.value, candidate.unit)
         ManualCandidateRequest(
             metricKey = candidate.metricKey,
             metricDisplayName = candidate.metricDisplayName,
-            value = candidate.value,
-            unit = candidate.unit,
+            value = normalized.value,
+            unit = normalized.unit,
             rangeStart = candidate.rangeStart,
             rangeEnd = candidate.rangeEnd,
             sourceLocator = candidate.sourceLocator,
@@ -97,14 +99,6 @@ private fun ManualImportDraft.toRequest() = ManualImportRequest(
             status = candidate.status.toApiValue()
         )
     }
-)
-
-private fun ImportCandidateUpdate.toRequest() = CandidateUpdateRequest(
-    value = value,
-    unit = unit,
-    rangeStart = rangeStart,
-    rangeEnd = rangeEnd,
-    status = status?.toApiValue()
 )
 
 private fun ImportBatchResponse.toSummary() = ImportSummary(
@@ -157,7 +151,7 @@ private fun String.toBatchStatus() = when (this) {
     else -> throw IllegalArgumentException("Unknown import batch status: $this")
 }
 
-private fun ImportCandidateStatus.toApiValue() = when (this) {
+internal fun ImportCandidateStatus.toApiValue() = when (this) {
     ImportCandidateStatus.READY -> "ready"
     ImportCandidateStatus.NEEDS_CONFIRMATION -> "needs_confirmation"
     ImportCandidateStatus.CONFIRMED -> "confirmed"
