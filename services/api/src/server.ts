@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyServerOptions } from "fastify";
 import { fileURLToPath } from "node:url";
 import { createDatabase, type Database } from "./db.js";
 import { registerImportRoutes } from "./imports/routes.js";
@@ -14,10 +14,11 @@ export interface ServerOptions {
   trustedContextResolver?: TrustedContextResolver;
   objectStorage?: ObjectStorage;
   now?: () => Date;
+  logger?: FastifyServerOptions["logger"];
 }
 
 export function buildServer(options: ServerOptions = {}) {
-  const app = Fastify({ bodyLimit: 5 * 1024 * 1024 });
+  const app = Fastify({ bodyLimit: 5 * 1024 * 1024, logger: options.logger ?? false });
 
   app.get("/health", async () => ({ status: "ok" }));
   const database = options.database ?? (options.databaseUrl ? createDatabase(options.databaseUrl) : undefined);
@@ -45,7 +46,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     databaseUrl: process.env.DATABASE_URL,
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
-    objectStorage: createMinioObjectStorageFromEnv(process.env)
+    objectStorage: createMinioObjectStorageFromEnv(process.env),
+    logger: true
   });
   const port = Number(process.env.PORT ?? 3000);
 

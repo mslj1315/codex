@@ -83,8 +83,19 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
   });
   app.get("/v1/stores/:storeId/facts/latest", async (request) => service.getLatest(scopedContext(request)));
 
-  app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof ObjectStorageError) return reply.code(503).send(errorBody(error.message));
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof ObjectStorageError) {
+      request.log.error({
+        event: "import_object_storage_error",
+        requestId: request.id,
+        route: request.routeOptions.url,
+        storageError: {
+          message: "Unable to store import file",
+          cause: redactedStorageCause(error.cause)
+        }
+      }, "Unable to store import file");
+      return reply.code(503).send(errorBody("Unable to store import file"));
+    }
     if (error instanceof ParserInputError) return reply.code(error.code === "xlsx_too_large" ? 413 : 422).send(errorBody(error.message));
     if (error instanceof NotFoundError) return reply.code(404).send(errorBody(error.message));
     if (error instanceof ForbiddenError) return reply.code(403).send(errorBody(error.message));
@@ -114,3 +125,18 @@ function isUploadTooLarge(error: unknown): boolean {
   return code === "FST_REQ_FILE_TOO_LARGE" || code === "FST_ERR_CTP_BODY_TOO_LARGE" || code === "FST_FIELDS_LIMIT" || code === "FST_PARTS_LIMIT" || code === "FST_FIELD_TOO_LARGE";
 }
 function isLoopback(ip: string): boolean { return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1"; }
+
+function redactedStorageCause(cause: unknown): { type: string; code?: string } {
+  const candidate = typeof cause === "object" && cause !== null
+    ? cause as { name?: unknown; code?: unknown }
+    : undefined;
+  const type = safeDiagnosticToken(candidate?.name) ?? (cause === undefined ? "Unknown" : "Error");
+  const code = safeDiagnosticToken(candidate?.code);
+  return code ? { type, code } : { type };
+}
+
+function safeDiagnosticToken(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value)
+    ? value
+    : undefined;
+}

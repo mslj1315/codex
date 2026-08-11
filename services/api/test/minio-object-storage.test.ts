@@ -48,6 +48,34 @@ class FakeMinioClient implements MinioClient {
   }
 }
 
+class RacingMinioClient extends FakeMinioClient {
+  constructor(
+    private readonly race: BucketCreationRace,
+    private readonly makeFailure: Error | null
+  ) {
+    super();
+    this.bucketExistsResult = false;
+  }
+
+  override async makeBucket(bucket: string): Promise<void> {
+    this.makeBucketCalls.push(bucket);
+    await this.race.arrive();
+    if (this.makeFailure) throw this.makeFailure;
+  }
+}
+
+class BucketCreationRace {
+  private arrivals = 0;
+  private release!: () => void;
+  private readonly bothArrived = new Promise<void>((resolve) => { this.release = resolve; });
+
+  async arrive(): Promise<void> {
+    this.arrivals += 1;
+    if (this.arrivals === 2) this.release();
+    await this.bothArrived;
+  }
+}
+
 describe("MinioObjectStorage", () => {
   it("initializes an existing bucket once and preserves put metadata", async () => {
     const client = new FakeMinioClient();
@@ -78,6 +106,42 @@ describe("MinioObjectStorage", () => {
 
     expect(client.bucketExistsCalls).toEqual(["imports"]);
     expect(client.makeBucketCalls).toEqual(["imports"]);
+  });
+
+  it("treats a cross-adapter BucketAlreadyOwnedByYou race as idempotent success", async () => {
+    const race = new BucketCreationRace();
+    const owner = new RacingMinioClient(race, null);
+    const follower = new RacingMinioClient(
+      race,
+      Object.assign(new Error("bucket was created concurrently"), { code: "BucketAlreadyOwnedByYou" })
+    );
+    const ownerStorage = new MinioObjectStorage(owner, "imports");
+    const followerStorage = new MinioObjectStorage(follower, "imports");
+
+    const results = await Promise.allSettled([
+      ownerStorage.putObject({ key: "owner.csv", bytes: Buffer.from("owner"), contentType: "text/csv" }),
+      followerStorage.putObject({ key: "follower.csv", bytes: Buffer.from("follower"), contentType: "text/csv" })
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(owner.putCalls.map((call) => call.key)).toEqual(["owner.csv"]);
+    expect(follower.putCalls.map((call) => call.key)).toEqual(["follower.csv"]);
+  });
+
+  it("does not swallow BucketAlreadyExists from a bucket owned by another account", async () => {
+    const client = new FakeMinioClient();
+    client.bucketExistsResult = false;
+    const conflict = Object.assign(new Error("bucket belongs to another account"), { code: "BucketAlreadyExists" });
+    client.makeBucketFailure = conflict;
+    const storage = new MinioObjectStorage(client, "imports");
+
+    await expect(storage.putObject({ key: "one.csv", bytes: Buffer.from("one"), contentType: "text/csv" }))
+      .rejects.toEqual(expect.objectContaining({
+        name: "ObjectStorageError",
+        message: "Unable to store import file",
+        cause: conflict
+      }));
+    expect(client.putCalls).toEqual([]);
   });
 
   it("clears a rejected bucket initialization so a later operation can retry", async () => {

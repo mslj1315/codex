@@ -7,8 +7,8 @@ import {
 
 const completeEnvironment = {
   MINIO_ENDPOINT: "http://minio.internal:9100",
-  MINIO_ACCESS_KEY: "access",
-  MINIO_SECRET_KEY: "secret",
+  MINIO_ACCESS_KEY: "visible-access-marker",
+  MINIO_SECRET_KEY: "private-secret-marker",
   MINIO_BUCKET: "imports"
 };
 
@@ -27,14 +27,14 @@ describe("createMinioObjectStorageFromEnv", () => {
       endPoint: "minio.internal",
       port: 9100,
       useSSL: false,
-      accessKey: "access",
-      secretKey: "secret"
+      accessKey: "visible-access-marker",
+      secretKey: "private-secret-marker"
     }]);
   });
 
   it.each([
     ["http://minio.internal", 80, false],
-    ["https://minio.internal", 443, true]
+    ["https://minio.internal/", 443, true]
   ] as const)("uses the protocol default for %s", (endpoint, port, useSSL) => {
     const options: MinioClientOptions[] = [];
 
@@ -51,29 +51,86 @@ describe("createMinioObjectStorageFromEnv", () => {
     "MINIO_ACCESS_KEY",
     "MINIO_SECRET_KEY",
     "MINIO_BUCKET"
-  ] as const)("does not construct a partially configured client when %s is missing", (missingKey) => {
+  ] as const)("rejects partial configuration when %s is missing", (missingKey) => {
     const environment: Record<string, string | undefined> = { ...completeEnvironment };
     delete environment[missingKey];
     let factoryCalls = 0;
 
-    const storage = createMinioObjectStorageFromEnv(environment, () => {
-      factoryCalls += 1;
-      return inertClient();
-    });
+    expect(() => createMinioObjectStorageFromEnv(environment, () => {
+        factoryCalls += 1;
+        return inertClient();
+      }))
+      .toThrow(`Missing MinIO configuration: ${missingKey}`);
 
-    expect(storage).toBeUndefined();
     expect(factoryCalls).toBe(0);
   });
 
-  it("treats whitespace-only values as missing", () => {
+  it("returns undefined only when every MinIO value is absent or blank", () => {
     let factoryCalls = 0;
-    const storage = createMinioObjectStorageFromEnv(
-      { ...completeEnvironment, MINIO_BUCKET: "   " },
-      () => { factoryCalls += 1; return inertClient(); }
-    );
+    const factory = () => { factoryCalls += 1; return inertClient(); };
 
-    expect(storage).toBeUndefined();
+    expect(createMinioObjectStorageFromEnv({}, factory)).toBeUndefined();
+    expect(createMinioObjectStorageFromEnv({
+      MINIO_ENDPOINT: " ", MINIO_ACCESS_KEY: "\t", MINIO_SECRET_KEY: "", MINIO_BUCKET: "  "
+    }, factory)).toBeUndefined();
     expect(factoryCalls).toBe(0);
+  });
+
+  it("lists every blank variable in a partial configuration without exposing credentials", () => {
+    expect(() => createMinioObjectStorageFromEnv({
+      ...completeEnvironment,
+      MINIO_ACCESS_KEY: " ",
+      MINIO_SECRET_KEY: ""
+    })).toThrow("Missing MinIO configuration: MINIO_ACCESS_KEY, MINIO_SECRET_KEY");
+
+    try {
+      createMinioObjectStorageFromEnv({ ...completeEnvironment, MINIO_BUCKET: "" });
+    } catch (error) {
+      expect(String(error)).not.toContain("visible-access-marker");
+      expect(String(error)).not.toContain("private-secret-marker");
+    }
+  });
+
+  it.each([
+    "ftp://minio.internal",
+    "htps://minio.internal",
+    "http://user:password@minio.internal",
+    "http://minio.internal/imports",
+    "http://minio.internal/segment/../",
+    "http://minio.internal?region=local",
+    "http://minio.internal#fragment",
+    "http://minio.internal:0",
+    "http://minio.internal:99999"
+  ])("rejects unsafe endpoint %s without exposing configuration values", (endpoint) => {
+    let factoryCalls = 0;
+
+    expect(() => createMinioObjectStorageFromEnv(
+      { ...completeEnvironment, MINIO_ENDPOINT: endpoint },
+      () => { factoryCalls += 1; return inertClient(); }
+    )).toThrow(/Invalid MINIO_ENDPOINT/);
+
+    try {
+      createMinioObjectStorageFromEnv({ ...completeEnvironment, MINIO_ENDPOINT: endpoint });
+    } catch (error) {
+      expect(String(error)).not.toContain("visible-access-marker");
+      expect(String(error)).not.toContain("private-secret-marker");
+      expect(String(error)).not.toContain("user:password");
+    }
+    expect(factoryCalls).toBe(0);
+  });
+
+  it.each([
+    "ab",
+    "UPPERCASE",
+    "bad_bucket",
+    ".starts-with-dot",
+    "ends-with-dot.",
+    "successive..periods",
+    "127.0.0.1",
+    "a".repeat(64)
+  ])("rejects invalid bucket name %s during construction", (bucket) => {
+    expect(() => createMinioObjectStorageFromEnv({ ...completeEnvironment, MINIO_BUCKET: bucket }))
+      .toThrow(`Invalid MINIO_BUCKET: ${bucket}`);
   });
 });
 
