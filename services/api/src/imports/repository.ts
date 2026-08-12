@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Database, Queryable } from "../db.js";
+import { MetricCatalogRepository } from "../metrics/repository.js";
 
 export type ImportSourceType = "csv" | "xlsx" | "manual";
 export type ImportBatchStatus = "pending_confirmation" | "confirmed";
@@ -239,6 +240,7 @@ export interface FactVersion {
   enterpriseId: string;
   storeId: string;
   sourceBatchId: string;
+  metricCatalogVersionId: string;
   confirmationActorId: string;
   confirmationStatus: "confirmed";
   confirmedAt: Date;
@@ -720,13 +722,23 @@ export class ImportRepository {
         throw new ValidationError("Only ready candidates in the pending batch can be confirmed");
       }
 
+      const catalog = await new MetricCatalogRepository(client).resolvePublishedMetricDefinitions();
+      for (const candidate of candidateResult.rows) {
+        const definition = catalog.definitions.get(string(candidate.metric_key));
+        if (!definition?.enabled || definition.storageUnit !== candidate.unit || !Number.isSafeInteger(number(candidate.value))
+          || (definition.requirePositive && number(candidate.value) <= 0)
+          || (!definition.allowNegative && number(candidate.value) < 0)) {
+          throw new ValidationError("Candidate value is outside the published metric catalog domain");
+        }
+      }
+
       const confirmedAt = new Date();
       const versionId = randomUUID();
       const versionResult = await client.query<Row>(
         `INSERT INTO fact_versions (
-          id, enterprise_id, store_id, source_batch_id, confirmation_actor_id, confirmation_status, confirmed_at
-        ) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6) RETURNING *`,
-        [versionId, input.enterpriseId, input.storeId, input.batchId, input.actorId, confirmedAt]
+          id, enterprise_id, store_id, source_batch_id, confirmation_actor_id, confirmation_status, confirmed_at, metric_catalog_version_id
+        ) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $7) RETURNING *`,
+        [versionId, input.enterpriseId, input.storeId, input.batchId, input.actorId, confirmedAt, catalog.catalogId]
       );
 
       const values: FactValue[] = [];
@@ -795,6 +807,10 @@ export class ImportRepository {
     );
     if (result.rowCount !== 1) throw new NotFoundError("No confirmed fact version for enterprise and store");
     return this.getFactVersion({ id: string(result.rows[0].id), ...scope });
+  }
+
+  async getPublishedMetricCatalog() {
+    return new MetricCatalogRepository(this.database).getCurrentCatalog();
   }
 
   async getDataReadiness(scope: DataReadinessScope): Promise<DataReadiness> {
@@ -1076,7 +1092,7 @@ function toImportObjectReconciliationJob(row: Row): ImportObjectReconciliationJo
 function toFactVersion(row: Row): Omit<FactVersion, "values"> {
   return {
     id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id),
-    sourceBatchId: string(row.source_batch_id), confirmationActorId: string(row.confirmation_actor_id),
+    sourceBatchId: string(row.source_batch_id), metricCatalogVersionId: string(row.metric_catalog_version_id), confirmationActorId: string(row.confirmation_actor_id),
     confirmationStatus: "confirmed", confirmedAt: date(row.confirmed_at),
     createdAt: date(row.created_at), updatedAt: date(row.updated_at)
   };

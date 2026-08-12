@@ -619,7 +619,7 @@ describe("import repository", () => {
     const secondBatch = await imports.createBatch({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", sourceType: "manual" });
     const secondCandidate = await imports.createCandidate({
       batchId: secondBatch.id, enterpriseId: "ent_demo", storeId: "store_demo", metricKey: "orders",
-      metricDisplayName: "Orders", value: 120, unit: "orders", rangeStart: "2026-08-01",
+      metricDisplayName: "Orders", value: 120, unit: "count", rangeStart: "2026-08-01",
       rangeEnd: "2026-08-07", sourceLocator: "manual:orders", confidence: 100, status: "ready"
     });
 
@@ -648,7 +648,7 @@ describe("import repository", () => {
 
     const readyCandidate = await imports.createCandidate({
       batchId: batch.id, enterpriseId: "ent_demo", storeId: "store_demo", metricKey: "orders",
-      metricDisplayName: "Orders", value: 120, unit: "orders", rangeStart: "2026-08-01",
+      metricDisplayName: "Orders", value: 120, unit: "count", rangeStart: "2026-08-01",
       rangeEnd: "2026-08-07", sourceLocator: "manual:orders", confidence: 100, status: "ready"
     });
     const factVersion = await imports.confirmBatch({

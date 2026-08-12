@@ -106,6 +106,13 @@ describe("import API routes", () => {
     expect(response.json()).toMatchObject({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" });
   });
 
+  it("returns only enabled public fields from the published metric catalog", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/metric-catalog" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ versionNumber: 1, definitions: expect.arrayContaining([expect.objectContaining({ metricKey: "revenue", storageUnit: "cents", usableForDiagnostic: true })]) });
+    expect(response.body).not.toMatch(/metric_catalog_v1|draft|retired|batch|candidate|objectKey/i);
+  });
+
   it("returns store-scoped readiness without exposing source identifiers", async () => {
     const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/readiness?rangeStart=2026-08-01&rangeEnd=2026-08-07" });
     expect(response.statusCode).toBe(200);

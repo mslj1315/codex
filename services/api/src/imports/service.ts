@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ParserInputError, parseCsvBytes, parseXlsx } from "./parser.js";
 import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness, DeterministicDiagnostic, ActionCard, ActionCardStatus, ActionCardVerificationOutcome, ActionCardVerificationSummary } from "./repository.js";
-import type { MetricKey } from "./models.js";
 import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
 import {
   ObjectStorageError,
@@ -202,12 +201,22 @@ export class ImportService {
 
   getBatch(context: TrustedContext, batchId: string) { return this.imports.getBatch({ id: batchId, enterpriseId: context.enterpriseId, storeId: context.storeId }); }
   getLatest(context: TrustedContext) { return this.imports.getLatestFactVersion(context); }
+  async getPublishedMetricCatalog() {
+    const catalog = await this.imports.getPublishedMetricCatalog();
+    return {
+      versionNumber: catalog.versionNumber,
+      definitions: catalog.definitions.filter((definition) => definition.enabled).map((definition) => ({
+        metricKey: definition.metricKey, displayName: definition.displayName, valueKind: definition.valueKind,
+        storageUnit: definition.storageUnit, usableForReadiness: definition.usableForReadiness,
+        usableForDiagnostic: definition.usableForDiagnostic, usableForVerification: definition.usableForVerification
+      }))
+    };
+  }
   async confirm(context: TrustedContext, batchId: string, candidateIds: readonly string[]) {
     const batch = await this.imports.getBatch({ id: batchId, enterpriseId: context.enterpriseId, storeId: context.storeId });
     for (const id of candidateIds) {
       const candidate = batch.candidates.find((item) => item.id === id);
       if (!candidate || candidate.status !== "ready") throw new ValidationError("Only ready candidates in the pending batch can be confirmed");
-      validateResolvedCandidate(candidate);
     }
     return this.imports.confirmBatch({ batchId, candidateIds, ...context });
   }
@@ -225,7 +234,6 @@ export class ImportService {
     if (!existing) throw new ValidationError("Candidate does not belong to import batch");
     const resolved = { ...existing, ...update };
     assertRange(resolved.rangeStart, resolved.rangeEnd);
-    if (resolved.status === "ready") validateResolvedCandidate(resolved);
     return this.imports.updateCandidate({ id: candidateId, batchId, ...context, ...update });
   }
 
@@ -236,7 +244,7 @@ export class ImportService {
     const start = candidate.rangeStart ?? rangeStart; const end = candidate.rangeEnd ?? rangeEnd;
     assertRange(start, end);
     const prepared = { metricKey: candidate.metricKey, metricDisplayName: candidate.metricDisplayName, value: candidate.value, unit: candidate.unit, rangeStart: start, rangeEnd: end, sourceLocator: candidate.sourceLocator ?? `manual:${candidate.metricKey}`, confidence: candidate.confidence ?? 100, status: candidate.status ?? "ready" as const };
-    if (prepared.status === "ready") validateResolvedCandidate(prepared);
+    if (prepared.status === "ready") validateKnownMetricCandidate(prepared);
     return prepared;
   }
 
@@ -311,15 +319,17 @@ function objectKeySegment(value: string): string {
   return encodeURIComponent(value).replace(/\./g, "%2E");
 }
 
-const metricUnits: Record<MetricKey, "cents" | "count"> = { revenue: "cents", orders: "count", average_spend: "cents", package_sales: "cents", package_redemptions: "count", refunds: "cents", promotion_spend: "cents" };
-const strictlyPositive = new Set<MetricKey>(["orders", "average_spend", "package_sales", "package_redemptions"]);
-export function validateResolvedCandidate(candidate: Pick<ImportCandidate, "metricKey" | "unit" | "value" | "rangeStart" | "rangeEnd">): void {
-  if (!(candidate.metricKey in metricUnits)) throw new ValidationError("Candidate metric is invalid");
-  const key = candidate.metricKey as MetricKey;
-  if (candidate.unit !== metricUnits[key]) throw new ValidationError("Candidate unit does not match metric");
+const knownMetricUnits: Record<string, "cents" | "count"> = {
+  revenue: "cents", orders: "count", average_spend: "cents", package_sales: "cents",
+  package_redemptions: "count", refunds: "cents", promotion_spend: "cents"
+};
+const knownPositiveMetrics = new Set(["orders", "average_spend", "package_sales", "package_redemptions"]);
+function validateKnownMetricCandidate(candidate: Pick<ImportCandidate, "metricKey" | "unit" | "value">): void {
   if (!Number.isSafeInteger(candidate.value)) throw new ValidationError("Candidate value must be a JSON safe integer");
-  if (candidate.value < 0 || (strictlyPositive.has(key) && candidate.value === 0)) throw new ValidationError("Candidate value is outside metric domain");
-  assertRange(candidate.rangeStart, candidate.rangeEnd);
+  const unit = knownMetricUnits[candidate.metricKey];
+  if (unit !== undefined && (candidate.unit !== unit || candidate.value < 0 || (knownPositiveMetrics.has(candidate.metricKey) && candidate.value === 0))) {
+    throw new ValidationError("Candidate value is outside the known metric domain");
+  }
 }
 
 export { ParserInputError };

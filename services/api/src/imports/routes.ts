@@ -82,6 +82,7 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     return reply.code(201).send(version);
   });
   app.get("/v1/stores/:storeId/facts/latest", async (request) => service.getLatest(scopedContext(request)));
+  app.get("/v1/stores/:storeId/metric-catalog", async () => service.getPublishedMetricCatalog());
   app.get("/v1/stores/:storeId/readiness", async (request) => {
     const query = request.query as Record<string, unknown>;
     return service.getDataReadiness(scopedContext(request), stringField(query, "rangeStart"), stringField(query, "rangeEnd"));
