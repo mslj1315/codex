@@ -398,7 +398,7 @@ export class ImportRepository {
     const retryCutoff = new Date(now.getTime() - IMPORT_OBJECT_RECONCILIATION_RETRY_DELAY_MS);
     const client = await database.connect();
     try {
-      await client.query("BEGIN READ ONLY");
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const jobs = await client.query<{
         pending_reconciliation_jobs: string;
         eligible_reconciliation_jobs: string;
@@ -412,14 +412,14 @@ export class ImportRepository {
            SUM(CASE WHEN state = 'pending' AND not_before <= $1
                      AND (attempted_at IS NULL OR attempted_at <= $2) THEN 1 ELSE 0 END)::text
              AS eligible_reconciliation_jobs,
-           SUM(CASE WHEN state = 'pending' AND not_before > $1 THEN 1 ELSE 0 END)::text
+           SUM(CASE WHEN state = 'pending' AND kind = 'verify_batch_then_delete' AND not_before > $1 THEN 1 ELSE 0 END)::text
              AS grace_deferred_reconciliation_jobs,
            SUM(CASE WHEN state = 'pending' AND not_before <= $1 AND attempted_at > $2 THEN 1 ELSE 0 END)::text
              AS retry_deferred_reconciliation_jobs,
            SUM(CASE WHEN state = 'pending' AND failure_count > 0 THEN 1 ELSE 0 END)::text
              AS failed_reconciliation_jobs,
            MIN(CASE WHEN state = 'pending' AND not_before <= $1
-                     AND (attempted_at IS NULL OR attempted_at <= $2) THEN not_before END) AS oldest_eligible_at
+                     AND (attempted_at IS NULL OR attempted_at <= $2) THEN created_at END) AS oldest_eligible_at
          FROM import_object_reconciliation_jobs`,
         [now, retryCutoff]
       );
