@@ -4,6 +4,8 @@ import type { Database } from "../db.js";
 import { ParserInputError, ImportService, type TrustedContext } from "./service.js";
 import { ConflictError, ForbiddenError, ImportRepository, NotFoundError, ValidationError } from "./repository.js";
 import { ObjectStorageError, type ObjectStorage } from "../storage/object-storage.js";
+import type { AuthService } from "../auth/service.js";
+import { AuthenticationError } from "../auth/tokens.js";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export type TrustedContextResolver = (request: FastifyRequest) => Promise<TrustedContext | undefined>;
@@ -15,6 +17,20 @@ export const localContainerContextResolver: TrustedContextResolver = async () =>
   storeId: "store_demo",
   actorId: "actor_demo"
 });
+
+export function authenticatedContextResolver(auth: AuthService): TrustedContextResolver {
+  return async (request) => {
+    const accessToken = bearerToken(request.headers.authorization);
+    const storeId = (request.params as Record<string, unknown>).storeId;
+    if (!accessToken || typeof storeId !== "string") return undefined;
+    try {
+      return await auth.resolveStoreContext(accessToken, storeId);
+    } catch (error) {
+      if (error instanceof AuthenticationError) return undefined;
+      throw error;
+    }
+  };
+}
 
 declare module "fastify" {
   interface FastifyRequest { trustedContext?: TrustedContext; }
@@ -164,6 +180,10 @@ function optionalString(value: unknown, key: string): string | undefined { if (v
 function arrayField(body: Record<string, unknown>, key: string): unknown[] { if (!Array.isArray(body[key])) throw new ValidationError(`${key} is required`); return body[key] as unknown[]; }
 function stringParam(request: FastifyRequest, key: string): string { const value = (request.params as Record<string, unknown>)[key]; if (typeof value !== "string") throw new ValidationError(`Missing ${key}`); return value; }
 function header(request: FastifyRequest, key: string): string { const value = request.headers[key]; if (typeof value !== "string" || value === "") throw new ValidationError(`${key} header is required`); return value; }
+function bearerToken(value: string | undefined): string | undefined {
+  const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(value ?? "");
+  return match?.[1];
+}
 function optionalStringArray(value: unknown, name: string): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new ValidationError(`${name} must be an array of strings`);
