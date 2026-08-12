@@ -114,6 +114,14 @@ describe("import repository", () => {
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON fact_values");
   });
 
+  it("declares the versioned metric catalog schema", () => {
+    expect(migration).toContain("CREATE TABLE metric_catalog_versions");
+    expect(migration).toContain("state IN ('draft', 'published', 'retired')");
+    expect(migration).toContain("metric_catalog_one_published_idx");
+    expect(migration).toContain("UNIQUE (metric_catalog_version_id, metric_key)");
+    expect(migration).toContain("metric_catalog_version_id TEXT NOT NULL");
+  });
+
   it("normalizes PostgreSQL DATE values in batch responses", async () => {
     const dateReturningDatabase = {
       query: async () => ({
