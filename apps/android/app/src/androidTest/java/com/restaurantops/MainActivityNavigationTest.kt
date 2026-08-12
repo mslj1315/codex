@@ -19,6 +19,7 @@ class MainActivityNavigationTest {
 
     @Test
     fun completedOnboardingEntersTheWorkspace() {
+        composeRule.onNodeWithText("本地演示").performClick()
         composeRule.onNodeWithText("门店名称").performTextInput("Task7Store")
         composeRule.onNodeWithText("下一步").performClick()
         composeRule.onNodeWithTag("business-type-chinese_dining").performClick()

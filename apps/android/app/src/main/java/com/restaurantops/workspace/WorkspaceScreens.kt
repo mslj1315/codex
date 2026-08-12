@@ -33,6 +33,7 @@ import com.restaurantops.imports.ImportViewModel
 import com.restaurantops.imports.LocalDemoImportRepository
 import com.restaurantops.imports.files.AndroidImportFileReader
 import com.restaurantops.BuildConfig
+import com.restaurantops.auth.AuthenticatedApiClient
 import com.restaurantops.imports.network.HttpImportRepository
 import com.restaurantops.imports.network.ImportApi
 import com.restaurantops.imports.network.LocalImportApiRuntime
@@ -46,35 +47,32 @@ import retrofit2.converter.gson.GsonConverterFactory
 @Composable
 fun WorkspaceRoot(
     viewModel: WorkspaceViewModel,
-    onReturnToOnboarding: () -> Unit
+    onReturnToOnboarding: () -> Unit,
+    storeId: String,
+    authenticatedApiClient: AuthenticatedApiClient? = null,
+    onLogout: (() -> Unit)? = null,
+    onChooseAnotherStore: (() -> Unit)? = null
 ) {
     val contentResolver = LocalContext.current.contentResolver
     val importFileReader = remember(contentResolver) { AndroidImportFileReader(contentResolver) }
-    val importViewModel = remember(importFileReader) {
-        val repository = if (
-            LocalImportApiRuntime.canUseLocalApi(
-                isDebug = BuildConfig.DEBUG,
-                baseUrl = BuildConfig.LOCAL_API_BASE_URL
-            )
-        ) {
-            val api = Retrofit.Builder()
-                .baseUrl(BuildConfig.LOCAL_API_BASE_URL)
-                .addConverterFactory(GsonConverterFactory.create())
-                .build()
-                .create(ImportApi::class.java)
+    val importViewModel = remember(importFileReader, storeId, authenticatedApiClient) {
+        val repository = if (authenticatedApiClient != null) {
+            val api = authenticatedApiClient.retrofit(BuildConfig.LOCAL_API_BASE_URL).create(ImportApi::class.java)
             HttpImportRepository(api)
         } else {
             LocalDemoImportRepository()
         }
         ImportViewModel(repository, fileReader = importFileReader)
     }
-    val operationsRepository = remember {
-        OperationsRuntime.repository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
+    val operationsRepository = remember(authenticatedApiClient, storeId) {
+        authenticatedApiClient?.let { OperationsRuntime.repository(BuildConfig.LOCAL_API_BASE_URL, it) }
+            ?: OperationsRuntime.repository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
     }
-    val operationsMetricCatalogRepository = remember {
-        OperationsRuntime.metricCatalogRepository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
+    val operationsMetricCatalogRepository = remember(authenticatedApiClient, storeId) {
+        authenticatedApiClient?.let { OperationsRuntime.metricCatalogRepository(BuildConfig.LOCAL_API_BASE_URL, it) }
+            ?: OperationsRuntime.metricCatalogRepository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
     }
-    val operationsViewModel = remember(operationsRepository, operationsMetricCatalogRepository) {
+    val operationsViewModel = remember(storeId, operationsRepository, operationsMetricCatalogRepository) {
         OperationsViewModel(operationsRepository, metricCatalogRepository = operationsMetricCatalogRepository)
     }
     when {
@@ -98,6 +96,7 @@ fun WorkspaceRoot(
         )
         viewModel.isImportOpen -> ImportScreen(
             viewModel = importViewModel,
+            storeId = storeId,
             onBack = viewModel::closeOverlay
         )
         else -> Scaffold(
@@ -130,7 +129,7 @@ fun WorkspaceRoot(
                 )
                 WorkspaceTab.OPERATIONS -> OperationsScreen(
                     viewModel = operationsViewModel,
-                    storeId = "store_demo",
+                    storeId = storeId,
                     rangeStart = "2026-08-01",
                     rangeEnd = "2026-08-07",
                     modifier = Modifier.padding(contentPadding)
@@ -146,6 +145,9 @@ fun WorkspaceRoot(
                 )
                 WorkspaceTab.PROFILE -> ProfileScreen(
                     onReturnToOnboarding = onReturnToOnboarding,
+                    storeId = storeId,
+                    onLogout = onLogout,
+                    onChooseAnotherStore = onChooseAnotherStore,
                     modifier = Modifier.padding(contentPadding)
                 )
             }
@@ -494,7 +496,13 @@ private fun LibraryStage() {
 }
 
 @Composable
-private fun ProfileScreen(onReturnToOnboarding: () -> Unit, modifier: Modifier = Modifier) {
+private fun ProfileScreen(
+    onReturnToOnboarding: () -> Unit,
+    storeId: String,
+    onLogout: (() -> Unit)?,
+    onChooseAnotherStore: (() -> Unit)?,
+    modifier: Modifier = Modifier
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -502,8 +510,17 @@ private fun ProfileScreen(onReturnToOnboarding: () -> Unit, modifier: Modifier =
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("我的", style = MaterialTheme.typography.titleLarge)
-        Text("当前为本地演示，没有账号、同步状态或云端门店资料。")
-        Button(onClick = onReturnToOnboarding) { Text("返回修改门店档案") }
+        if (onLogout == null) {
+            Text("当前为本地演示，没有账号、同步状态或云端门店资料。")
+            Button(onClick = onReturnToOnboarding) { Text("返回修改门店档案") }
+        } else {
+            Text("当前门店：$storeId")
+            Text("远端数据访问权限由服务端账户和门店成员关系决定。")
+            onChooseAnotherStore?.let { choose ->
+                TextButton(onClick = choose, modifier = Modifier.fillMaxWidth()) { Text("切换门店") }
+            }
+            Button(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("退出登录") }
+        }
     }
 }
 

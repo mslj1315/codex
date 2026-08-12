@@ -33,11 +33,9 @@ import com.restaurantops.imports.files.ImportFileRules
 import com.restaurantops.imports.network.ImportUnitBoundary
 import java.util.Locale
 
-private const val LOCAL_STORE_ID = "store_demo"
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
+fun ImportScreen(viewModel: ImportViewModel, storeId: String, onBack: () -> Unit) {
     var revenueInput by rememberSaveable { mutableStateOf("48260") }
     var averageSpendInput by rememberSaveable { mutableStateOf("38") }
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -88,7 +86,7 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                     enabled = viewModel.canRunCommands,
                     onCreateSummary = {
                         viewModel.createManualImport(
-                            LOCAL_STORE_ID,
+                            storeId,
                             localManualDraft(revenueInput, averageSpendInput)
                         )
                     },
@@ -104,7 +102,9 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                     onChooseFile = {
                         fileLauncher.launch(ImportFileRules.pickerMimeTypes(viewModel.selectedSource))
                     },
-                    onUpload = viewModel::uploadSelectedFile
+                    onUpload = { rangeStart, rangeEnd ->
+                        viewModel.uploadSelectedFile(storeId, rangeStart, rangeEnd)
+                    }
                 )
             }
 
@@ -116,9 +116,9 @@ fun ImportScreen(viewModel: ImportViewModel, onBack: () -> Unit) {
                     isReadOnly = viewModel.isReadOnly,
                     commandsEnabled = viewModel.canRunCommands,
                     confirmationMessage = viewModel.confirmationMessage,
-                    onConfirmReady = { viewModel.confirmReady(LOCAL_STORE_ID) },
+                    onConfirmReady = { viewModel.confirmReady(storeId) },
                     onEditCandidate = { candidate, value, unit ->
-                        viewModel.editCandidate(LOCAL_STORE_ID, candidate.id, value, unit)
+                        viewModel.editCandidate(storeId, candidate.id, value, unit)
                     }
                 )
             }
@@ -196,7 +196,7 @@ private fun FileImportCard(
     requestError: String?,
     uploadMessage: String?,
     onChooseFile: () -> Unit,
-    onUpload: (String, String, String) -> Unit
+    onUpload: (String, String) -> Unit
 ) {
     var rangeStart by rememberSaveable(source) { mutableStateOf("2026-08-01") }
     var rangeEnd by rememberSaveable(source) { mutableStateOf("2026-08-07") }
@@ -246,7 +246,7 @@ private fun FileImportCard(
             requestError?.let { InlineMessage(it, isError = true) }
             uploadMessage?.let { InlineMessage(it, isError = false) }
             Button(
-                onClick = { onUpload(LOCAL_STORE_ID, rangeStart, rangeEnd) },
+                onClick = { onUpload(rangeStart, rangeEnd) },
                 enabled = canUpload,
                 modifier = Modifier.fillMaxWidth()
             ) {

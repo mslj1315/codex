@@ -5,6 +5,7 @@ import com.restaurantops.imports.network.HttpMetricCatalogRepository
 import com.restaurantops.imports.network.ImportApi
 import com.restaurantops.imports.network.MetricCatalogRepository
 import com.restaurantops.imports.network.UnavailableMetricCatalogRepository
+import com.restaurantops.auth.AuthenticatedApiClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -27,6 +28,9 @@ object OperationsRuntime {
             UnavailableOperationsRepository()
         }
 
+    fun repository(baseUrl: String, authenticatedApiClient: AuthenticatedApiClient): OperationsRepository =
+        HttpOperationsRepository(authenticatedApiClient.retrofit(baseUrl).create(OperationsApi::class.java))
+
     fun metricCatalogRepository(isDebug: Boolean, baseUrl: String): MetricCatalogRepository =
         if (canUseHttpRepository(isDebug, baseUrl)) {
             HttpMetricCatalogRepository(
@@ -39,6 +43,9 @@ object OperationsRuntime {
         } else {
             UnavailableMetricCatalogRepository()
         }
+
+    fun metricCatalogRepository(baseUrl: String, authenticatedApiClient: AuthenticatedApiClient): MetricCatalogRepository =
+        HttpMetricCatalogRepository(authenticatedApiClient.retrofit(baseUrl).create(ImportApi::class.java))
 }
 
 class UnavailableOperationsRepository : OperationsRepository {

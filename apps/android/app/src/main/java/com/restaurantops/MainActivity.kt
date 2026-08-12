@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -26,21 +27,39 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.SavedStateHandle
 import com.restaurantops.onboarding.BusinessType
 import com.restaurantops.onboarding.OnboardingStep
 import com.restaurantops.onboarding.StoreFactDraft
 import com.restaurantops.onboarding.StoreOnboardingViewModel
+import com.restaurantops.auth.AuthApi
+import com.restaurantops.auth.AuthenticatedApiClient
+import com.restaurantops.auth.EncryptedRefreshTokenStore
+import com.restaurantops.auth.HttpAuthRepository
+import com.restaurantops.auth.LoginScreen
+import com.restaurantops.auth.LoginViewModel
+import com.restaurantops.auth.AppSessionState
+import com.restaurantops.auth.PreferencesSelectedStoreStore
+import com.restaurantops.auth.RemoteServiceUnavailableScreen
+import com.restaurantops.auth.SessionViewModel
+import com.restaurantops.auth.StoreSelectionScreen
+import com.restaurantops.imports.network.LocalImportApiRuntime
 import com.restaurantops.workspace.WorkspaceRoot
 import com.restaurantops.workspace.WorkspaceViewModel
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 
 class MainActivity : ComponentActivity() {
     private val onboardingViewModel: StoreOnboardingViewModel by viewModels()
@@ -50,20 +69,113 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                var isInWorkspace by rememberSaveable { mutableStateOf(false) }
-                if (isInWorkspace) {
-                    WorkspaceRoot(
-                        viewModel = workspaceViewModel,
-                        onReturnToOnboarding = { isInWorkspace = false }
+                val canUseRemoteApi = LocalImportApiRuntime.canUseLocalApi(
+                    isDebug = BuildConfig.DEBUG,
+                    baseUrl = BuildConfig.LOCAL_API_BASE_URL
+                )
+                if (canUseRemoteApi) {
+                    AuthenticatedAppRoot(
+                        workspaceViewModel = workspaceViewModel,
+                        onboardingViewModel = onboardingViewModel
                     )
                 } else {
-                    StoreOnboardingScreen(
-                        viewModel = onboardingViewModel,
-                        onEnterWorkspace = { isInWorkspace = true }
-                    )
+                    RemoteServiceUnavailableScreen()
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AuthenticatedAppRoot(
+    workspaceViewModel: WorkspaceViewModel,
+    onboardingViewModel: StoreOnboardingViewModel
+) {
+    val context = LocalContext.current.applicationContext
+    val repository = remember(context) {
+        val api = Retrofit.Builder()
+            .baseUrl(BuildConfig.LOCAL_API_BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(AuthApi::class.java)
+        HttpAuthRepository(api, EncryptedRefreshTokenStore(context))
+    }
+    val sessionViewModel = remember(repository, context) {
+        SessionViewModel(repository, PreferencesSelectedStoreStore(context), SavedStateHandle())
+    }
+    val loginViewModel = remember(repository) { LoginViewModel(repository, SavedStateHandle()) }
+    val authenticatedApiClient = remember(repository) { AuthenticatedApiClient(repository) }
+    var isInLocalWorkspace by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(sessionViewModel) {
+        sessionViewModel.restore()
+    }
+    LaunchedEffect(repository, sessionViewModel) {
+        repository.onSessionInvalidated = sessionViewModel::onSessionInvalidated
+    }
+
+    if (isInLocalWorkspace) {
+        LocalDemoRoot(
+            workspaceViewModel = workspaceViewModel,
+            onboardingViewModel = onboardingViewModel,
+            onExit = {
+                isInLocalWorkspace = false
+                sessionViewModel.leaveLocalDemo()
+            }
+        )
+        return
+    }
+
+    when (val state = sessionViewModel.state) {
+        AppSessionState.Loading -> SessionLoadingScreen()
+        AppSessionState.Login -> LoginScreen(
+            viewModel = loginViewModel,
+            allowLocalDemo = BuildConfig.DEBUG,
+            onLocalDemo = {
+                sessionViewModel.enterLocalDemo()
+                isInLocalWorkspace = true
+            },
+            onAuthenticated = sessionViewModel::acceptLogin
+        )
+        is AppSessionState.StoreSelection -> StoreSelectionScreen(state.stores, sessionViewModel::selectStore)
+        is AppSessionState.RemoteWorkspace -> WorkspaceRoot(
+            viewModel = workspaceViewModel,
+            onReturnToOnboarding = sessionViewModel::logout,
+            storeId = state.store.storeId,
+            authenticatedApiClient = authenticatedApiClient,
+            onLogout = sessionViewModel::logout,
+            onChooseAnotherStore = sessionViewModel::chooseAnotherStore
+        )
+        AppSessionState.LocalDemo -> Unit
+    }
+}
+
+@Composable
+private fun LocalDemoRoot(
+    workspaceViewModel: WorkspaceViewModel,
+    onboardingViewModel: StoreOnboardingViewModel,
+    onExit: () -> Unit
+) {
+    var isInWorkspace by rememberSaveable { mutableStateOf(false) }
+    if (isInWorkspace) {
+        WorkspaceRoot(
+            viewModel = workspaceViewModel,
+            onReturnToOnboarding = onExit,
+            storeId = "store_demo"
+        )
+    } else {
+        StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { isInWorkspace = true })
+    }
+}
+
+@Composable
+private fun SessionLoadingScreen() {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator()
     }
 }
 
