@@ -100,6 +100,48 @@ class OperationsViewModelTest {
         assertEquals(summary, viewModel.verificationSummary)
         assertEquals("Unable to load operations data", viewModel.requestError)
     }
+
+    @Test
+    fun `successful update replaces only matching card and clears its summary`() = runTest {
+        val proposed = ActionCard("action_1", ActionCardStatus.PROPOSED, "First")
+        val other = ActionCard("action_2", ActionCardStatus.IN_PROGRESS, "Second")
+        val summary = ActionVerificationSummary(listOf(VerificationMetric("revenue", 1000, 1100, 10.0)))
+        val repository = FakeOperationsRepository(cards = listOf(proposed, other), summary = summary)
+        val viewModel = OperationsViewModel(repository, this)
+        viewModel.load("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+        viewModel.loadVerificationSummary("store_demo", proposed.id)
+        advanceUntilIdle()
+
+        viewModel.updateActionCard("store_demo", proposed.id, ActionCardUpdate.start())
+        advanceUntilIdle()
+
+        assertEquals(ActionCardStatus.IN_PROGRESS, viewModel.actionCards.first().status)
+        assertEquals(other, viewModel.actionCards.last())
+        assertNull(viewModel.verificationSummary)
+        assertNull(viewModel.selectedActionCardId)
+    }
+
+    @Test
+    fun `failed update retains cards summary and neutral error`() = runTest {
+        val proposed = ActionCard("action_1", ActionCardStatus.PROPOSED, "First")
+        val summary = ActionVerificationSummary(listOf(VerificationMetric("revenue", 1000, 1100, 10.0)))
+        val repository = FakeOperationsRepository(cards = listOf(proposed), summary = summary).apply {
+            updateFailure = OperationsRequestException(409, "private conflict")
+        }
+        val viewModel = OperationsViewModel(repository, this)
+        viewModel.load("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+        viewModel.loadVerificationSummary("store_demo", proposed.id)
+        advanceUntilIdle()
+
+        viewModel.updateActionCard("store_demo", proposed.id, ActionCardUpdate.start())
+        advanceUntilIdle()
+
+        assertEquals(proposed, viewModel.actionCards.single())
+        assertEquals(summary, viewModel.verificationSummary)
+        assertEquals("Unable to load operations data", viewModel.requestError)
+    }
 }
 
 private class FakeOperationsRepository(
@@ -107,7 +149,9 @@ private class FakeOperationsRepository(
     var failure: Throwable? = null,
     var diagnosticFailure: Throwable? = null,
     var summaryFailure: Throwable? = null,
-    private val summary: ActionVerificationSummary? = null
+    var updateFailure: Throwable? = null,
+    private val summary: ActionVerificationSummary? = null,
+    private val cards: List<ActionCard> = listOf(ActionCard("action_1", ActionCardStatus.IN_PROGRESS, "Action card"))
 ) : OperationsRepository {
     override suspend fun loadReadiness(storeId: String, rangeStart: String, rangeEnd: String): DataReadiness {
         failure?.let { throw it }
@@ -121,7 +165,7 @@ private class FakeOperationsRepository(
         diagnosticFailure?.let { throw it }
         return diagnostic
     }
-    override suspend fun loadActionCards(storeId: String, status: String?) = listOf(ActionCard("action_1", ActionCardStatus.IN_PROGRESS, "检查午市套餐"))
+    override suspend fun loadActionCards(storeId: String, status: String?) = cards
     override suspend fun loadVerificationSummary(
         storeId: String,
         actionCardId: String
@@ -133,5 +177,12 @@ private class FakeOperationsRepository(
         storeId: String,
         actionCardId: String,
         update: ActionCardUpdate
-    ): ActionCard = throw UnsupportedOperationException("Not used by this test")
+    ): ActionCard {
+        updateFailure?.let { throw it }
+        return requireNotNull(cards.singleOrNull { it.id == actionCardId }).copy(
+            status = update.status,
+            executionNote = update.executionNote ?: cards.single { it.id == actionCardId }.executionNote,
+            verificationOutcome = update.verificationOutcome ?: cards.single { it.id == actionCardId }.verificationOutcome
+        )
+    }
 }

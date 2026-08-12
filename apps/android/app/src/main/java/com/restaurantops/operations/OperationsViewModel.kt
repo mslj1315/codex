@@ -31,6 +31,8 @@ class OperationsViewModel(
         private set
     var verificationSummary by mutableStateOf<ActionVerificationSummary?>(null)
         private set
+    var updatingActionCardId by mutableStateOf<String?>(null)
+        private set
 
     private val operationScope: CoroutineScope
         get() = scope ?: viewModelScope
@@ -90,6 +92,35 @@ class OperationsViewModel(
                 requestError = FAILURE_MESSAGE
             } finally {
                 isLoading = false
+            }
+        }
+    }
+
+    fun updateActionCard(storeId: String, actionCardId: String, update: ActionCardUpdate) {
+        if (updatingActionCardId != null || isLoading) return
+        updatingActionCardId = actionCardId
+        requestError = null
+        isServiceUnavailable = false
+        operationScope.launch {
+            try {
+                val updatedCard = repository.updateActionCard(storeId, actionCardId, update)
+                actionCards = actionCards.map { card ->
+                    if (card.id == updatedCard.id) updatedCard else card
+                }
+                if (selectedActionCardId == updatedCard.id) {
+                    selectedActionCardId = null
+                    verificationSummary = null
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: OperationsServiceUnavailableException) {
+                isServiceUnavailable = true
+            } catch (error: OperationsRequestException) {
+                requestError = neutralMessage(error)
+            } catch (_: Throwable) {
+                requestError = FAILURE_MESSAGE
+            } finally {
+                updatingActionCardId = null
             }
         }
     }
