@@ -88,6 +88,16 @@ export interface ImportObjectReconciliationJob extends CreateImportObjectReconci
   updatedAt: Date;
 }
 
+export interface ImportMaintenanceStatus {
+  pendingReconciliationJobs: number;
+  eligibleReconciliationJobs: number;
+  graceDeferredReconciliationJobs: number;
+  retryDeferredReconciliationJobs: number;
+  failedReconciliationJobs: number;
+  oldestEligibleAt: Date | null;
+  reconciliationGuardCount: number;
+}
+
 export interface ImportBatch {
   id: string;
   enterpriseId: string;
@@ -379,6 +389,60 @@ export class ImportRepository {
       [now]
     );
     return Number(result.rows[0].count);
+  }
+
+  async getImportMaintenanceStatus(now: Date): Promise<ImportMaintenanceStatus> {
+    assertValidDate(now, "Maintenance status time");
+    const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
+    if (!database) throw new Error("Maintenance status requires a database connection");
+    const retryCutoff = new Date(now.getTime() - IMPORT_OBJECT_RECONCILIATION_RETRY_DELAY_MS);
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN READ ONLY");
+      const jobs = await client.query<{
+        pending_reconciliation_jobs: string;
+        eligible_reconciliation_jobs: string;
+        grace_deferred_reconciliation_jobs: string;
+        retry_deferred_reconciliation_jobs: string;
+        failed_reconciliation_jobs: string;
+        oldest_eligible_at: Date | null;
+      }>(
+        `SELECT
+           SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END)::text AS pending_reconciliation_jobs,
+           SUM(CASE WHEN state = 'pending' AND not_before <= $1
+                     AND (attempted_at IS NULL OR attempted_at <= $2) THEN 1 ELSE 0 END)::text
+             AS eligible_reconciliation_jobs,
+           SUM(CASE WHEN state = 'pending' AND not_before > $1 THEN 1 ELSE 0 END)::text
+             AS grace_deferred_reconciliation_jobs,
+           SUM(CASE WHEN state = 'pending' AND not_before <= $1 AND attempted_at > $2 THEN 1 ELSE 0 END)::text
+             AS retry_deferred_reconciliation_jobs,
+           SUM(CASE WHEN state = 'pending' AND failure_count > 0 THEN 1 ELSE 0 END)::text
+             AS failed_reconciliation_jobs,
+           MIN(CASE WHEN state = 'pending' AND not_before <= $1
+                     AND (attempted_at IS NULL OR attempted_at <= $2) THEN not_before END) AS oldest_eligible_at
+         FROM import_object_reconciliation_jobs`,
+        [now, retryCutoff]
+      );
+      const guards = await client.query<{ reconciliation_guard_count: string }>(
+        "SELECT COUNT(*)::text AS reconciliation_guard_count FROM import_batch_reconciliation_guards"
+      );
+      await client.query("COMMIT");
+      const row = jobs.rows[0];
+      return {
+        pendingReconciliationJobs: Number(row.pending_reconciliation_jobs),
+        eligibleReconciliationJobs: Number(row.eligible_reconciliation_jobs),
+        graceDeferredReconciliationJobs: Number(row.grace_deferred_reconciliation_jobs),
+        retryDeferredReconciliationJobs: Number(row.retry_deferred_reconciliation_jobs),
+        failedReconciliationJobs: Number(row.failed_reconciliation_jobs),
+        oldestEligibleAt: nullableDate(row.oldest_eligible_at),
+        reconciliationGuardCount: Number(guards.rows[0].reconciliation_guard_count)
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async pruneImportBatchReconciliationGuards(
