@@ -8,6 +8,14 @@ import org.junit.Test
 
 class WorkspaceViewModelTest {
     @Test
+    fun `operations tab is restored after workspace recreation`() {
+        val handle = SavedStateHandle()
+        WorkspaceViewModel(handle).selectTab(WorkspaceTab.OPERATIONS)
+
+        assertEquals(WorkspaceTab.OPERATIONS, WorkspaceViewModel(handle).selectedTab)
+    }
+
+    @Test
     fun `restoration safely defaults unknown wire values and resolves legacy overlay conflicts`() {
         val legacyRestoredViewModel = WorkspaceViewModel(
             SavedStateHandle(

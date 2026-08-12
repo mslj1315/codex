@@ -116,6 +116,11 @@ fun WorkspaceRoot(
                     onOpenImport = viewModel::openImport,
                     modifier = Modifier.padding(contentPadding)
                 )
+                WorkspaceTab.OPERATIONS -> LocalPlaceholderScreen(
+                    title = "Operations",
+                    message = "Operations workspace is being configured.",
+                    modifier = Modifier.padding(contentPadding)
+                )
                 WorkspaceTab.TASKS -> TasksScreen(
                     tasks = viewModel.tasks,
                     modifier = Modifier.padding(contentPadding)
