@@ -124,6 +124,28 @@ describe("import API routes", () => {
     expect(action.statusCode).toBe(422);
   });
 
+  it("reads a diagnostic run only within its trusted store without internal provenance", async () => {
+    await pool.query(`INSERT INTO diagnostic_runs
+      (id, enterprise_id, store_id, kind, range_start, range_end, prior_range_start, prior_range_end, rule_version, confidence, snapshot_key)
+      VALUES ('diagnostic_route_1', 'ent_demo', 'store_demo', 'revenue_decline', '2026-08-01', '2026-08-07', '2026-07-25', '2026-07-31', 'revenue_decline_v1', 'high', 'route-snapshot')`);
+    await pool.query(`INSERT INTO diagnostic_evidence
+      (id, diagnostic_run_id, enterprise_id, store_id, metric_key, current_value, prior_value, change_percent, current_fact_version_id, prior_fact_version_id)
+      VALUES ('diagnostic_evidence_route_1', 'diagnostic_route_1', 'ent_demo', 'store_demo', 'revenue', 3826000, 4400000, -13.05, 'private-current', 'private-prior')`);
+
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/diagnostic-runs/diagnostic_route_1" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: "diagnostic_route_1", ruleVersion: "revenue_decline_v1",
+      evidence: [expect.objectContaining({ metricKey: "revenue", currentValue: 3826000, priorValue: 4400000, changePercent: -13.05 })]
+    });
+    expect(response.body).not.toMatch(/snapshot|factVersion|sourceBatch|sourceCandidate|objectKey|private-current/);
+
+    const outside = await app.inject({ method: "GET", url: "/v1/stores/store_other/diagnostic-runs/diagnostic_route_1" });
+    const missing = await app.inject({ method: "GET", url: "/v1/stores/store_demo/diagnostic-runs/missing_run" });
+    expect(outside.statusCode).toBe(403);
+    expect(missing.statusCode).toBe(404);
+  });
+
   it("creates and advances a store-scoped action card", async () => {
     const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/action-cards", payload: {
       diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查午市套餐",

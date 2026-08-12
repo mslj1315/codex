@@ -93,7 +93,7 @@ expect(response.json()).toMatchObject({
 expect(response.body).not.toMatch(/snapshot|factVersion|sourceBatch|sourceCandidate|objectKey/);
 ```
 
-- [ ] In the same test, request the ID under `/v1/stores/store_other/...` and expect `404`, then request a missing ID in `store_demo` and expect the same `404` body.
+- [ ] In the same test, request the ID under `/v1/stores/store_other/...` and expect the existing trusted-context `403`, then request a missing ID in `store_demo` and expect `404`. The repository test in Task 1 verifies that an in-scope lookup cannot read another store's row.
 
 - [ ] Run `npm test -- import-routes.test.ts`; expected red because the route is absent.
 

@@ -90,6 +90,9 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     const query = request.query as Record<string, unknown>;
     return service.getDeterministicDiagnostic(scopedContext(request), stringField(query, "rangeStart"), stringField(query, "rangeEnd"));
   });
+  app.get("/v1/stores/:storeId/diagnostic-runs/:diagnosticRunId", async (request) =>
+    service.getDiagnosticRun(scopedContext(request), stringParam(request, "diagnosticRunId"))
+  );
   app.post("/v1/stores/:storeId/action-cards", async (request, reply) => {
     const body = record(request.body);
     const context = scopedContext(request);

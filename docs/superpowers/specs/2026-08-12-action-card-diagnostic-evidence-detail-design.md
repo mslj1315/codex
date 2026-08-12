@@ -19,9 +19,10 @@ Add `GET /v1/stores/:storeId/diagnostic-runs/:diagnosticRunId` to the existing
 trusted-context import routes.
 
 The repository reads `diagnostic_runs` and `diagnostic_evidence` using both the
-trusted enterprise ID and store ID. A missing record and a record outside that
-scope both result in the existing neutral `NotFoundError` response. The route
-does not expose whether the ID exists in another enterprise or store.
+trusted enterprise ID and store ID. A missing record in an authorized store
+results in the existing neutral `NotFoundError` response. The existing trusted
+context hook rejects an unauthorized store path before this lookup with `403`,
+so the route does not disclose whether the diagnostic ID exists elsewhere.
 
 The response is limited to the stored public diagnostic projection:
 

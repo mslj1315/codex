@@ -164,6 +164,10 @@ export class ImportService {
     return this.imports.getDeterministicDiagnostic({ ...context, rangeStart, rangeEnd });
   }
 
+  getDiagnosticRun(context: TrustedContext, id: string) {
+    return this.imports.getDiagnosticRun({ id, enterpriseId: context.enterpriseId, storeId: context.storeId });
+  }
+
   async createActionCardFromDiagnostic(context: TrustedContext, rangeStart: string, rangeEnd: string, dueDate?: string): Promise<ActionCard> {
     const diagnostic = await this.getDeterministicDiagnostic(context, rangeStart, rangeEnd);
     if (!diagnostic) throw new ValidationError("No actionable diagnostic is available for this period");
