@@ -14,7 +14,7 @@ class HttpOperationsRepositoryTest {
     @Test
     fun `formats action verification metric keys for display`() {
         assertNull(verificationMetricKeysText(emptyList()))
-        assertEquals("验证指标：revenue、orders", verificationMetricKeysText(listOf("revenue", "orders")))
+        assertEquals("验证指标：未命名指标、未命名指标", verificationMetricKeysText(listOf("revenue", "orders")))
     }
 
     @Test
@@ -28,7 +28,7 @@ class HttpOperationsRepositoryTest {
 
         assertEquals("营业额：基线 48260.50 元，对比 49000 元，变化 1.53%", formatVerificationMetric(revenue, presentations))
         assertEquals("转化率：基线 12.50%，对比 10%，变化 -20.0%", formatVerificationMetric(ratio, presentations))
-        assertEquals("orders：基线 12，对比 15，变化 25.0%", formatVerificationMetric(VerificationMetric("orders", 12, 15, 25.0), presentations))
+        assertEquals("未命名指标：基线 12，对比 15，变化 25.0%", formatVerificationMetric(VerificationMetric("orders", 12, 15, 25.0), presentations))
     }
 
     @Test

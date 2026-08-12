@@ -57,7 +57,7 @@ class OperationsViewModelTest {
             viewModel.verificationMetricPresentations["diagnostic_only"]
         )
         assertEquals(
-            "验证指标：营业额（元）、unknown_metric、订单数（次）",
+            "验证指标：营业额（元）、未命名指标、订单数（次）",
             verificationMetricKeysText(card.verificationMetricKeys, viewModel.verificationMetricLabels)
         )
     }
@@ -82,7 +82,7 @@ class OperationsViewModelTest {
         assertEquals(listOf(card), viewModel.actionCards)
         assertTrue(viewModel.verificationMetricLabels.isEmpty())
         assertNull(viewModel.requestError)
-        assertEquals("验证指标：revenue", verificationMetricKeysText(card.verificationMetricKeys, viewModel.verificationMetricLabels))
+        assertEquals("验证指标：未命名指标", verificationMetricKeysText(card.verificationMetricKeys, viewModel.verificationMetricLabels))
     }
 
     @Test

@@ -136,7 +136,7 @@ internal fun readinessMissingMetricsText(
 ): String? = metricKeys.takeIf { it.isNotEmpty() }?.joinToString(
     prefix = "缺少指标：",
     separator = "、"
-) { metricKey -> labels[metricKey] ?: metricKey }
+) { metricKey -> labels[metricKey] ?: metricKey.metricDisplayName() }
 
 @Composable
 private fun DiagnosticContent(
@@ -274,7 +274,7 @@ internal fun verificationMetricKeysText(
 ): String? = metricKeys.takeIf { it.isNotEmpty() }?.joinToString(
     prefix = "验证指标：",
     separator = "、"
-) { metricKey -> labels[metricKey] ?: metricKey }
+) { metricKey -> labels[metricKey] ?: metricKey.metricDisplayName() }
 
 @Composable
 private fun VerificationSummaryContent(
@@ -302,7 +302,7 @@ internal fun formatVerificationMetric(
     presentations: Map<String, VerificationMetricPresentation> = emptyMap()
 ): String {
     val presentation = presentations[metric.metricKey]
-    val displayName = presentation?.displayName ?: metric.metricKey
+    val displayName = presentation?.displayName ?: metric.metricKey.metricDisplayName()
     val baseline = formatVerificationValue(metric.baselineValue, presentation?.storageUnit)
     val comparison = formatVerificationValue(metric.comparisonValue, presentation?.storageUnit)
     val unit = presentation?.storageUnit?.displayUnit().orEmpty()
@@ -374,6 +374,8 @@ internal fun String.diagnosticDisplayName(): String = when (this) {
     else -> "经营诊断"
 }
 
+internal fun String.metricDisplayName(): String = "未命名指标"
+
 internal fun isValidExecutionNote(note: String): Boolean =
     note.trim().isNotEmpty() && note.length <= 500
 
@@ -382,7 +384,7 @@ internal fun formatDiagnosticEvidence(
     presentations: Map<String, VerificationMetricPresentation> = emptyMap()
 ): String {
     val presentation = presentations[evidence.metricKey]
-    val displayName = presentation?.displayName ?: evidence.metricKey
+    val displayName = presentation?.displayName ?: evidence.metricKey.metricDisplayName()
     val current = formatVerificationValue(evidence.currentValue, presentation?.storageUnit)
     val prior = formatVerificationValue(evidence.priorValue, presentation?.storageUnit)
     val unit = presentation?.storageUnit?.displayUnit().orEmpty()
