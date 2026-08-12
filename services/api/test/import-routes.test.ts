@@ -144,6 +144,9 @@ describe("import API routes", () => {
     const verified = await app.inject({ method: "PATCH", url: `/v1/stores/store_demo/action-cards/${card.id}/status`, payload: { status: "verified", verificationOutcome: "data_insufficient" } });
     expect(verified.statusCode).toBe(200);
     expect(verified.json()).toMatchObject({ status: "verified", verificationOutcome: "data_insufficient" });
+    const summary = await app.inject({ method: "GET", url: `/v1/stores/store_demo/action-cards/${card.id}/verification-summary` });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json()).toBeNull();
     const outside = await app.inject({ method: "GET", url: `/v1/stores/store_other/action-cards/${card.id}` });
     expect(outside.statusCode).toBe(403);
   });

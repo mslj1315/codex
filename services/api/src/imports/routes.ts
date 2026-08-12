@@ -118,6 +118,7 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     return service.updateActionCardStatus(scopedContext(request), stringParam(request, "actionCardId"), status as never, options.now(), optionalString(body.executionNote, "executionNote"), optionalString(body.verificationOutcome, "verificationOutcome") as never);
   });
   app.get("/v1/stores/:storeId/action-cards/:actionCardId", async (request) => service.getActionCard(scopedContext(request), stringParam(request, "actionCardId")));
+  app.get("/v1/stores/:storeId/action-cards/:actionCardId/verification-summary", async (request) => service.getActionCardVerificationSummary(scopedContext(request), stringParam(request, "actionCardId")));
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ObjectStorageError) {

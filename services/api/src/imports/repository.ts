@@ -138,6 +138,10 @@ export interface CreateActionCardInput {
 export interface ActionCard extends Omit<CreateActionCardInput, "id" | "actorId"> {
   id: string; createdByActorId: string; status: ActionCardStatus; executionNote: string | null; verificationOutcome: ActionCardVerificationOutcome | null; completedAt: Date | null; verifiedAt: Date | null; createdAt: Date; updatedAt: Date;
 }
+export interface ActionCardVerificationSummary {
+  baselineRangeStart: string; baselineRangeEnd: string; comparisonRangeStart: string; comparisonRangeEnd: string;
+  metrics: { metricKey: "revenue" | "orders"; baselineValue: number; comparisonValue: number; changePercent: number }[];
+}
 
 export interface ImportBatch {
   id: string;
@@ -858,6 +862,31 @@ export class ImportRepository {
       scope.status === undefined ? [scope.enterpriseId, scope.storeId] : [scope.enterpriseId, scope.storeId, scope.status]
     );
     return result.rows.map(toActionCard);
+  }
+
+  async getActionCardVerificationSummary(scope: { id: string; enterpriseId: string; storeId: string }): Promise<ActionCardVerificationSummary | null> {
+    const card = await this.getActionCard(scope);
+    const baselineStart = new Date(`${card.rangeStart}T00:00:00Z`);
+    const baselineEnd = new Date(`${card.rangeEnd}T00:00:00Z`);
+    const days = Math.round((baselineEnd.getTime() - baselineStart.getTime()) / 86400000) + 1;
+    const comparisonStart = new Date(baselineEnd.getTime() + 86400000);
+    const comparisonEnd = new Date(comparisonStart.getTime() + (days - 1) * 86400000);
+    const comparisonRangeStart = comparisonStart.toISOString().slice(0, 10);
+    const comparisonRangeEnd = comparisonEnd.toISOString().slice(0, 10);
+    const values = await this.database.query<Row>(
+      `SELECT metric_key, value, range_start FROM fact_values
+       WHERE enterprise_id = $1 AND store_id = $2 AND metric_key IN ('revenue', 'orders')
+         AND ((range_start = $3 AND range_end = $4) OR (range_start = $5 AND range_end = $6))`,
+      [scope.enterpriseId, scope.storeId, card.rangeStart, card.rangeEnd, comparisonRangeStart, comparisonRangeEnd]
+    );
+    const metricSummary = ["orders", "revenue"].map((metricKey) => {
+      const baseline = values.rows.find((row) => row.metric_key === metricKey && dateOnly(row.range_start) === card.rangeStart);
+      const comparison = values.rows.find((row) => row.metric_key === metricKey && dateOnly(row.range_start) === comparisonRangeStart);
+      if (!baseline || !comparison || Number(baseline.value) <= 0) return null;
+      return { metricKey: metricKey as "revenue" | "orders", baselineValue: Number(baseline.value), comparisonValue: Number(comparison.value), changePercent: Math.round(((Number(comparison.value) - Number(baseline.value)) / Number(baseline.value)) * 10000) / 100 };
+    });
+    if (metricSummary.some((metric) => metric === null)) return null;
+    return { baselineRangeStart: card.rangeStart, baselineRangeEnd: card.rangeEnd, comparisonRangeStart, comparisonRangeEnd, metrics: metricSummary as ActionCardVerificationSummary["metrics"] };
   }
 
   async updateActionCardStatus(input: { id: string; enterpriseId: string; storeId: string; status: ActionCardStatus; now: Date; executionNote?: string; verificationOutcome?: ActionCardVerificationOutcome }): Promise<ActionCard> {

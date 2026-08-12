@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ParserInputError, parseCsvBytes, parseXlsx } from "./parser.js";
-import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness, DeterministicDiagnostic, ActionCard, ActionCardStatus, ActionCardVerificationOutcome } from "./repository.js";
+import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness, DeterministicDiagnostic, ActionCard, ActionCardStatus, ActionCardVerificationOutcome, ActionCardVerificationSummary } from "./repository.js";
 import type { MetricKey } from "./models.js";
 import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
 import {
@@ -190,6 +190,9 @@ export class ImportService {
   }
   listActionCards(context: TrustedContext, status?: ActionCardStatus): Promise<ActionCard[]> {
     return this.imports.listActionCards({ enterpriseId: context.enterpriseId, storeId: context.storeId, status });
+  }
+  getActionCardVerificationSummary(context: TrustedContext, id: string): Promise<ActionCardVerificationSummary | null> {
+    return this.imports.getActionCardVerificationSummary({ id, enterpriseId: context.enterpriseId, storeId: context.storeId });
   }
 
   getBatch(context: TrustedContext, batchId: string) { return this.imports.getBatch({ id: batchId, enterpriseId: context.enterpriseId, storeId: context.storeId }); }

@@ -52,4 +52,26 @@ describe("action cards", () => {
     const verified = await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "verified", now: new Date(), verificationOutcome: "data_insufficient" });
     expect(verified).toMatchObject({ status: "verified", verificationOutcome: "data_insufficient" });
   });
+
+  it("returns a next-period verification summary only when confirmed metrics exist", async () => {
+    await database.query(`CREATE TABLE fact_values (
+      id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+      value BIGINT NOT NULL, unit TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL
+    )`);
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查", action: "执行", verificationMetric: "下一周期营业额与订单数" });
+    await database.query(`INSERT INTO fact_values VALUES
+      ('base-r','ent_demo','store_demo','revenue',3826000,'cents','2026-08-01','2026-08-07'),
+      ('base-o','ent_demo','store_demo','orders',120,'count','2026-08-01','2026-08-07'),
+      ('next-r','ent_demo','store_demo','revenue',4200000,'cents','2026-08-08','2026-08-14'),
+      ('next-o','ent_demo','store_demo','orders',130,'count','2026-08-08','2026-08-14')`);
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toEqual({
+      baselineRangeStart: "2026-08-01", baselineRangeEnd: "2026-08-07", comparisonRangeStart: "2026-08-08", comparisonRangeEnd: "2026-08-14",
+      metrics: [
+        { metricKey: "orders", baselineValue: 120, comparisonValue: 130, changePercent: 8.33 },
+        { metricKey: "revenue", baselineValue: 3826000, comparisonValue: 4200000, changePercent: 9.78 }
+      ]
+    });
+    await database.query("DELETE FROM fact_values WHERE id = 'next-o'");
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toBeNull();
+  });
 });
