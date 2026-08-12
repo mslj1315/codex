@@ -220,12 +220,12 @@ private fun ActionCardContent(
             verificationMetricKeysText(card.verificationMetricKeys, verificationMetricLabels)?.let { metricKeys ->
                 Text(metricKeys, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text("状态：${card.status.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("状态：${card.status.displayName()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (card.diagnosticRunId != null) {
                 Text("来源：已关联记录证据", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             card.executionNote?.let { Text("执行说明：$it") }
-            card.verificationOutcome?.let { Text("复盘结果：${it.name.lowercase()}") }
+            card.verificationOutcome?.let { Text("复盘结果：${it.displayName()}") }
             if (card.status.canViewVerificationSummary()) {
                 TextButton(onClick = onSelect, enabled = !isUpdating) {
                     Text(if (selected) "已选择" else "查看验证")
@@ -260,7 +260,7 @@ private fun ActionCardContent(
             if (ActionCardCommand.VERIFY in commands) {
                 ActionCardVerificationOutcome.entries.forEach { outcome ->
                     TextButton(onClick = { onUpdate(ActionCardUpdate.verified(outcome)) }, enabled = !isUpdating) {
-                        Text(outcome.name.lowercase())
+                        Text(outcome.displayName())
                     }
                 }
             }
@@ -347,6 +347,21 @@ internal fun ActionCardStatus.nextCommands(): Set<ActionCardCommand> = when (thi
 
 internal fun ActionCardStatus.canViewVerificationSummary(): Boolean =
     this == ActionCardStatus.COMPLETED || this == ActionCardStatus.VERIFIED
+
+internal fun ActionCardStatus.displayName(): String = when (this) {
+    ActionCardStatus.PROPOSED -> "待开始"
+    ActionCardStatus.IN_PROGRESS -> "执行中"
+    ActionCardStatus.COMPLETED -> "待复盘"
+    ActionCardStatus.VERIFIED -> "已复盘"
+    ActionCardStatus.CANCELLED -> "已取消"
+}
+
+internal fun ActionCardVerificationOutcome.displayName(): String = when (this) {
+    ActionCardVerificationOutcome.EFFECTIVE -> "已执行且有效"
+    ActionCardVerificationOutcome.INEFFECTIVE -> "已执行但无效"
+    ActionCardVerificationOutcome.NOT_EXECUTED -> "未执行"
+    ActionCardVerificationOutcome.DATA_INSUFFICIENT -> "数据不足"
+}
 
 internal fun isValidExecutionNote(note: String): Boolean =
     note.trim().isNotEmpty() && note.length <= 500

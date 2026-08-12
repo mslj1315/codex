@@ -275,6 +275,20 @@ class OperationsViewModelTest {
     }
 
     @Test
+    fun `action card statuses and verification outcomes use store-facing labels`() {
+        assertEquals("待开始", ActionCardStatus.PROPOSED.displayName())
+        assertEquals("执行中", ActionCardStatus.IN_PROGRESS.displayName())
+        assertEquals("待复盘", ActionCardStatus.COMPLETED.displayName())
+        assertEquals("已复盘", ActionCardStatus.VERIFIED.displayName())
+        assertEquals("已取消", ActionCardStatus.CANCELLED.displayName())
+
+        assertEquals("已执行且有效", ActionCardVerificationOutcome.EFFECTIVE.displayName())
+        assertEquals("已执行但无效", ActionCardVerificationOutcome.INEFFECTIVE.displayName())
+        assertEquals("未执行", ActionCardVerificationOutcome.NOT_EXECUTED.displayName())
+        assertEquals("数据不足", ActionCardVerificationOutcome.DATA_INSUFFICIENT.displayName())
+    }
+
+    @Test
     fun `execution note requires meaningful text within 500 characters`() {
         assertFalse(isValidExecutionNote("   "))
         assertTrue(isValidExecutionNote("a".repeat(500)))
