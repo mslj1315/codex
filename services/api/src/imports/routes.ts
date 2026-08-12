@@ -90,6 +90,23 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     const query = request.query as Record<string, unknown>;
     return service.getDeterministicDiagnostic(scopedContext(request), stringField(query, "rangeStart"), stringField(query, "rangeEnd"));
   });
+  app.post("/v1/stores/:storeId/action-cards", async (request, reply) => {
+    const body = record(request.body);
+    const context = scopedContext(request);
+    const card = await service.createActionCard(context, {
+      diagnosticKind: stringField(body, "diagnosticKind"), rangeStart: stringField(body, "rangeStart"), rangeEnd: stringField(body, "rangeEnd"),
+      title: stringField(body, "title"), action: stringField(body, "action"), verificationMetric: stringField(body, "verificationMetric"),
+      dueDate: optionalString(body.dueDate, "dueDate")
+    });
+    return reply.code(201).send(card);
+  });
+  app.patch("/v1/stores/:storeId/action-cards/:actionCardId/status", async (request) => {
+    const body = record(request.body);
+    const status = stringField(body, "status");
+    if (!["proposed", "in_progress", "completed", "verified", "cancelled"].includes(status)) throw new ValidationError("Action card status is invalid");
+    return service.updateActionCardStatus(scopedContext(request), stringParam(request, "actionCardId"), status as never, options.now());
+  });
+  app.get("/v1/stores/:storeId/action-cards/:actionCardId", async (request) => service.getActionCard(scopedContext(request), stringParam(request, "actionCardId")));
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ObjectStorageError) {
@@ -126,6 +143,7 @@ function scopedContext(request: FastifyRequest): TrustedContext {
 }
 function record(value: unknown): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ValidationError("Request body must be an object"); return value as Record<string, unknown>; }
 function stringField(body: Record<string, unknown>, key: string): string { if (typeof body[key] !== "string") throw new ValidationError(`${key} is required`); return body[key]; }
+function optionalString(value: unknown, key: string): string | undefined { if (value === undefined) return undefined; if (typeof value !== "string") throw new ValidationError(`${key} is invalid`); return value; }
 function arrayField(body: Record<string, unknown>, key: string): unknown[] { if (!Array.isArray(body[key])) throw new ValidationError(`${key} is required`); return body[key] as unknown[]; }
 function stringParam(request: FastifyRequest, key: string): string { const value = (request.params as Record<string, unknown>)[key]; if (typeof value !== "string") throw new ValidationError(`Missing ${key}`); return value; }
 function header(request: FastifyRequest, key: string): string { const value = request.headers[key]; if (typeof value !== "string" || value === "") throw new ValidationError(`${key} header is required`); return value; }

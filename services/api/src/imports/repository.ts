@@ -129,6 +129,15 @@ export interface DeterministicDiagnostic {
   confidence: "high" | "medium";
 }
 
+export type ActionCardStatus = "proposed" | "in_progress" | "completed" | "verified" | "cancelled";
+export interface CreateActionCardInput {
+  id?: string; enterpriseId: string; storeId: string; actorId: string; diagnosticKind: string;
+  rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; dueDate?: string;
+}
+export interface ActionCard extends Omit<CreateActionCardInput, "id" | "actorId"> {
+  id: string; createdByActorId: string; status: ActionCardStatus; completedAt: Date | null; verifiedAt: Date | null; createdAt: Date; updatedAt: Date;
+}
+
 export interface ImportBatch {
   id: string;
   enterpriseId: string;
@@ -821,6 +830,43 @@ export class ImportRepository {
       confidence: "high"
     };
   }
+
+  async createActionCard(input: CreateActionCardInput): Promise<ActionCard> {
+    if (!input.title.trim() || !input.action.trim() || !input.verificationMetric.trim()) throw new ValidationError("Action card fields are required");
+    assertDateOnlyRange(input.rangeStart, input.rangeEnd);
+    if (input.dueDate !== undefined) assertDateOnlyRange(input.dueDate, input.dueDate);
+    const result = await this.database.query<Row>(
+      `INSERT INTO action_cards (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, status, due_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'proposed', $11) RETURNING *`,
+      [input.id ?? randomUUID(), input.enterpriseId, input.storeId, input.actorId, input.diagnosticKind, input.rangeStart, input.rangeEnd, input.title, input.action, input.verificationMetric, input.dueDate ?? null]
+    );
+    return toActionCard(result.rows[0]);
+  }
+
+  async getActionCard(scope: { id: string; enterpriseId: string; storeId: string }): Promise<ActionCard> {
+    const result = await this.database.query<Row>("SELECT * FROM action_cards WHERE id = $1 AND enterprise_id = $2 AND store_id = $3", [scope.id, scope.enterpriseId, scope.storeId]);
+    if (result.rowCount !== 1) throw new NotFoundError("Action card not found for enterprise and store");
+    return toActionCard(result.rows[0]);
+  }
+
+  async updateActionCardStatus(input: { id: string; enterpriseId: string; storeId: string; status: ActionCardStatus; now: Date }): Promise<ActionCard> {
+    assertValidDate(input.now, "now");
+    const allowed: Record<ActionCardStatus, ActionCardStatus[]> = {
+      proposed: ["in_progress", "cancelled"], in_progress: ["completed", "cancelled"], completed: ["verified"], verified: [], cancelled: []
+    };
+    const current = await this.database.query<Row>("SELECT * FROM action_cards WHERE id = $1 AND enterprise_id = $2 AND store_id = $3", [input.id, input.enterpriseId, input.storeId]);
+    if (current.rowCount !== 1) throw new ValidationError("Action card is outside trusted store context");
+    const currentStatus = current.rows[0].status as ActionCardStatus;
+    if (!allowed[currentStatus].includes(input.status)) throw new ConflictError("Action card status transition is invalid");
+    const result = await this.database.query<Row>(
+      `UPDATE action_cards SET status = $1,
+         completed_at = CASE WHEN $1 = 'completed' THEN $2 ELSE completed_at END,
+         verified_at = CASE WHEN $1 = 'verified' THEN $2 ELSE verified_at END,
+         updated_at = $2 WHERE id = $3 AND enterprise_id = $4 AND store_id = $5 RETURNING *`,
+      [input.status, input.now, input.id, input.enterpriseId, input.storeId]
+    );
+    return toActionCard(result.rows[0]);
+  }
 }
 
 function toBatch(row: Row): ImportBatch {
@@ -900,6 +946,15 @@ function dateOnly(value: unknown): string {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function toActionCard(row: Row): ActionCard {
+  return {
+    id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id), createdByActorId: string(row.created_by_actor_id),
+    diagnosticKind: string(row.diagnostic_kind), rangeStart: dateOnly(row.range_start), rangeEnd: dateOnly(row.range_end), title: string(row.title),
+    action: string(row.action), verificationMetric: string(row.verification_metric), dueDate: row.due_date == null ? undefined : dateOnly(row.due_date),
+    status: row.status as ActionCardStatus, completedAt: nullableDate(row.completed_at), verifiedAt: nullableDate(row.verified_at), createdAt: date(row.created_at), updatedAt: date(row.updated_at)
+  };
 }
 function nullableDateOnly(value: unknown): string | null { return value == null ? null : dateOnly(value); }
 function assertDateOnlyRange(start: string, end: string): void {

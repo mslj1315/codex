@@ -122,6 +122,21 @@ describe("import API routes", () => {
     expect(response.json()).toBeNull();
   });
 
+  it("creates and advances a store-scoped action card", async () => {
+    const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/action-cards", payload: {
+      diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查午市套餐",
+      action: "检查订单量与客单价", verificationMetric: "下一周期营业额与订单数", dueDate: "2026-08-14"
+    }});
+    expect(created.statusCode).toBe(201);
+    const card = created.json();
+    expect(card).toMatchObject({ status: "proposed", storeId: "store_demo", createdByActorId: "actor_demo" });
+    const updated = await app.inject({ method: "PATCH", url: `/v1/stores/store_demo/action-cards/${card.id}/status`, payload: { status: "in_progress" } });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id: card.id, status: "in_progress" });
+    const outside = await app.inject({ method: "GET", url: `/v1/stores/store_other/action-cards/${card.id}` });
+    expect(outside.statusCode).toBe(403);
+  });
+
   it("keeps manual imports available but routes unconfigured file storage through a neutral 503", async () => {
     const unconfigured = buildServer({ database: pool, developmentMode: true });
     const manual = await unconfigured.inject({
