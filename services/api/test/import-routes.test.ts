@@ -120,6 +120,8 @@ describe("import API routes", () => {
     const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/diagnostics/deterministic?rangeStart=2026-08-01&rangeEnd=2026-08-07" });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toBeNull();
+    const action = await app.inject({ method: "POST", url: "/v1/stores/store_demo/diagnostics/deterministic/action-card?rangeStart=2026-08-01&rangeEnd=2026-08-07" });
+    expect(action.statusCode).toBe(422);
   });
 
   it("creates and advances a store-scoped action card", async () => {

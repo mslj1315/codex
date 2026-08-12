@@ -164,6 +164,20 @@ export class ImportService {
     return this.imports.getDeterministicDiagnostic({ ...context, rangeStart, rangeEnd });
   }
 
+  async createActionCardFromDiagnostic(context: TrustedContext, rangeStart: string, rangeEnd: string, dueDate?: string): Promise<ActionCard> {
+    const diagnostic = await this.getDeterministicDiagnostic(context, rangeStart, rangeEnd);
+    if (!diagnostic) throw new ValidationError("No actionable diagnostic is available for this period");
+    return this.createActionCard(context, {
+      diagnosticKind: diagnostic.kind,
+      rangeStart: diagnostic.rangeStart,
+      rangeEnd: diagnostic.rangeEnd,
+      title: "营业额下降复核",
+      action: diagnostic.action,
+      verificationMetric: diagnostic.verificationMetric,
+      dueDate
+    });
+  }
+
   createActionCard(context: TrustedContext, input: { diagnosticKind: string; rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; dueDate?: string }): Promise<ActionCard> {
     return this.imports.createActionCard({ ...context, ...input });
   }

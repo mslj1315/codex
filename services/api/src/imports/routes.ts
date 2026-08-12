@@ -100,6 +100,11 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     });
     return reply.code(201).send(card);
   });
+  app.post("/v1/stores/:storeId/diagnostics/deterministic/action-card", async (request, reply) => {
+    const query = request.query as Record<string, unknown>;
+    const card = await service.createActionCardFromDiagnostic(scopedContext(request), stringField(query, "rangeStart"), stringField(query, "rangeEnd"), optionalString(query.dueDate, "dueDate"));
+    return reply.code(201).send(card);
+  });
   app.get("/v1/stores/:storeId/action-cards", async (request) => {
     const query = request.query as Record<string, unknown>;
     const status = query.status === undefined ? undefined : stringField(query, "status");
