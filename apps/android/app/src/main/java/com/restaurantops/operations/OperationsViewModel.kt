@@ -27,6 +27,10 @@ class OperationsViewModel(
         private set
     var isServiceUnavailable by mutableStateOf(false)
         private set
+    var selectedActionCardId by mutableStateOf<String?>(null)
+        private set
+    var verificationSummary by mutableStateOf<ActionVerificationSummary?>(null)
+        private set
 
     private val operationScope: CoroutineScope
         get() = scope ?: viewModelScope
@@ -49,17 +53,15 @@ class OperationsViewModel(
                     readiness = loadedReadiness
                     diagnostic = loadedDiagnostic
                     actionCards = loadedActionCards
+                    selectedActionCardId = null
+                    verificationSummary = null
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: OperationsServiceUnavailableException) {
                 isServiceUnavailable = true
             } catch (error: OperationsRequestException) {
-                requestError = if (error.statusCode == 0) {
-                    CONNECTION_FAILURE_MESSAGE
-                } else {
-                    FAILURE_MESSAGE
-                }
+                requestError = neutralMessage(error)
             } catch (_: Throwable) {
                 requestError = FAILURE_MESSAGE
             } finally {
@@ -67,6 +69,33 @@ class OperationsViewModel(
             }
         }
     }
+
+    fun loadVerificationSummary(storeId: String, actionCardId: String) {
+        if (isLoading) return
+        isLoading = true
+        requestError = null
+        isServiceUnavailable = false
+        operationScope.launch {
+            try {
+                val loadedSummary = repository.loadVerificationSummary(storeId, actionCardId)
+                selectedActionCardId = actionCardId
+                verificationSummary = loadedSummary
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: OperationsServiceUnavailableException) {
+                isServiceUnavailable = true
+            } catch (error: OperationsRequestException) {
+                requestError = neutralMessage(error)
+            } catch (_: Throwable) {
+                requestError = FAILURE_MESSAGE
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    private fun neutralMessage(error: OperationsRequestException): String =
+        if (error.statusCode == 0) CONNECTION_FAILURE_MESSAGE else FAILURE_MESSAGE
 
     private companion object {
         const val CONNECTION_FAILURE_MESSAGE = "Unable to reach the operations service"
