@@ -177,12 +177,13 @@ export class ImportService {
       title: "营业额下降复核",
       action: diagnostic.action,
       verificationMetric: diagnostic.verificationMetric,
+      verificationMetricKeys: ["revenue", "orders"],
       dueDate,
       diagnosticRunId: diagnostic.diagnosticRunId
     });
   }
 
-  createActionCard(context: TrustedContext, input: { diagnosticKind: string; rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; dueDate?: string; diagnosticRunId?: string }): Promise<ActionCard> {
+  createActionCard(context: TrustedContext, input: { diagnosticKind: string; rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; verificationMetricKeys?: string[]; dueDate?: string; diagnosticRunId?: string }): Promise<ActionCard> {
     return this.imports.createActionCard({ ...context, ...input });
   }
 

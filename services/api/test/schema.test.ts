@@ -122,6 +122,12 @@ describe("import repository", () => {
     expect(migration).toContain("metric_catalog_version_id TEXT NOT NULL");
   });
 
+  it("stores machine-readable action card verification metric keys", () => {
+    expect(migration).toContain("verification_metric_keys TEXT");
+    expect(migration).toContain("'[\"revenue\",\"orders\"]'");
+    expect(migration).toContain("verification_metric_keys SET NOT NULL");
+  });
+
   it("normalizes PostgreSQL DATE values in batch responses", async () => {
     const dateReturningDatabase = {
       query: async () => ({

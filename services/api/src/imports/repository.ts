@@ -156,7 +156,7 @@ export type ActionCardStatus = "proposed" | "in_progress" | "completed" | "verif
 export type ActionCardVerificationOutcome = "effective" | "ineffective" | "not_executed" | "data_insufficient";
 export interface CreateActionCardInput {
   id?: string; enterpriseId: string; storeId: string; actorId: string; diagnosticKind: string;
-  rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; dueDate?: string; diagnosticRunId?: string;
+  rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; verificationMetricKeys?: string[]; dueDate?: string; diagnosticRunId?: string;
 }
 export interface ActionCard extends Omit<CreateActionCardInput, "id" | "actorId" | "diagnosticRunId"> {
   id: string; diagnosticRunId: string | null; createdByActorId: string; status: ActionCardStatus; executionNote: string | null; verificationOutcome: ActionCardVerificationOutcome | null; completedAt: Date | null; verifiedAt: Date | null; createdAt: Date; updatedAt: Date;
@@ -986,10 +986,19 @@ export class ImportRepository {
     if (!input.title.trim() || !input.action.trim() || !input.verificationMetric.trim()) throw new ValidationError("Action card fields are required");
     assertDateOnlyRange(input.rangeStart, input.rangeEnd);
     if (input.dueDate !== undefined) assertDateOnlyRange(input.dueDate, input.dueDate);
+    const verificationMetricKeys = normalizeVerificationMetricKeys(input.verificationMetricKeys);
+    const allowedMetrics = await this.database.query<Row>(
+      `SELECT definition.metric_key
+       FROM metric_catalog_versions catalog
+       JOIN metric_definitions definition ON definition.metric_catalog_version_id = catalog.id
+       WHERE catalog.state = 'published' AND definition.enabled = true AND definition.usable_for_verification = true`
+    );
+    const allowedKeys = new Set(allowedMetrics.rows.map((row) => string(row.metric_key)));
+    if (verificationMetricKeys.some((key) => !allowedKeys.has(key))) throw new ValidationError("Verification metrics are not enabled in the published catalog");
     const result = await this.database.query<Row>(
-      `INSERT INTO action_cards (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, status, due_date, diagnostic_run_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'proposed', $11, $12) RETURNING *`,
-      [input.id ?? randomUUID(), input.enterpriseId, input.storeId, input.actorId, input.diagnosticKind, input.rangeStart, input.rangeEnd, input.title, input.action, input.verificationMetric, input.dueDate ?? null, input.diagnosticRunId ?? null]
+      `INSERT INTO action_cards (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, verification_metric_keys, status, due_date, diagnostic_run_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'proposed', $12, $13) RETURNING *`,
+      [input.id ?? randomUUID(), input.enterpriseId, input.storeId, input.actorId, input.diagnosticKind, input.rangeStart, input.rangeEnd, input.title, input.action, input.verificationMetric, JSON.stringify(verificationMetricKeys), input.dueDate ?? null, input.diagnosticRunId ?? null]
     );
     return toActionCard(result.rows[0]);
   }
@@ -1020,14 +1029,17 @@ export class ImportRepository {
     const comparisonEnd = new Date(comparisonStart.getTime() + (days - 1) * 86400000);
     const comparisonRangeStart = comparisonStart.toISOString().slice(0, 10);
     const comparisonRangeEnd = comparisonEnd.toISOString().slice(0, 10);
-    const verificationDefinitions = await this.database.query<Row>(
+    const permittedDefinitions = await this.database.query<Row>(
       `SELECT definition.metric_key
        FROM metric_catalog_versions catalog
        JOIN metric_definitions definition ON definition.metric_catalog_version_id = catalog.id
        WHERE catalog.state = 'published' AND definition.enabled = true AND definition.usable_for_verification = true
        ORDER BY definition.metric_key`
     );
-    const verificationMetricKeys = verificationDefinitions.rows.map((row) => string(row.metric_key));
+    const permittedKeys = new Set(permittedDefinitions.rows.map((row) => string(row.metric_key)));
+    const verificationMetricKeys = (card.verificationMetricKeys ?? ["revenue", "orders"])
+      .filter((key) => permittedKeys.has(key))
+      .sort((left, right) => verificationMetricSortOrder(left) - verificationMetricSortOrder(right) || left.localeCompare(right));
     if (verificationMetricKeys.length === 0) return { baselineRangeStart: card.rangeStart, baselineRangeEnd: card.rangeEnd, comparisonRangeStart, comparisonRangeEnd, metrics: [] };
     const values = await this.database.query<Row>(
       `SELECT metric_key, value, range_start FROM fact_values
@@ -1152,7 +1164,7 @@ function toActionCard(row: Row): ActionCard {
   return {
     id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id), createdByActorId: string(row.created_by_actor_id),
     diagnosticKind: string(row.diagnostic_kind), rangeStart: dateOnly(row.range_start), rangeEnd: dateOnly(row.range_end), title: string(row.title),
-    action: string(row.action), verificationMetric: string(row.verification_metric), dueDate: row.due_date == null ? undefined : dateOnly(row.due_date), diagnosticRunId: nullableString(row.diagnostic_run_id),
+    action: string(row.action), verificationMetric: string(row.verification_metric), verificationMetricKeys: parseVerificationMetricKeys(row.verification_metric_keys), dueDate: row.due_date == null ? undefined : dateOnly(row.due_date), diagnosticRunId: nullableString(row.diagnostic_run_id),
     status: row.status as ActionCardStatus, executionNote: nullableString(row.execution_note), verificationOutcome: nullableString(row.verification_outcome) as ActionCardVerificationOutcome | null, completedAt: nullableDate(row.completed_at), verifiedAt: nullableDate(row.verified_at), createdAt: date(row.created_at), updatedAt: date(row.updated_at)
   };
 }
@@ -1168,6 +1180,20 @@ function assertDateOnlyRange(start: string, end: string): void {
   }
 }
 function validActionNote(value: string): boolean { return value.trim().length > 0 && value.length <= 500 && !/[\u0000-\u001F\u007F]/.test(value); }
+function normalizeVerificationMetricKeys(value: string[] | undefined): string[] {
+  const keys = value ?? ["revenue", "orders"];
+  if (!Array.isArray(keys) || keys.length === 0 || keys.length > 20 || keys.some((key) => typeof key !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(key)) || new Set(keys).size !== keys.length) {
+    throw new ValidationError("Verification metric keys are invalid");
+  }
+  return keys;
+}
+function parseVerificationMetricKeys(value: unknown): string[] {
+  if (typeof value !== "string") return ["revenue", "orders"];
+  try { return normalizeVerificationMetricKeys(JSON.parse(value)); } catch { return ["revenue", "orders"]; }
+}
+function verificationMetricSortOrder(key: string): number {
+  return key === "orders" ? 1 : key === "revenue" ? 2 : 3;
+}
 function assertSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new ValidationError(`${name} must be a JSON safe integer`);

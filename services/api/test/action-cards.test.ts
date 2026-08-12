@@ -30,6 +30,7 @@ describe("action cards", () => {
       id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, created_by_actor_id TEXT NOT NULL,
       diagnostic_kind TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL, title TEXT NOT NULL,
       action TEXT NOT NULL, verification_metric TEXT NOT NULL, status TEXT NOT NULL, due_date DATE,
+      verification_metric_keys TEXT NOT NULL DEFAULT '["revenue","orders"]',
       diagnostic_run_id TEXT,
       execution_note TEXT, verification_outcome TEXT, completed_at TIMESTAMPTZ, verified_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -123,5 +124,11 @@ describe("action cards", () => {
     await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toMatchObject({
       metrics: [{ metricKey: "revenue", baselineValue: 100, comparisonValue: 110, changePercent: 10 }]
     });
+  });
+
+  it("persists explicit verification metric keys only when the published catalog permits them", async () => {
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Review", action: "Review", verificationMetric: "Lunch orders", verificationMetricKeys: ["revenue"] });
+    expect(card.verificationMetricKeys).toEqual(["revenue"]);
+    await expect(imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Review", action: "Review", verificationMetric: "Invalid", verificationMetricKeys: ["package_sales"] })).rejects.toBeInstanceOf(ValidationError);
   });
 });

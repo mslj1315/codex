@@ -180,6 +180,20 @@ describe("import API routes", () => {
     expect(outside.statusCode).toBe(403);
   });
 
+  it("accepts explicit action-card verification keys and preserves the legacy default", async () => {
+    const base = {
+      diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07",
+      title: "Review", action: "Review", verificationMetric: "Revenue"
+    };
+    const explicit = await app.inject({ method: "POST", url: "/v1/stores/store_demo/action-cards", payload: { ...base, verificationMetricKeys: ["revenue"] } });
+    const legacy = await app.inject({ method: "POST", url: "/v1/stores/store_demo/action-cards", payload: base });
+
+    expect(explicit.statusCode).toBe(201);
+    expect(explicit.json()).toMatchObject({ verificationMetricKeys: ["revenue"] });
+    expect(legacy.statusCode).toBe(201);
+    expect(legacy.json()).toMatchObject({ verificationMetricKeys: ["revenue", "orders"] });
+  });
+
   it("keeps manual imports available but routes unconfigured file storage through a neutral 503", async () => {
     const unconfigured = buildServer({ database: pool, developmentMode: true });
     const manual = await unconfigured.inject({
