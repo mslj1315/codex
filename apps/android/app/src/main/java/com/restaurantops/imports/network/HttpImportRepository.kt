@@ -104,7 +104,7 @@ class HttpImportRepository(
     private data class ImportKey(val storeId: String, val importId: String)
 }
 
-private fun HttpException.apiErrorMessage(): String {
+internal fun HttpException.apiErrorMessage(): String {
     val fallback = "Import request failed (${code()})"
     val body = response()?.errorBody() ?: return fallback
     return body.use { errorBody ->

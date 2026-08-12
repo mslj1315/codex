@@ -11,6 +11,11 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 
 interface ImportApi {
+    @GET("/v1/stores/{storeId}/metric-catalog")
+    suspend fun loadMetricCatalog(
+        @Path("storeId") storeId: String
+    ): MetricCatalogResponse
+
     @POST("/v1/stores/{storeId}/imports/manual")
     suspend fun createManualImport(
         @Path("storeId") storeId: String,
@@ -52,6 +57,21 @@ interface ImportApi {
         @Path("storeId") storeId: String
     ): FactVersionResponse
 }
+
+data class MetricCatalogResponse(
+    val versionNumber: Int,
+    val definitions: List<MetricDefinitionResponse>
+)
+
+data class MetricDefinitionResponse(
+    val metricKey: String,
+    val displayName: String,
+    val valueKind: String,
+    val storageUnit: String,
+    val usableForReadiness: Boolean,
+    val usableForDiagnostic: Boolean,
+    val usableForVerification: Boolean
+)
 
 data class ManualImportRequest(
     val rangeStart: String,

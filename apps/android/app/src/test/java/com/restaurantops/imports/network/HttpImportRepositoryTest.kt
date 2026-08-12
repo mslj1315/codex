@@ -31,6 +31,32 @@ import retrofit2.http.Path
 
 class HttpImportRepositoryTest {
     @Test
+    fun `maps the public metric catalog without internal fields`() = runBlocking {
+        val api = FakeImportApi().apply {
+            catalogResponse = MetricCatalogResponse(
+                versionNumber = 1,
+                definitions = listOf(MetricDefinitionResponse("revenue", "Revenue", "amount", "cents", true, true, true))
+            )
+        }
+
+        val catalog = HttpMetricCatalogRepository(api).loadMetricCatalog("store_demo")
+
+        assertEquals(1, catalog.versionNumber)
+        assertEquals("cents", catalog.definitions.single().storageUnit)
+        assertNull(MetricCatalogResponse::class.java.declaredFields.singleOrNull { it.name == "id" })
+        assertNull(MetricDefinitionResponse::class.java.declaredFields.singleOrNull { it.name == "draft" })
+    }
+
+    @Test
+    fun `unavailable metric catalog repository returns typed unavailable error`() = runBlocking {
+        try {
+            UnavailableMetricCatalogRepository().loadMetricCatalog("store_demo")
+            error("Expected ImportRequestException")
+        } catch (error: ImportRequestException) {
+            assertEquals(503, error.statusCode)
+        }
+    }
+    @Test
     fun `file import sends exact multipart contract maps duplicate and caches summary`() = runBlocking {
         val fileBytes = byteArrayOf(0, 1, 2, 127, -1)
         val api = FakeImportApi().apply {
@@ -493,6 +519,9 @@ class HttpImportRepositoryTest {
         var updateRequest: CandidateUpdateRequest? = null
         var confirmRequest: ConfirmImportRequest? = null
         var manualFailure: Throwable? = null
+        var catalogResponse = MetricCatalogResponse(1, emptyList())
+
+        override suspend fun loadMetricCatalog(storeId: String): MetricCatalogResponse = catalogResponse
 
         override suspend fun createManualImport(storeId: String, request: ManualImportRequest): ImportBatchResponse {
             manualRequest = request
