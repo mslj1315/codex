@@ -11,6 +11,13 @@ describe("data readiness", () => {
     const { Pool } = memory.adapters.createPg();
     database = new Pool();
     await database.query(`
+      CREATE TABLE metric_catalog_versions (
+        id TEXT PRIMARY KEY, version_number INTEGER NOT NULL, state TEXT NOT NULL
+      );
+      CREATE TABLE metric_definitions (
+        metric_catalog_version_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+        enabled BOOLEAN NOT NULL, usable_for_readiness BOOLEAN NOT NULL
+      );
       CREATE TABLE fact_values (
         id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL,
         metric_key TEXT NOT NULL, value BIGINT NOT NULL, unit TEXT NOT NULL,
@@ -37,6 +44,12 @@ describe("data readiness", () => {
       );
     `);
     imports = new ImportRepository(database);
+    await database.query(`INSERT INTO metric_catalog_versions (id, version_number, state) VALUES ('metric_catalog_v1', 1, 'published');
+      INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_readiness) VALUES
+        ('metric_catalog_v1', 'revenue', true, true),
+        ('metric_catalog_v1', 'orders', true, true),
+        ('metric_catalog_v1', 'average_spend', true, true),
+        ('metric_catalog_v1', 'package_sales', true, false);`);
     await database.query(`INSERT INTO fact_values
       (id, enterprise_id, store_id, metric_key, value, unit, range_start, range_end, fact_version_id, source_candidate_id, source_batch_id)
       VALUES
@@ -61,6 +74,21 @@ describe("data readiness", () => {
   it("isolates stores and validates ranges", async () => {
     await expect(imports.getDataReadiness({ enterpriseId: "ent_demo", storeId: "store_missing", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" })).resolves.toMatchObject({ confidence: "low", comparisonAvailable: false });
     await expect(imports.getDataReadiness({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-08", rangeEnd: "2026-08-01" })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("uses enabled readiness metrics from the currently published catalog", async () => {
+    await database.query(`INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_readiness)
+      VALUES ('metric_catalog_v1', 'lunch_orders', true, true);
+      UPDATE metric_definitions SET enabled = false WHERE metric_catalog_version_id = 'metric_catalog_v1' AND metric_key = 'orders'`);
+    await database.query(`INSERT INTO fact_values
+      (id, enterprise_id, store_id, metric_key, value, unit, range_start, range_end, fact_version_id, source_candidate_id, source_batch_id)
+      VALUES ('current-lunch-orders','ent_demo','store_demo','lunch_orders',40,'count','2026-08-01','2026-08-07','v1','c4','b1')`);
+
+    const result = await imports.getDataReadiness({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
+
+    expect(result.requiredMetrics).toEqual(["revenue", "average_spend", "lunch_orders"]);
+    expect(result.presentMetrics).toEqual(["lunch_orders", "revenue"]);
+    expect(result.missingMetrics).toEqual(["average_spend"]);
   });
 
   it("returns a deterministic revenue-decline diagnostic from confirmed facts", async () => {

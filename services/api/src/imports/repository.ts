@@ -815,7 +815,16 @@ export class ImportRepository {
 
   async getDataReadiness(scope: DataReadinessScope): Promise<DataReadiness> {
     assertDateOnlyRange(scope.rangeStart, scope.rangeEnd);
-    const requiredMetrics = ["revenue", "orders", "average_spend"];
+    const catalogResult = await this.database.query<Row>(
+      `SELECT definition.metric_key
+       FROM metric_catalog_versions catalog
+       JOIN metric_definitions definition ON definition.metric_catalog_version_id = catalog.id
+       WHERE catalog.state = 'published' AND definition.enabled = true AND definition.usable_for_readiness = true
+       ORDER BY CASE definition.metric_key
+         WHEN 'revenue' THEN 1 WHEN 'orders' THEN 2 WHEN 'average_spend' THEN 3 ELSE 4 END,
+         definition.metric_key`
+    );
+    const requiredMetrics = catalogResult.rows.map((row) => string(row.metric_key));
     const presentResult = await this.database.query<Row>(
       `SELECT DISTINCT metric_key FROM fact_values
        WHERE enterprise_id = $1 AND store_id = $2
