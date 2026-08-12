@@ -296,6 +296,12 @@ class OperationsViewModelTest {
     }
 
     @Test
+    fun `diagnostic kinds use store-facing labels with a neutral fallback`() {
+        assertEquals("营业额下降", "revenue_decline".diagnosticDisplayName())
+        assertEquals("经营诊断", "future_provider_rule".diagnosticDisplayName())
+    }
+
+    @Test
     fun `execution note requires meaningful text within 500 characters`() {
         assertFalse(isValidExecutionNote("   "))
         assertTrue(isValidExecutionNote("a".repeat(500)))

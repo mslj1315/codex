@@ -154,7 +154,7 @@ private fun DiagnosticContent(
                 comparisonAvailable == false -> Text("需要完整的已确认可比数据后才能生成诊断。")
                 diagnostic == null -> Text("当前周期没有确定性诊断结论。")
                 else -> {
-                    Text(diagnostic.kind)
+                    Text(diagnostic.kind.diagnosticDisplayName())
                     Text(
                         "置信度：${diagnostic.confidence.displayName()}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -330,7 +330,7 @@ private fun RecordedDiagnosticEvidenceContent(
     presentations: Map<String, VerificationMetricPresentation>
 ) {
     Text("已记录诊断依据", style = MaterialTheme.typography.titleSmall)
-    Text(detail.kind)
+    Text(detail.kind.diagnosticDisplayName())
     Text("规则版本：${detail.ruleVersion}", color = MaterialTheme.colorScheme.onSurfaceVariant)
     Text("置信度：${detail.confidence.displayName()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
     detail.evidence.forEach { evidence -> Text(formatDiagnosticEvidence(evidence, presentations)) }
@@ -367,6 +367,11 @@ internal fun OperationsConfidence.displayName(): String = when (this) {
     OperationsConfidence.HIGH -> "高"
     OperationsConfidence.MEDIUM -> "中"
     OperationsConfidence.LOW -> "低"
+}
+
+internal fun String.diagnosticDisplayName(): String = when (this) {
+    "revenue_decline" -> "营业额下降"
+    else -> "经营诊断"
 }
 
 internal fun isValidExecutionNote(note: String): Boolean =
