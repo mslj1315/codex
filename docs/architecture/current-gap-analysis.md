@@ -11,8 +11,10 @@ system, platform account, or vendor-specific integration.
 
 The current branch provides a reliable import and local-workspace foundation:
 
-- Android local workspace with persisted navigation, task, import, diagnosis,
-  and video-factory demo state.
+- Android workspace with persisted navigation, task, import, diagnosis, and
+  video-factory demo state. In debug builds, the operations surface reads the
+  independent API's readiness, deterministic diagnosis, action-card, and
+  published metric-catalog contracts.
 - CSV/XLSX/manual import through a trusted store context.
 - Candidate parsing, uncertainty marking, per-candidate editing, and explicit
   confirmation before fact versions are created.
@@ -23,6 +25,11 @@ The current branch provides a reliable import and local-workspace foundation:
   verification, bounded guard retention, and maintenance status reporting.
 - Locked cleanup, reconciliation, and status CLIs with maintenance-only Compose
   services.
+- Versioned metric catalogs with immutable published definitions, fact-version
+  binding, a read-only store catalog endpoint, and a provider-operated JSON
+  publish CLI.
+- Data-readiness calculation, a deterministic revenue-decline diagnostic with
+  persisted evidence, action-card lifecycle, and verification summaries.
 - API/Android tests, Compose validation, CI workflow, and health checks.
 
 This is the framework's data-entry and reliability substrate, not yet the full
@@ -35,59 +42,71 @@ AI operations product.
 | Framework area | Current state | Difference |
 | --- | --- | --- |
 | Import batches and traceability | Covered for manual/file imports | No external source-system adapters or mapping-version registry yet |
-| Data quality and confirmation | Covered for parser confidence and unresolved candidates | No cross-period readiness score or metric-definition service |
-| Android operating workspace | Local demo covered | Uses deterministic local content; no server-backed diagnosis/action data |
+| Data quality and confirmation | Covered for parser confidence, unresolved candidates, catalog validation, and readiness | Custom header-to-metric mapping and source-report mapping versions are not implemented |
+| Metric semantics | Covered by a versioned published catalog and provider publish CLI | No authenticated web console; adding a metric does not automatically alter an existing diagnostic rule |
+| Android operating workspace | Debug builds consume trusted API readiness, diagnosis, catalog, action, and verification data | Release/local-demo remains deliberately unavailable; there is no account sign-in or remote workspace provisioning |
 | Video workflow | Six-stage local demo covered | No real project, asset, render, publish, or performance entities |
 | Single-store P0 isolation | Covered by trusted context and composite tenant/store keys | Authentication and account/entitlement service are not implemented |
 | Maintenance operations | Covered | Operational jobs are not yet connected to business outcome metrics |
 
 ### Not implemented yet
 
-1. **Unified metric foundation**
-   - `metric_definition`, `metric_mapping`, mapping versions, and source report
-     types.
-   - Normalized snapshots for revenue, orders, average spend, channel funnel,
-     dishes, packages, members, reviews, and content performance.
+1. **Identity and service-operator access boundary**
+   - Account identity, authenticated tenant/store claims, and entitlement
+     checks that replace the current trusted development context.
+   - A separately authorized service-operator surface for metric catalog,
+     mapping, rule, and support administration. The existing catalog CLI is an
+     intentional interim operator interface, not a public HTTP administration
+     endpoint.
 
-2. **Diagnostic and action domain**
-   - `diagnostic_run`, evidence, confidence, hypotheses, and report versions.
-   - `action_card`, execution state, verification window, evidence, and review
-     outcome.
-   - A deterministic rule/statistics layer before any model-generated language.
+2. **Metric mapping and broader normalized snapshots**
+   - Mapping versions and source report types for custom headers and future
+     independent source adapters.
+   - Normalized snapshots for channel funnel, dishes, packages, members,
+     reviews, and content performance. POS, membership, and platform
+     integrations remain explicitly out of this independent P0 scope.
 
-3. **Owner question interface**
+3. **Diagnostic expansion**
+   - Additional deterministic rules, hypotheses, report versions, and
+     cross-period coverage beyond the implemented revenue-decline rule.
+   - Explicit rule-to-catalog compatibility so a newly published definition is
+     usable only after an appropriate rule is deliberately added.
+
+4. **Owner question interface**
    - Evidence-bound question classification and structured answers.
    - Explicit insufficient-data responses and action creation from a question.
 
-4. **Content and inspiration domain**
+5. **Content and inspiration domain**
    - Inspiration pool, scoring, deduplication, cooling period, compliance
      records, content projects, publication records, and performance links.
    - Real template-based rendering and publish-result capture.
 
-5. **Private-domain and platform operations**
+6. **Private-domain and platform operations**
    - Audience segments, contact plans, coupon/use outcomes, platform funnel
      adapters, and review aggregation.
 
-6. **Operations web console**
-   - Mapping, rule, template, compliance, customer-support, and multi-store
-     administration.
+7. **Operations web console**
+   - Authenticated mapping, rule, template, compliance, customer-support, and
+     multi-store administration. It must use the same versioned catalog
+     lifecycle as the provider CLI.
 
 ## Recommended Next Sequence
 
-The next implementation unit should be the **metric foundation and diagnostic
-readiness contract**, before model integration or real video rendering:
+The next implementation unit should be an **identity and service-operator
+access boundary**, before a web administration console, model integration, or
+real video rendering:
 
-1. Define a small versioned metric catalog for the metrics already emitted by
-   the importer: revenue, orders, average spend, package sales, redemptions, and
-   refunds.
-2. Add a read-only readiness calculation that reports available periods,
-   missing required metrics, confidence, and comparison eligibility.
-3. Add diagnostic evidence records and a deterministic first diagnostic rule
-   using confirmed facts only.
-4. Expose a structured diagnostic endpoint and render its evidence/action state
-   in Android.
-5. Add action-card persistence and verification only after the diagnostic
-   contract is stable.
+1. Define account, tenant, store, actor, and service-operator roles without
+   weakening the existing composite tenant/store isolation.
+2. Replace trusted HTTP context with validated claims at the API boundary while
+   keeping maintenance CLIs as separately configured operator processes.
+3. Define the operator authorization policy for catalog publication and future
+   mapping/rule changes before registering any operator HTTP route.
+4. Add an authenticated provider web console only after these boundaries are
+   tested; it should call the existing catalog lifecycle rather than mutate
+   published definitions directly.
+5. Expand metric mapping and diagnostic rules after their authoring surface has
+   an auditable identity and version history.
 
 This sequence preserves the framework's most important guarantee: the AI may
 explain and draft language, but it cannot invent business facts or skip data
@@ -103,4 +122,3 @@ The following remain outside the current independent P0 implementation:
 - Full AI-generated video, digital humans, professional timeline editing, and
   automatic publishing to external platforms.
 - Food-safety, tax, legal, employment, or other regulated conclusions.
-
