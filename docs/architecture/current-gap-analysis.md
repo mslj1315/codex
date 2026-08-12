@@ -33,6 +33,11 @@ The current branch provides a reliable import and local-workspace foundation:
 - Self-hosted API account authentication with scrypt password hashing,
   revocable/rotatable sessions, server-derived store memberships, and controlled
   account provisioning. Service-provider roles are independent of store access.
+- An authenticated provider-feedback projection for `provider_feedback_viewer`.
+  It returns only bounded, audited aggregates for `enterpriseId`/`storeId`
+  support follow-up: activity, readiness summary, diagnostic availability, and
+  action/verification counts. It does not expose imports, facts, files,
+  evidence, or action content.
 - API/Android tests, Compose validation, CI workflow, and health checks.
 
 This is the framework's data-entry and reliability substrate, not yet the full
@@ -59,10 +64,7 @@ AI operations product.
      using the completed API contracts.
    - Local-demo isolation and release-safe API configuration.
 
-2. **Service-provider feedback projection and administration**
-   - An aggregate-only feedback read model requiring the completed
-     `provider_feedback_viewer` role; it must not reuse store routes or expose
-     raw business data.
+2. **Service-provider administration**
    - An authenticated provider web console which invokes the existing catalog
      lifecycle only after verifying `metric_catalog_operator`.
 
@@ -109,9 +111,7 @@ rendering:
    scope or stores credentials after successful login.
 3. Preserve the explicit offline local-demo path and ensure release builds have
    no demo context or default API URL.
-4. Build the provider feedback projection after Android identity is stable; it
-   must require `provider_feedback_viewer` and return only audited aggregates.
-5. Add an authenticated provider console only after its feedback and catalog
+4. Add an authenticated provider console after the feedback and catalog
    roles are independently verified.
 
 This sequence preserves the framework's most important guarantee: the AI may
