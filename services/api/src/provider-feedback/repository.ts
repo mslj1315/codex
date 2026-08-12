@@ -11,7 +11,10 @@ export interface ProviderFeedbackRow {
   verificationOutcomeCounts: Partial<Record<ActionCardVerificationOutcome, number>>;
   lastCoverageAt: Date | null;
 }
-export interface ProviderFeedbackListInput { now: Date; limit: number; }
+export interface ProviderFeedbackListInput {
+  now: Date; limit: number; activityState?: ActivityState; readinessState?: ReadinessState;
+  after?: { lastSuccessfulImportAt: Date | null; enterpriseId: string; storeId: string };
+}
 export interface ProviderFeedbackPage { items: ProviderFeedbackRow[]; hasMore: boolean; }
 type Row = Record<string, unknown>;
 const STATUSES: ActionCardStatus[] = ["proposed", "in_progress", "completed", "verified", "cancelled"];
@@ -72,8 +75,10 @@ export class ProviderFeedbackRepository {
         LEFT JOIN cards ON cards.enterprise_id = s.enterprise_id AND cards.store_id = s.store_id
         ORDER BY i.imported_at DESC NULLS LAST, s.enterprise_id ASC, s.store_id ASC`);
       const items = result.rows.map((row) => toFeedbackRow(row, input.now));
+      const filtered = items.filter((item) => (!input.activityState || item.activityState === input.activityState) && (!input.readinessState || item.readinessState === input.readinessState));
+      const after = input.after ? filtered.filter((item) => follows(item, input.after!)) : filtered;
       await client.query("COMMIT");
-      return { items: items.slice(0, input.limit), hasMore: items.length > input.limit };
+      return { items: after.slice(0, input.limit), hasMore: after.length > input.limit };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -92,3 +97,11 @@ function toFeedbackRow(row: Row, now: Date): ProviderFeedbackRow {
     diagnosticCounts: Number(row.revenue_decline_count) ? { revenue_decline: Number(row.revenue_decline_count) } : {}, actionCardStatusCounts, verificationOutcomeCounts, lastCoverageAt: confirmed };
 }
 function dateOrNull(value: unknown): Date | null { return value == null ? null : new Date(String(value)); }
+function follows(item: ProviderFeedbackRow, cursor: { lastSuccessfulImportAt: Date | null; enterpriseId: string; storeId: string }): boolean {
+  const time = item.lastSuccessfulImportAt?.getTime() ?? null;
+  const cursorTime = cursor.lastSuccessfulImportAt?.getTime() ?? null;
+  if (cursorTime === null) return time === null && (item.enterpriseId > cursor.enterpriseId || item.enterpriseId === cursor.enterpriseId && item.storeId > cursor.storeId);
+  if (time === null) return true;
+  if (time !== cursorTime) return time < cursorTime;
+  return item.enterpriseId > cursor.enterpriseId || item.enterpriseId === cursor.enterpriseId && item.storeId > cursor.storeId;
+}

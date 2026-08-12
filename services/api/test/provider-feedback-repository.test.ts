@@ -3,6 +3,8 @@ import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
 import { ProviderFeedbackRepository } from "../src/provider-feedback/repository.js";
+import { parseProviderFeedbackQuery, ProviderFeedbackService } from "../src/provider-feedback/service.js";
+import type { ProviderFeedbackRow } from "../src/provider-feedback/repository.js";
 
 describe("provider feedback repository", () => {
   let database: Database;
@@ -60,6 +62,43 @@ describe("provider feedback repository", () => {
     expect(states["ent_inactive/store_inactive"]).toMatchObject({ activityState: "inactive", readinessState: "unavailable", missingMetricCount: 3 });
   });
 
+  it("uses strict filters and opaque cursor pagination without duplicate scopes", async () => {
+    const rows: ProviderFeedbackRow[] = [
+      feedbackRow("ent_a", "store_a", "2026-08-12T00:00:00.000Z", "active", "ready"),
+      feedbackRow("ent_b", "store_b", "2026-08-12T00:00:00.000Z", "active", "incomplete"),
+      feedbackRow("ent_c", "store_c", "2026-08-11T00:00:00.000Z", "stale", "unavailable"),
+      feedbackRow("ent_d", "store_d", null, "inactive", "unavailable")
+    ];
+    const service = new ProviderFeedbackService({
+      async list(input) {
+        const matching = rows.filter((item) => (!input.activityState || item.activityState === input.activityState) && (!input.readinessState || item.readinessState === input.readinessState)).filter((item) => {
+          if (!input.after) return true;
+          const itemTime = item.lastSuccessfulImportAt?.getTime() ?? null;
+          const cursorTime = input.after.lastSuccessfulImportAt?.getTime() ?? null;
+          if (cursorTime === null) return itemTime === null && (item.enterpriseId > input.after.enterpriseId || item.enterpriseId === input.after.enterpriseId && item.storeId > input.after.storeId);
+          if (itemTime === null) return true;
+          if (itemTime !== cursorTime) return itemTime < cursorTime;
+          return item.enterpriseId > input.after.enterpriseId || item.enterpriseId === input.after.enterpriseId && item.storeId > input.after.storeId;
+        });
+        return { items: matching.slice(0, input.limit), hasMore: matching.length > input.limit };
+      }
+    }, () => now);
+
+    const filtered = await service.list(parseProviderFeedbackQuery({ limit: "2", activityState: "active" }));
+    const first = await service.list(parseProviderFeedbackQuery({ limit: "2" }));
+    const second = await service.list(parseProviderFeedbackQuery({ limit: "2", cursor: first.nextCursor! }));
+
+    expect(filtered.items.map((item) => item.storeId)).toEqual(["store_a", "store_b"]);
+    expect(filtered.nextCursor).toBeNull();
+    expect(first.items.map((item) => item.storeId)).toEqual(["store_a", "store_b"]);
+    expect(second.items.map((item) => item.storeId)).toEqual(["store_c", "store_d"]);
+    expect(second.nextCursor).toBeNull();
+    for (const query of [
+      { limit: "0" }, { limit: "101" }, { limit: "1.5" }, { limit: ["2"] },
+      { activityState: "all" }, { readinessState: "raw" }, { cursor: "not-a-base64url-json-cursor" }
+    ]) expect(() => parseProviderFeedbackQuery(query)).toThrow();
+  });
+
   async function seedImportOnly(input: { enterpriseId: string; storeId: string; importAt: string }) {
     await database.query(`INSERT INTO import_batches
       (id, enterprise_id, store_id, actor_id, source_type, original_file_name, original_file_checksum, status, created_at)
@@ -78,6 +117,10 @@ describe("provider feedback repository", () => {
     }
   }
 });
+
+function feedbackRow(enterpriseId: string, storeId: string, importedAt: string | null, activityState: "active" | "stale" | "inactive", readinessState: "ready" | "incomplete" | "unavailable"): ProviderFeedbackRow {
+  return { enterpriseId, storeId, lastSuccessfulImportAt: importedAt === null ? null : new Date(importedAt), lastConfirmedAt: null, activityState, readinessState, missingMetricCount: 0, diagnosticCounts: {}, actionCardStatusCounts: {}, verificationOutcomeCounts: {}, lastCoverageAt: null };
+}
 
 async function applyTestMigrations(database: Database): Promise<void> {
   const migrationsUrl = new URL("../migrations/", import.meta.url);
