@@ -21,7 +21,8 @@ class OperationsViewModelTest {
                 versionNumber = 1,
                 definitions = listOf(
                     MetricDefinition("revenue", "营业额", "amount", "cents", true, true, true),
-                    MetricDefinition("orders", "订单数", "count", "count", true, true, true)
+                    MetricDefinition("orders", "订单数", "count", "count", true, true, true),
+                    MetricDefinition("diagnostic_only", "诊断专用", "ratio", "basis_points", false, true, false)
                 )
             )
         )
@@ -43,10 +44,18 @@ class OperationsViewModelTest {
         advanceUntilIdle()
 
         assertEquals(
-            mapOf("revenue" to "营业额（元）", "orders" to "订单数（次）"),
+            mapOf(
+                "revenue" to "营业额（元）",
+                "orders" to "订单数（次）",
+                "diagnostic_only" to "诊断专用（%）"
+            ),
             viewModel.verificationMetricLabels
         )
         assertEquals(1, catalogRepository.requests)
+        assertEquals(
+            VerificationMetricPresentation("诊断专用", "basis_points"),
+            viewModel.verificationMetricPresentations["diagnostic_only"]
+        )
         assertEquals(
             "验证指标：营业额（元）、unknown_metric、订单数（次）",
             verificationMetricKeysText(card.verificationMetricKeys, viewModel.verificationMetricLabels)

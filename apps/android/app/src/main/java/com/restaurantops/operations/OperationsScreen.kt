@@ -90,7 +90,11 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
     viewModel.readiness?.let { readiness ->
         ReadinessCard(readiness)
     }
-    DiagnosticContent(viewModel.diagnostic, viewModel.readiness?.comparisonAvailable)
+    DiagnosticContent(
+        diagnostic = viewModel.diagnostic,
+        comparisonAvailable = viewModel.readiness?.comparisonAvailable,
+        presentations = viewModel.verificationMetricPresentations
+    )
     ActionCardsContent(
         cards = viewModel.actionCards,
         selectedActionCardId = viewModel.selectedActionCardId,
@@ -98,7 +102,8 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
         onSelect = { viewModel.loadActionCardDetails(storeId, it) },
         onUpdate = { actionCardId, update -> viewModel.updateActionCard(storeId, actionCardId, update) },
         updatingActionCardId = viewModel.updatingActionCardId,
-        verificationMetricLabels = viewModel.verificationMetricLabels
+        verificationMetricLabels = viewModel.verificationMetricLabels,
+        verificationMetricPresentations = viewModel.verificationMetricPresentations
     )
     viewModel.verificationSummary?.let { summary ->
         VerificationSummaryContent(summary, viewModel.verificationMetricPresentations)
@@ -128,7 +133,8 @@ private fun ReadinessCard(readiness: DataReadiness) {
 @Composable
 private fun DiagnosticContent(
     diagnostic: DeterministicDiagnostic?,
-    comparisonAvailable: Boolean?
+    comparisonAvailable: Boolean?,
+    presentations: Map<String, VerificationMetricPresentation>
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -149,9 +155,7 @@ private fun DiagnosticContent(
                         "规则版本：${diagnostic.ruleVersion}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    diagnostic.evidence.forEach { evidence ->
-                        Text("${evidence.metricKey}: 当前 ${evidence.currentValue}，前期 ${evidence.priorValue}，变化 ${evidence.changePercent}%")
-                    }
+                    diagnostic.evidence.forEach { evidence -> Text(formatDiagnosticEvidence(evidence, presentations)) }
                 }
             }
         }
@@ -166,7 +170,8 @@ private fun ActionCardsContent(
     onSelect: (ActionCard) -> Unit,
     onUpdate: (String, ActionCardUpdate) -> Unit,
     updatingActionCardId: String?,
-    verificationMetricLabels: Map<String, String>
+    verificationMetricLabels: Map<String, String>,
+    verificationMetricPresentations: Map<String, VerificationMetricPresentation>
 ) {
     Text("行动卡", style = MaterialTheme.typography.titleMedium)
     if (cards.isEmpty()) {
@@ -182,7 +187,7 @@ private fun ActionCardsContent(
             onUpdate = { onUpdate(card.id, it) }
         )
         if (selectedActionCardId == card.id && card.diagnosticRunId != null && selectedDiagnosticRun != null) {
-            RecordedDiagnosticEvidenceContent(selectedDiagnosticRun)
+            RecordedDiagnosticEvidenceContent(selectedDiagnosticRun, verificationMetricPresentations)
         }
     }
 }
@@ -312,14 +317,15 @@ private fun formatVerificationValue(value: Long, storageUnit: String?): String =
 }
 
 @Composable
-private fun RecordedDiagnosticEvidenceContent(detail: DiagnosticRunDetail) {
+private fun RecordedDiagnosticEvidenceContent(
+    detail: DiagnosticRunDetail,
+    presentations: Map<String, VerificationMetricPresentation>
+) {
     Text("已记录诊断依据", style = MaterialTheme.typography.titleSmall)
     Text(detail.kind)
     Text("规则版本：${detail.ruleVersion}", color = MaterialTheme.colorScheme.onSurfaceVariant)
     Text("置信度：${detail.confidence.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    detail.evidence.forEach { evidence ->
-        Text(formatDiagnosticEvidence(evidence))
-    }
+    detail.evidence.forEach { evidence -> Text(formatDiagnosticEvidence(evidence, presentations)) }
 }
 
 internal enum class ActionCardCommand { START, COMPLETE, VERIFY, CANCEL }
@@ -337,5 +343,19 @@ internal fun ActionCardStatus.canViewVerificationSummary(): Boolean =
 internal fun isValidExecutionNote(note: String): Boolean =
     note.trim().isNotEmpty() && note.length <= 500
 
-internal fun formatDiagnosticEvidence(evidence: DiagnosticEvidence): String =
-    "${evidence.metricKey}: current ${evidence.currentValue}, prior ${evidence.priorValue}, change ${evidence.changePercent}%"
+internal fun formatDiagnosticEvidence(
+    evidence: DiagnosticEvidence,
+    presentations: Map<String, VerificationMetricPresentation> = emptyMap()
+): String {
+    val presentation = presentations[evidence.metricKey]
+    val displayName = presentation?.displayName ?: evidence.metricKey
+    val current = formatVerificationValue(evidence.currentValue, presentation?.storageUnit)
+    val prior = formatVerificationValue(evidence.priorValue, presentation?.storageUnit)
+    val unit = presentation?.storageUnit?.displayUnit().orEmpty()
+    val suffix = when (unit) {
+        "" -> ""
+        "%" -> "%"
+        else -> " $unit"
+    }
+    return "$displayName：当前 $current$suffix，前期 $prior$suffix，变化 ${evidence.changePercent}%"
+}

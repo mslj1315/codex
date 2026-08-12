@@ -182,7 +182,6 @@ class OperationsViewModel(
         val catalog = metricCatalogRepository ?: return emptyMap()
         return try {
             catalog.loadMetricCatalog(storeId).definitions
-                .filter { it.usableForVerification }
                 .associate { definition ->
                     definition.metricKey to VerificationMetricPresentation(
                         displayName = definition.displayName,
