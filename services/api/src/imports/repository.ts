@@ -98,6 +98,23 @@ export interface ImportMaintenanceStatus {
   reconciliationGuardCount: number;
 }
 
+export interface DataReadinessScope {
+  enterpriseId: string;
+  storeId: string;
+  rangeStart: string;
+  rangeEnd: string;
+}
+
+export interface DataReadiness {
+  rangeStart: string;
+  rangeEnd: string;
+  requiredMetrics: string[];
+  presentMetrics: string[];
+  missingMetrics: string[];
+  confidence: "high" | "medium" | "low";
+  comparisonAvailable: boolean;
+}
+
 export interface ImportBatch {
   id: string;
   enterpriseId: string;
@@ -729,6 +746,34 @@ export class ImportRepository {
     if (result.rowCount !== 1) throw new NotFoundError("No confirmed fact version for enterprise and store");
     return this.getFactVersion({ id: string(result.rows[0].id), ...scope });
   }
+
+  async getDataReadiness(scope: DataReadinessScope): Promise<DataReadiness> {
+    assertDateOnlyRange(scope.rangeStart, scope.rangeEnd);
+    const requiredMetrics = ["revenue", "orders", "average_spend"];
+    const presentResult = await this.database.query<Row>(
+      `SELECT DISTINCT metric_key FROM fact_values
+       WHERE enterprise_id = $1 AND store_id = $2
+         AND range_start = $3 AND range_end = $4
+         AND metric_key = ANY($5::text[])
+       ORDER BY metric_key`,
+      [scope.enterpriseId, scope.storeId, scope.rangeStart, scope.rangeEnd, requiredMetrics]
+    );
+    const presentMetrics = presentResult.rows.map((row) => string(row.metric_key));
+    const missingMetrics = requiredMetrics.filter((metric) => !presentMetrics.includes(metric));
+    const comparison = await this.database.query<Row>(
+      `SELECT 1 FROM fact_values
+       WHERE enterprise_id = $1 AND store_id = $2 AND range_end < $3
+       LIMIT 1`,
+      [scope.enterpriseId, scope.storeId, scope.rangeStart]
+    );
+    const comparisonAvailable = (comparison.rowCount ?? 0) > 0;
+    const confidence = missingMetrics.length === 0 && comparisonAvailable
+      ? "high"
+      : presentMetrics.length > 0
+        ? "medium"
+        : "low";
+    return { rangeStart: scope.rangeStart, rangeEnd: scope.rangeEnd, requiredMetrics, presentMetrics, missingMetrics, confidence, comparisonAvailable };
+  }
 }
 
 function toBatch(row: Row): ImportBatch {
@@ -810,6 +855,16 @@ function dateOnly(value: unknown): string {
   return `${year}-${month}-${day}`;
 }
 function nullableDateOnly(value: unknown): string | null { return value == null ? null : dateOnly(value); }
+function assertDateOnlyRange(start: string, end: string): void {
+  const pattern = /^\d{4}-\d{2}-\d{2}$/;
+  const startDate = new Date(`${start}T00:00:00Z`);
+  const endDate = new Date(`${end}T00:00:00Z`);
+  if (!pattern.test(start) || !pattern.test(end) || start > end
+    || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())
+    || startDate.toISOString().slice(0, 10) !== start || endDate.toISOString().slice(0, 10) !== end) {
+    throw new ValidationError("Invalid date range");
+  }
+}
 function assertSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new ValidationError(`${name} must be a JSON safe integer`);

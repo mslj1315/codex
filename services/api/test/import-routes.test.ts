@@ -106,6 +106,16 @@ describe("import API routes", () => {
     expect(response.json()).toMatchObject({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" });
   });
 
+  it("returns store-scoped readiness without exposing source identifiers", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/readiness?rangeStart=2026-08-01&rangeEnd=2026-08-07" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      rangeStart: "2026-08-01", rangeEnd: "2026-08-07",
+      requiredMetrics: ["revenue", "orders", "average_spend"], confidence: "low"
+    });
+    expect(response.body).not.toContain("batch_");
+  });
+
   it("keeps manual imports available but routes unconfigured file storage through a neutral 503", async () => {
     const unconfigured = buildServer({ database: pool, developmentMode: true });
     const manual = await unconfigured.inject({

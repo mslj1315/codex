@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ParserInputError, parseCsvBytes, parseXlsx } from "./parser.js";
-import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob } from "./repository.js";
+import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness } from "./repository.js";
 import type { MetricKey } from "./models.js";
 import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
 import {
@@ -154,6 +154,10 @@ export class ImportService {
         throw persistenceError;
       }
     }
+  }
+
+  async getDataReadiness(context: TrustedContext, rangeStart: string, rangeEnd: string): Promise<DataReadiness> {
+    return this.imports.getDataReadiness({ ...context, rangeStart, rangeEnd });
   }
 
   getBatch(context: TrustedContext, batchId: string) { return this.imports.getBatch({ id: batchId, enterpriseId: context.enterpriseId, storeId: context.storeId }); }
