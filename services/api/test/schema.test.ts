@@ -242,6 +242,30 @@ describe("import repository", () => {
     expect(migration).toContain("batch_id TEXT PRIMARY KEY");
   });
 
+  it("keeps diagnostic evidence immutable, scoped, and uniquely snapshotted", async () => {
+    await database.query(`INSERT INTO diagnostic_runs
+      (id, enterprise_id, store_id, kind, range_start, range_end, prior_range_start, prior_range_end, rule_version, confidence, snapshot_key)
+      VALUES ('diagnostic_run_one', 'ent_demo', 'store_demo', 'revenue_decline', '2026-08-01', '2026-08-07', '2026-07-25', '2026-07-31', 'revenue_decline_v1', 'high', 'same-snapshot')`);
+
+    await expect(database.query(`INSERT INTO diagnostic_runs
+      (id, enterprise_id, store_id, kind, range_start, range_end, prior_range_start, prior_range_end, rule_version, confidence, snapshot_key)
+      VALUES ('diagnostic_run_duplicate', 'ent_demo', 'store_demo', 'revenue_decline', '2026-08-01', '2026-08-07', '2026-07-25', '2026-07-31', 'revenue_decline_v1', 'high', 'same-snapshot')`)).rejects.toThrow();
+
+    await database.query(`INSERT INTO diagnostic_evidence
+      (id, diagnostic_run_id, enterprise_id, store_id, metric_key, current_value, prior_value, change_percent, current_fact_version_id, prior_fact_version_id)
+      VALUES ('diagnostic_evidence_one', 'diagnostic_run_one', 'ent_demo', 'store_demo', 'revenue', 3826000, 4400000, -13.05, 'fact_current', 'fact_prior')`);
+    await database.query("DELETE FROM diagnostic_runs WHERE id = 'diagnostic_run_one'");
+    await expect(database.query("SELECT id FROM diagnostic_evidence WHERE id = 'diagnostic_evidence_one'"))
+      .resolves.toMatchObject({ rowCount: 0 });
+
+    await expect(database.query(`INSERT INTO action_cards
+      (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, status, diagnostic_run_id)
+      VALUES ('action_cross_scope', 'ent_demo', 'store_other', 'actor_demo', 'revenue_decline', '2026-08-01', '2026-08-07', 'Review', 'Review', 'revenue', 'proposed', 'diagnostic_run_one')`)).rejects.toThrow();
+    await expect(database.query(`INSERT INTO action_cards
+      (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, status, diagnostic_run_id)
+      VALUES ('action_manual', 'ent_demo', 'store_other', 'actor_demo', 'manual', '2026-08-01', '2026-08-07', 'Review', 'Review', 'revenue', 'proposed', NULL)`)).resolves.toMatchObject({ rowCount: 1 });
+  });
+
   it("enqueues one reconciliation job per object key", async () => {
     const input = reconciliationJobInput({ id: "reconciliation_first" });
 
