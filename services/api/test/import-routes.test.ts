@@ -28,10 +28,8 @@ describe("import API routes", () => {
     app = buildServer({ database: pool, developmentMode: true, objectStorage: storage, now: () => now });
   });
 
-  it("does not expose import routes without an explicit trusted context provider", async () => {
-    const production = buildServer({ database: pool });
-    const response = await production.inject({ method: "POST", url: "/v1/stores/store_demo/imports/manual", payload: {} });
-    expect(response.statusCode).toBe(404);
+  it("requires an authentication secret without an explicit trusted context provider", () => {
+    expect(() => buildServer({ database: pool })).toThrow("AUTH_TOKEN_SECRET is required");
   });
 
   it("allows the local Compose context only when explicitly enabled", async () => {
