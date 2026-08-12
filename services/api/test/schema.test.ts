@@ -484,6 +484,27 @@ describe("import repository", () => {
       .toMatchObject({ rowCount: 1, rows: [{ batch_id: batch.id }] });
   });
 
+  it("prunes only unprotected stale or missing batch guards in bounded order", async () => {
+    const now = new Date("2026-08-12T00:00:00.000Z");
+    const oldBatch = await imports.createBatch({ id: "batch_guard_old", enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", sourceType: "manual" });
+    await database.query("UPDATE import_batches SET updated_at = $1 WHERE id = $2", [new Date("2026-07-01T00:00:00.000Z"), oldBatch.id]);
+    await database.query("INSERT INTO import_batch_reconciliation_guards (batch_id) VALUES ($1), ($2)", [oldBatch.id, "batch_guard_missing"]);
+    const pruned = await imports.pruneImportBatchReconciliationGuards(now);
+    expect(pruned).toBe(2);
+    expect(await database.query("SELECT batch_id FROM import_batch_reconciliation_guards ORDER BY batch_id")).toMatchObject({ rows: [] });
+  });
+
+  it("retains recent and pending guards and enforces the prune limit", async () => {
+    const now = new Date("2026-08-12T00:00:00.000Z");
+    const recent = await imports.createBatch({ id: "batch_guard_recent", enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", sourceType: "manual" });
+    await database.query("UPDATE import_batches SET updated_at = $1 WHERE id = $2", [new Date("2026-08-01T00:00:00.000Z"), recent.id]);
+    await database.query("INSERT INTO import_batch_reconciliation_guards (batch_id) VALUES ($1), ($2), ($3)", [recent.id, "batch_guard_pending", "batch_guard_limit"]);
+    await imports.enqueueImportObjectReconciliationJob({ id: "guard_pending_job", enterpriseId: "ent_demo", storeId: "store_demo", batchId: "batch_guard_pending", sha256Checksum: "a".repeat(64), objectKey: "guard/pending", kind: "verify_batch_then_delete", notBefore: now });
+    await expect(imports.pruneImportBatchReconciliationGuards(now, 0)).rejects.toBeInstanceOf(ValidationError);
+    expect(await imports.pruneImportBatchReconciliationGuards(now, 1)).toBe(1);
+    expect(await database.query("SELECT batch_id FROM import_batch_reconciliation_guards ORDER BY batch_id")).toMatchObject({ rows: [{ batch_id: "batch_guard_pending" }, { batch_id: recent.id }] });
+  });
+
   it("rejects file metadata whose batch or store scope differs from the new batch", async () => {
     await expect(imports.createBatchWithCandidates(
       {

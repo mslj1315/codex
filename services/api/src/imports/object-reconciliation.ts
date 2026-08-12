@@ -26,6 +26,7 @@ export interface ImportObjectReconciliationRepository {
     errorType: string | null,
     errorCode: string | null
   ): Promise<boolean>;
+  pruneImportBatchReconciliationGuards(now: Date, limit?: number): Promise<number>;
 }
 
 export interface ImportObjectReconciliationResult {
@@ -38,6 +39,7 @@ export interface ImportObjectReconciliationRunResult extends ImportObjectReconci
   deferred: number;
   passes: number;
   hasMore: boolean;
+  guardsPruned: number;
 }
 
 export interface ImportObjectReconciliationRunOptions {
@@ -78,20 +80,27 @@ export async function runImportObjectReconciliation(
   const total: ImportObjectReconciliationRunResult = {
     scanned: 0, resolved: 0, failed: 0,
     deferred: await repository.countDeferredImportObjectReconciliationJobs(now),
-    passes: 0, hasMore: false
+    passes: 0, hasMore: false, guardsPruned: 0
   };
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
     const page = await reconcileImportObjects(repository, storage, now, pageSize);
-    if (page.scanned === 0) return total;
+    if (page.scanned === 0) {
+      total.guardsPruned = await repository.pruneImportBatchReconciliationGuards(now);
+      return total;
+    }
     total.scanned += page.scanned;
     total.resolved += page.resolved;
     total.failed += page.failed;
     total.passes += 1;
-    if (page.scanned < pageSize) return total;
+    if (page.scanned < pageSize) {
+      total.guardsPruned = await repository.pruneImportBatchReconciliationGuards(now);
+      return total;
+    }
   }
 
   total.hasMore = (await repository.listEligibleImportObjectReconciliationJobs(now, 1)).length > 0;
+  total.guardsPruned = await repository.pruneImportBatchReconciliationGuards(now);
   return total;
 }
 

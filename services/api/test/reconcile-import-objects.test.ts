@@ -16,7 +16,7 @@ const environment = {
   MINIO_BUCKET: "restaurant-imports"
 };
 const completed: ImportObjectReconciliationRunResult = {
-  scanned: 3, resolved: 3, failed: 0, deferred: 0, passes: 1, hasMore: false
+  scanned: 3, resolved: 3, failed: 0, deferred: 0, passes: 1, hasMore: false, guardsPruned: 0
 };
 
 describe("import object reconciliation CLI", () => {

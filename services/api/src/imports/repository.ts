@@ -54,6 +54,8 @@ export interface ImportFileRecord extends CreateImportFileInput {
 
 export const IMPORT_FILE_CLEANUP_RETRY_DELAY_MS = 60 * 60 * 1000;
 export const IMPORT_OBJECT_RECONCILIATION_RETRY_DELAY_MS = 60 * 60 * 1000;
+export const IMPORT_BATCH_RECONCILIATION_GUARD_RETENTION_DAYS = 30;
+export const IMPORT_BATCH_RECONCILIATION_GUARD_PRUNE_LIMIT = 100;
 const RECONCILIATION_ERROR_TYPES = new Set(["StorageError", "DatabaseError", "NotFoundError", "UnknownError"]);
 const RECONCILIATION_ERROR_CODES = new Set([
   "access_denied", "connection_refused", "not_found", "service_unavailable", "timeout", "unknown"
@@ -377,6 +379,54 @@ export class ImportRepository {
       [now]
     );
     return Number(result.rows[0].count);
+  }
+
+  async pruneImportBatchReconciliationGuards(
+    now: Date,
+    limit = IMPORT_BATCH_RECONCILIATION_GUARD_PRUNE_LIMIT
+  ): Promise<number> {
+    assertValidDate(now, "Guard prune time");
+    if (!Number.isInteger(limit) || limit < 1 || limit > IMPORT_BATCH_RECONCILIATION_GUARD_PRUNE_LIMIT) {
+      throw new ValidationError(`Guard prune limit must be an integer between 1 and ${IMPORT_BATCH_RECONCILIATION_GUARD_PRUNE_LIMIT}`);
+    }
+    const cutoff = new Date(now.getTime() - IMPORT_BATCH_RECONCILIATION_GUARD_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
+    if (!database) throw new Error("Guard pruning requires a database connection");
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN");
+      const candidates = await client.query<{ batch_id: string }>(
+      `SELECT batch_id
+       FROM import_batch_reconciliation_guards
+       WHERE batch_id NOT IN (
+         SELECT batch_id FROM import_object_reconciliation_jobs WHERE state = 'pending'
+       )
+       AND batch_id NOT IN (
+         SELECT id FROM import_batches WHERE updated_at > $1
+       )
+       ORDER BY created_at, batch_id
+       LIMIT $2`,
+      [cutoff, limit]
+      );
+      let pruned = 0;
+      for (const candidate of candidates.rows) {
+        const guard = await client.query("SELECT batch_id FROM import_batch_reconciliation_guards WHERE batch_id = $1 FOR UPDATE", [candidate.batch_id]);
+        if (guard.rowCount !== 1) continue;
+        const pending = await client.query("SELECT 1 FROM import_object_reconciliation_jobs WHERE batch_id = $1 AND state = 'pending' LIMIT 1", [candidate.batch_id]);
+        if (pending.rowCount === 1) continue;
+        const batch = await client.query("SELECT updated_at FROM import_batches WHERE id = $1", [candidate.batch_id]);
+        if (batch.rowCount === 1 && batch.rows[0].updated_at > cutoff) continue;
+        const result = await client.query("DELETE FROM import_batch_reconciliation_guards WHERE batch_id = $1", [candidate.batch_id]);
+        pruned += result.rowCount ?? 0;
+      }
+      await client.query("COMMIT");
+      return pruned;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async withImportBatchReconciliationGuard<T>(

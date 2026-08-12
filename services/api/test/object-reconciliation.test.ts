@@ -98,7 +98,7 @@ describe("import object reconciliation", () => {
     await expect(runImportObjectReconciliation(repository, new Storage("missing"), now, {
       pageSize: 1, maxPasses: 2
     })).resolves.toEqual({
-      scanned: 2, resolved: 2, failed: 0, deferred: 2, passes: 2, hasMore: true
+      scanned: 2, resolved: 2, failed: 0, deferred: 2, passes: 2, hasMore: true, guardsPruned: 0
     });
     expect(repository.requestedLimits).toEqual([1, 1, 1]);
   });
@@ -131,6 +131,7 @@ class QueueRepository implements ImportObjectReconciliationRepository {
   batchExists = false;
   batchError: Error | null = null;
   deferred = 0;
+  guardsPruned = 0;
 
   constructor(private readonly jobs: ImportObjectReconciliationJob[]) {}
 
@@ -140,6 +141,7 @@ class QueueRepository implements ImportObjectReconciliationRepository {
   }
 
   async countDeferredImportObjectReconciliationJobs() { return this.deferred; }
+  async pruneImportBatchReconciliationGuards() { return this.guardsPruned; }
 
   async withImportBatchReconciliationGuard<T>(
     _batchId: string,
