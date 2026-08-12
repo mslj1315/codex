@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ParserInputError, parseCsvBytes, parseXlsx } from "./parser.js";
-import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput } from "./repository.js";
+import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob } from "./repository.js";
 import type { MetricKey } from "./models.js";
-import { DuplicateImportFileError, ImportRepository, NotFoundError, ValidationError } from "./repository.js";
+import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
 import {
   ObjectStorageError,
   type ObjectStorage
@@ -84,8 +84,9 @@ export class ImportService {
       const storageError = error instanceof ObjectStorageError
         ? error
         : new ObjectStorageError("Unable to store import file", error);
-      await this.deleteObjectBestEffort(
-        objectKey,
+      await this.compensateObjectWrite(objectKey, {
+        enterpriseId: context.enterpriseId, storeId: context.storeId, batchId, sha256Checksum,
+      },
         "import_object_put_recovery_failed",
         "Unable to clean up uncertain import object write"
       );
@@ -101,7 +102,9 @@ export class ImportService {
       return { batch, duplicate: false };
     } catch (error) {
       if (error instanceof DuplicateImportFileError) {
-        await this.compensateObjectWrite(objectKey);
+        await this.compensateObjectWrite(objectKey, {
+          enterpriseId: context.enterpriseId, storeId: context.storeId, batchId, sha256Checksum
+        });
         try {
           const winner = await this.imports.findBatchByFileChecksum({
             enterpriseId: context.enterpriseId,
@@ -135,18 +138,19 @@ export class ImportService {
         }, "Recovered committed import after persistence response failure");
         return { batch: recovered, duplicate: false };
       } catch (lookupError) {
-        if (lookupError instanceof NotFoundError) {
-          await this.compensateObjectWrite(objectKey);
-        } else {
-          this.logBestEffort({
-            event: "import_object_reconciliation_required",
-            objectKey,
-            batchId,
-            enterpriseId: context.enterpriseId,
-            storeId: context.storeId,
-            cause: diagnosticCause(lookupError)
-          }, "Import persistence result requires reconciliation");
-        }
+        await this.enqueueReconciliation({
+          id: randomUUID(), enterpriseId: context.enterpriseId, storeId: context.storeId,
+          batchId, sha256Checksum, objectKey, kind: "verify_batch_then_delete",
+          notBefore: new Date(this.now().getTime() + 5 * 60 * 1000)
+        });
+        this.logBestEffort({
+          event: "import_object_reconciliation_required",
+          objectKey,
+          batchId,
+          enterpriseId: context.enterpriseId,
+          storeId: context.storeId,
+          cause: diagnosticCause(lookupError)
+        }, "Import persistence result requires reconciliation");
         throw persistenceError;
       }
     }
@@ -192,19 +196,33 @@ export class ImportService {
     return prepared;
   }
 
-  private async compensateObjectWrite(objectKey: string): Promise<void> {
-    await this.deleteObjectBestEffort(
-      objectKey,
-      "import_object_compensation_failed",
-      "Unable to compensate import object write"
-    );
-  }
-
-  private async deleteObjectBestEffort(objectKey: string, event: string, message: string): Promise<void> {
+  private async compensateObjectWrite(
+    objectKey: string,
+    base: Pick<CreateImportObjectReconciliationJob, "enterpriseId" | "storeId" | "batchId" | "sha256Checksum">,
+    event = "import_object_compensation_failed",
+    message = "Unable to compensate import object write"
+  ): Promise<void> {
     try {
       await this.objectStorage.deleteObject(objectKey);
     } catch (error) {
       this.logBestEffort({ event, objectKey, cause: diagnosticCause(error) }, message);
+      await this.enqueueReconciliation({
+        ...base, id: randomUUID(), objectKey, kind: "delete_orphan", notBefore: this.now()
+      });
+    }
+  }
+
+  private async enqueueReconciliation(input: CreateImportObjectReconciliationJob): Promise<void> {
+    try {
+      await this.imports.enqueueImportObjectReconciliationJob(input);
+    } catch (error) {
+      this.logBestEffort({
+        event: "import_object_reconciliation_enqueue_failed",
+        objectKey: input.objectKey,
+        batchId: input.batchId,
+        kind: input.kind,
+        cause: diagnosticCause(error)
+      }, "Unable to enqueue import object reconciliation job");
     }
   }
 
