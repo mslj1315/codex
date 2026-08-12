@@ -19,6 +19,22 @@ describe("data readiness", () => {
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE diagnostic_runs (
+        id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL,
+        kind TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL,
+        prior_range_start DATE NOT NULL, prior_range_end DATE NOT NULL,
+        rule_version TEXT NOT NULL, confidence TEXT NOT NULL, snapshot_key TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (id, enterprise_id, store_id),
+        UNIQUE (enterprise_id, store_id, snapshot_key)
+      );
+      CREATE TABLE diagnostic_evidence (
+        id TEXT PRIMARY KEY, diagnostic_run_id TEXT NOT NULL, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL,
+        metric_key TEXT NOT NULL, current_value BIGINT NOT NULL, prior_value BIGINT NOT NULL,
+        change_percent NUMERIC NOT NULL, current_fact_version_id TEXT NOT NULL, prior_fact_version_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (diagnostic_run_id, metric_key)
+      );
     `);
     imports = new ImportRepository(database);
     await database.query(`INSERT INTO fact_values
@@ -51,10 +67,29 @@ describe("data readiness", () => {
     const diagnostic = await imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
     expect(diagnostic).toMatchObject({ kind: "revenue_decline", confidence: "high", verificationMetric: "下一周期营业额与订单数" });
     expect(diagnostic?.fact).toMatchObject({ currentValue: 3826000, priorValue: 4400000, changePercent: -13.05 });
+    expect(diagnostic).toMatchObject({ ruleVersion: "revenue_decline_v1", evidence: [{ metricKey: "revenue", currentValue: 3826000, priorValue: 4400000, changePercent: -13.05 }] });
+    expect(diagnostic?.diagnosticRunId).toEqual(expect.any(String));
+    expect(JSON.stringify(diagnostic)).not.toMatch(/factVersionId|sourceCandidateId|sourceBatchId|\"v0\"|\"c1\"|\"b1\"/);
+
+    const repeat = await imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
+    expect(repeat?.diagnosticRunId).toBe(diagnostic?.diagnosticRunId);
+    await expect(database.query("SELECT id FROM diagnostic_runs")).resolves.toMatchObject({ rowCount: 1 });
+    await expect(database.query("SELECT id FROM diagnostic_evidence")).resolves.toMatchObject({ rowCount: 1 });
+  });
+
+  it("creates a new evidence snapshot when the confirmed fact version changes", async () => {
+    const first = await imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
+    await database.query("UPDATE fact_values SET value = 3700000, fact_version_id = 'v2' WHERE id = 'current-revenue'");
+    const second = await imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
+
+    expect(second?.diagnosticRunId).not.toBe(first?.diagnosticRunId);
+    expect(second?.evidence).toEqual([{ metricKey: "revenue", currentValue: 3700000, priorValue: 4400000, changePercent: -15.91 }]);
+    await expect(database.query("SELECT id FROM diagnostic_runs")).resolves.toMatchObject({ rowCount: 2 });
   });
 
   it("does not diagnose a stable or improving revenue period", async () => {
     await database.query("UPDATE fact_values SET value = 4500000 WHERE id = 'current-revenue'");
     await expect(imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" })).resolves.toBeNull();
+    await expect(database.query("SELECT id FROM diagnostic_runs")).resolves.toMatchObject({ rowCount: 0 });
   });
 });

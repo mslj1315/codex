@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Database, Queryable } from "../db.js";
 
 export type ImportSourceType = "csv" | "xlsx" | "manual";
@@ -116,17 +116,26 @@ export interface DataReadiness {
 }
 
 export interface DeterministicDiagnostic {
+  diagnosticRunId: string;
   kind: "revenue_decline";
   rangeStart: string;
   rangeEnd: string;
   priorRangeStart: string;
   priorRangeEnd: string;
   fact: { metricKey: "revenue"; currentValue: number; priorValue: number; changePercent: number };
-  evidence: string[];
+  ruleVersion: "revenue_decline_v1";
+  evidence: DiagnosticEvidence[];
   hypothesis: string;
   action: string;
   verificationMetric: string;
   confidence: "high" | "medium";
+}
+
+export interface DiagnosticEvidence {
+  metricKey: "revenue";
+  currentValue: number;
+  priorValue: number;
+  changePercent: number;
 }
 
 export type ActionCardStatus = "proposed" | "in_progress" | "completed" | "verified" | "cancelled";
@@ -813,9 +822,10 @@ export class ImportRepository {
     const priorRangeStart = priorStart.toISOString().slice(0, 10);
     const priorRangeEnd = priorEnd.toISOString().slice(0, 10);
     const readRevenue = async (rangeStart: string, rangeEnd: string) => this.database.query<Row>(
-      `SELECT value FROM fact_values
+      `SELECT value, fact_version_id FROM fact_values
        WHERE enterprise_id = $1 AND store_id = $2 AND metric_key = 'revenue'
-         AND range_start = $3 AND range_end = $4 LIMIT 1`,
+         AND range_start = $3 AND range_end = $4
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
       [scope.enterpriseId, scope.storeId, rangeStart, rangeEnd]
     );
     const currentResult = await readRevenue(scope.rangeStart, scope.rangeEnd);
@@ -825,15 +835,79 @@ export class ImportRepository {
     if (!current || !prior || Number(prior.value) <= 0) return null;
     const changePercent = Math.round(((Number(current.value) - Number(prior.value)) / Number(prior.value)) * 10000) / 100;
     if (changePercent > -10) return null;
+    const evidence: DiagnosticEvidence = {
+      metricKey: "revenue", currentValue: Number(current.value), priorValue: Number(prior.value), changePercent
+    };
+    const diagnosticRunId = await this.persistDiagnosticSnapshot({
+      scope, priorRangeStart, priorRangeEnd, confidence: "high", evidence,
+      currentFactVersionId: string(current.fact_version_id), priorFactVersionId: string(prior.fact_version_id)
+    });
     return {
+      diagnosticRunId,
       kind: "revenue_decline", rangeStart: scope.rangeStart, rangeEnd: scope.rangeEnd, priorRangeStart, priorRangeEnd,
-      fact: { metricKey: "revenue", currentValue: Number(current.value), priorValue: Number(prior.value), changePercent },
-      evidence: [`revenue:${scope.rangeStart}/${scope.rangeEnd}`, `revenue:${priorRangeStart}/${priorRangeEnd}`],
+      fact: evidence,
+      ruleVersion: "revenue_decline_v1",
+      evidence: [evidence],
       hypothesis: "营业额较上一周期明显下降，需要结合订单数与客单价进一步核查。",
       action: "检查本周期订单量、客单价和重点套餐表现，选择一个可执行的门店或内容动作。",
       verificationMetric: "下一周期营业额与订单数",
       confidence: "high"
     };
+  }
+
+  private async persistDiagnosticSnapshot(input: {
+    scope: DataReadinessScope;
+    priorRangeStart: string;
+    priorRangeEnd: string;
+    confidence: "high";
+    evidence: DiagnosticEvidence;
+    currentFactVersionId: string;
+    priorFactVersionId: string;
+  }): Promise<string> {
+    const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
+    if (!database) throw new Error("Transactions require a database connection");
+    const snapshotKey = createHash("sha256").update(JSON.stringify({
+      enterpriseId: input.scope.enterpriseId, storeId: input.scope.storeId,
+      rangeStart: input.scope.rangeStart, rangeEnd: input.scope.rangeEnd,
+      priorRangeStart: input.priorRangeStart, priorRangeEnd: input.priorRangeEnd,
+      ruleVersion: "revenue_decline_v1", confidence: input.confidence,
+      evidence: input.evidence, currentFactVersionId: input.currentFactVersionId, priorFactVersionId: input.priorFactVersionId
+    })).digest("hex");
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN");
+      const runId = randomUUID();
+      await client.query(
+        `INSERT INTO diagnostic_runs (
+          id, enterprise_id, store_id, kind, range_start, range_end, prior_range_start, prior_range_end, rule_version, confidence, snapshot_key
+        ) VALUES ($1, $2, $3, 'revenue_decline', $4, $5, $6, $7, 'revenue_decline_v1', $8, $9)
+        ON CONFLICT (enterprise_id, store_id, snapshot_key) DO NOTHING`,
+        [runId, input.scope.enterpriseId, input.scope.storeId, input.scope.rangeStart, input.scope.rangeEnd,
+          input.priorRangeStart, input.priorRangeEnd, input.confidence, snapshotKey]
+      );
+      const stored = await client.query<Row>(
+        `SELECT id FROM diagnostic_runs
+         WHERE enterprise_id = $1 AND store_id = $2 AND snapshot_key = $3`,
+        [input.scope.enterpriseId, input.scope.storeId, snapshotKey]
+      );
+      const diagnosticRunId = string(stored.rows[0]?.id);
+      await client.query(
+        `INSERT INTO diagnostic_evidence (
+          id, diagnostic_run_id, enterprise_id, store_id, metric_key, current_value, prior_value, change_percent, current_fact_version_id, prior_fact_version_id
+        ) VALUES ($1, $2, $3, $4, 'revenue', $5, $6, $7, $8, $9)
+        ON CONFLICT (diagnostic_run_id, metric_key) DO NOTHING`,
+        [randomUUID(), diagnosticRunId, input.scope.enterpriseId, input.scope.storeId,
+          input.evidence.currentValue, input.evidence.priorValue, input.evidence.changePercent,
+          input.currentFactVersionId, input.priorFactVersionId]
+      );
+      await client.query("COMMIT");
+      return diagnosticRunId;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async createActionCard(input: CreateActionCardInput): Promise<ActionCard> {
