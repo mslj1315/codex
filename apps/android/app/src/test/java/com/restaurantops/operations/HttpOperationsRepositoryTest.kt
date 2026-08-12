@@ -6,6 +6,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import retrofit2.http.GET
+import retrofit2.HttpException
+import retrofit2.Response
+import java.io.IOException
 
 class HttpOperationsRepositoryTest {
     @Test
@@ -43,14 +46,32 @@ class HttpOperationsRepositoryTest {
         assertNull(ActionCardResponse::class.java.declaredFields.singleOrNull { it.name == "objectKey" })
         assertNull(ActionCardResponse::class.java.declaredFields.singleOrNull { it.name == "batchId" })
     }
+
+    @Test
+    fun `maps HTTP and network failures to typed operations errors`() = runBlocking {
+        val httpApi = FakeOperationsApi().apply { readinessFailure = HttpException(Response.error<DataReadinessResponse>(422, okhttp3.ResponseBody.create(null, "{\"error\":\"private detail\"}"))) }
+        val networkApi = FakeOperationsApi().apply { readinessFailure = IOException("private host") }
+
+        val httpError = try { HttpOperationsRepository(httpApi).loadReadiness("store_demo", "2026-08-01", "2026-08-07"); error("Expected request failure") } catch (error: OperationsRequestException) { error }
+        val networkError = try { HttpOperationsRepository(networkApi).loadReadiness("store_demo", "2026-08-01", "2026-08-07"); error("Expected request failure") } catch (error: OperationsRequestException) { error }
+
+        assertEquals(422, httpError.statusCode)
+        assertEquals("Unable to load operations data", httpError.message)
+        assertEquals(0, networkError.statusCode)
+        assertEquals("Unable to reach the operations service", networkError.message)
+    }
 }
 
 private class FakeOperationsApi : OperationsApi {
     var status: String? = null
     var diagnostic: DeterministicDiagnosticResponse? = DeterministicDiagnosticResponse("revenue_decline", "2026-08-01", "2026-08-07", "2026-07-25", "2026-07-31", DiagnosticFactResponse("revenue", 3826000, 4400000, -13.05), "high")
     var verificationSummary: ActionCardVerificationSummaryResponse? = null
+    var readinessFailure: Throwable? = null
 
-    override suspend fun readiness(storeId: String, rangeStart: String, rangeEnd: String) = DataReadinessResponse("2026-08-01", "2026-08-07", listOf("revenue", "orders", "average_spend"), listOf("orders", "revenue"), listOf("average_spend"), "medium", true)
+    override suspend fun readiness(storeId: String, rangeStart: String, rangeEnd: String): DataReadinessResponse {
+        readinessFailure?.let { throw it }
+        return DataReadinessResponse("2026-08-01", "2026-08-07", listOf("revenue", "orders", "average_spend"), listOf("orders", "revenue"), listOf("average_spend"), "medium", true)
+    }
     override suspend fun deterministicDiagnostic(storeId: String, rangeStart: String, rangeEnd: String) = diagnostic
     override suspend fun actionCards(storeId: String, status: String?): List<ActionCardResponse> {
         this.status = status
