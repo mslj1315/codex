@@ -256,6 +256,20 @@ describe("import repository", () => {
     expect(migration).toContain("batch_id TEXT PRIMARY KEY");
   });
 
+  it("declares isolated accounts, sessions, memberships, and provider roles", async () => {
+    expect(migration).toContain("CREATE TABLE accounts");
+    expect(migration).toContain("CREATE TABLE account_sessions");
+    expect(migration).toContain("CREATE TABLE store_memberships");
+    expect(migration).toContain("CREATE TABLE service_operator_roles");
+    expect(migration).toContain("role IN ('metric_catalog_operator', 'provider_feedback_viewer')");
+
+    await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_owner', 'owner', 'Owner', 'hash')");
+    await expect(database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_duplicate', 'owner', 'Duplicate', 'hash')")).rejects.toThrow();
+    await database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('account_owner', 'ent_demo', 'store_demo', 'owner')");
+    await expect(database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('account_owner', 'ent_demo', 'store_demo', 'owner')")).rejects.toThrow();
+    await expect(database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'unsupported')")).rejects.toThrow();
+  });
+
   it("keeps diagnostic evidence immutable, scoped, and uniquely snapshotted", async () => {
     await database.query(`INSERT INTO diagnostic_runs
       (id, enterprise_id, store_id, kind, range_start, range_end, prior_range_start, prior_range_end, rule_version, confidence, snapshot_key)
