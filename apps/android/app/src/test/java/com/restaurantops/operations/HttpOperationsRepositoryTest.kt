@@ -18,6 +18,20 @@ class HttpOperationsRepositoryTest {
     }
 
     @Test
+    fun `formats verification summary values with catalog presentation`() {
+        val revenue = VerificationMetric("revenue", 4_826_050, 4_900_000, 1.53)
+        val ratio = VerificationMetric("conversion", 1_250, 1_000, -20.0)
+        val presentations = mapOf(
+            "revenue" to VerificationMetricPresentation("营业额", "cents"),
+            "conversion" to VerificationMetricPresentation("转化率", "basis_points")
+        )
+
+        assertEquals("营业额：基线 48260.50 元，对比 49000 元，变化 1.53%", formatVerificationMetric(revenue, presentations))
+        assertEquals("转化率：基线 12.50%，对比 10%，变化 -20.0%", formatVerificationMetric(ratio, presentations))
+        assertEquals("orders：基线 12，对比 15，变化 25.0%", formatVerificationMetric(VerificationMetric("orders", 12, 15, 25.0), presentations))
+    }
+
+    @Test
     fun `maps readiness diagnostic and action card responses without source identifiers`() = runBlocking {
         val api = FakeOperationsApi()
         val repository = HttpOperationsRepository(api)

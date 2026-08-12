@@ -101,7 +101,7 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
         verificationMetricLabels = viewModel.verificationMetricLabels
     )
     viewModel.verificationSummary?.let { summary ->
-        VerificationSummaryContent(summary)
+        VerificationSummaryContent(summary, viewModel.verificationMetricPresentations)
     }
 }
 
@@ -264,7 +264,10 @@ internal fun verificationMetricKeysText(
 ) { metricKey -> labels[metricKey] ?: metricKey }
 
 @Composable
-private fun VerificationSummaryContent(summary: ActionVerificationSummary) {
+private fun VerificationSummaryContent(
+    summary: ActionVerificationSummary,
+    presentations: Map<String, VerificationMetricPresentation>
+) {
     Text("验证摘要", style = MaterialTheme.typography.titleMedium)
     if (summary.metrics.isEmpty()) {
         Text("当前没有可用的验证数据。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -275,12 +278,37 @@ private fun VerificationSummaryContent(summary: ActionVerificationSummary) {
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(metric.metricKey, style = MaterialTheme.typography.titleSmall)
-                Text("基线：${metric.baselineValue}，对比：${metric.comparisonValue}")
-                Text("变化：${metric.changePercent}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(formatVerificationMetric(metric, presentations), style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
+}
+
+internal fun formatVerificationMetric(
+    metric: VerificationMetric,
+    presentations: Map<String, VerificationMetricPresentation> = emptyMap()
+): String {
+    val presentation = presentations[metric.metricKey]
+    val displayName = presentation?.displayName ?: metric.metricKey
+    val baseline = formatVerificationValue(metric.baselineValue, presentation?.storageUnit)
+    val comparison = formatVerificationValue(metric.comparisonValue, presentation?.storageUnit)
+    val unit = presentation?.storageUnit?.displayUnit().orEmpty()
+    val suffix = when (unit) {
+        "" -> ""
+        "%" -> "%"
+        else -> " $unit"
+    }
+    return "$displayName：基线 $baseline$suffix，对比 $comparison$suffix，变化 ${metric.changePercent}%"
+}
+
+private fun formatVerificationValue(value: Long, storageUnit: String?): String = when (storageUnit) {
+    "cents", "basis_points" -> {
+        val whole = value / 100
+        val fraction = kotlin.math.abs(value % 100)
+        val sign = if (value < 0 && whole == 0L) "-" else ""
+        if (fraction == 0L) whole.toString() else "$sign$whole.${fraction.toString().padStart(2, '0')}"
+    }
+    else -> value.toString()
 }
 
 @Composable

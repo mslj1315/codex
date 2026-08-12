@@ -39,8 +39,10 @@ class OperationsViewModel(
         private set
     var verificationMetricLabels by mutableStateOf<Map<String, String>>(emptyMap())
         private set
+    var verificationMetricPresentations by mutableStateOf<Map<String, VerificationMetricPresentation>>(emptyMap())
+        private set
 
-    private val metricLabelsByStore = mutableMapOf<String, Map<String, String>>()
+    private val metricPresentationsByStore = mutableMapOf<String, Map<String, VerificationMetricPresentation>>()
 
     private val operationScope: CoroutineScope
         get() = scope ?: viewModelScope
@@ -56,16 +58,19 @@ class OperationsViewModel(
                     val readinessRequest = async { repository.loadReadiness(storeId, rangeStart, rangeEnd) }
                     val diagnosticRequest = async { repository.loadDeterministicDiagnostic(storeId, rangeStart, rangeEnd) }
                     val cardsRequest = async { repository.loadActionCards(storeId) }
-                    val metricLabelsRequest = async { loadMetricLabels(storeId) }
+                    val metricPresentationsRequest = async { loadMetricPresentations(storeId) }
                     val loadedReadiness = readinessRequest.await()
                     val loadedDiagnostic = diagnosticRequest.await()
                     val loadedActionCards = cardsRequest.await()
-                    val loadedMetricLabels = metricLabelsRequest.await()
+                    val loadedMetricPresentations = metricPresentationsRequest.await()
 
                     readiness = loadedReadiness
                     diagnostic = loadedDiagnostic
                     actionCards = loadedActionCards
-                    verificationMetricLabels = loadedMetricLabels
+                    verificationMetricPresentations = loadedMetricPresentations
+                    verificationMetricLabels = loadedMetricPresentations.mapValues { (_, presentation) ->
+                        "${presentation.displayName}（${presentation.storageUnit.displayUnit()}）"
+                    }
                     selectedActionCardId = null
                     verificationSummary = null
                     selectedDiagnosticRun = null
@@ -172,16 +177,19 @@ class OperationsViewModel(
     private fun neutralMessage(error: OperationsRequestException): String =
         if (error.statusCode == 0) CONNECTION_FAILURE_MESSAGE else FAILURE_MESSAGE
 
-    private suspend fun loadMetricLabels(storeId: String): Map<String, String> {
-        metricLabelsByStore[storeId]?.let { return it }
+    private suspend fun loadMetricPresentations(storeId: String): Map<String, VerificationMetricPresentation> {
+        metricPresentationsByStore[storeId]?.let { return it }
         val catalog = metricCatalogRepository ?: return emptyMap()
         return try {
             catalog.loadMetricCatalog(storeId).definitions
                 .filter { it.usableForVerification }
                 .associate { definition ->
-                    definition.metricKey to "${definition.displayName}（${definition.storageUnit.displayUnit()}）"
+                    definition.metricKey to VerificationMetricPresentation(
+                        displayName = definition.displayName,
+                        storageUnit = definition.storageUnit
+                    )
                 }
-                .also { labels -> metricLabelsByStore[storeId] = labels }
+                .also { presentations -> metricPresentationsByStore[storeId] = presentations }
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
@@ -195,7 +203,7 @@ class OperationsViewModel(
     }
 }
 
-private fun String.displayUnit(): String = when (this) {
+internal fun String.displayUnit(): String = when (this) {
     "cents" -> "元"
     "count" -> "次"
     "basis_points" -> "%"

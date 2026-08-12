@@ -47,6 +47,7 @@ data class ActionCardUpdate(
 }
 data class ActionVerificationSummary(val metrics: List<VerificationMetric>)
 data class VerificationMetric(val metricKey: String, val baselineValue: Long, val comparisonValue: Long, val changePercent: Double)
+data class VerificationMetricPresentation(val displayName: String, val storageUnit: String)
 
 interface OperationsRepository {
     suspend fun loadReadiness(storeId: String, rangeStart: String, rangeEnd: String): DataReadiness
