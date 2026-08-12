@@ -36,6 +36,9 @@ import com.restaurantops.BuildConfig
 import com.restaurantops.imports.network.HttpImportRepository
 import com.restaurantops.imports.network.ImportApi
 import com.restaurantops.imports.network.LocalImportApiRuntime
+import com.restaurantops.operations.OperationsRuntime
+import com.restaurantops.operations.OperationsScreen
+import com.restaurantops.operations.OperationsViewModel
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -64,6 +67,12 @@ fun WorkspaceRoot(
             LocalDemoImportRepository()
         }
         ImportViewModel(repository, fileReader = importFileReader)
+    }
+    val operationsRepository = remember {
+        OperationsRuntime.repository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
+    }
+    val operationsViewModel = remember(operationsRepository) {
+        OperationsViewModel(operationsRepository)
     }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
@@ -116,9 +125,11 @@ fun WorkspaceRoot(
                     onOpenImport = viewModel::openImport,
                     modifier = Modifier.padding(contentPadding)
                 )
-                WorkspaceTab.OPERATIONS -> LocalPlaceholderScreen(
-                    title = "Operations",
-                    message = "Operations workspace is being configured.",
+                WorkspaceTab.OPERATIONS -> OperationsScreen(
+                    viewModel = operationsViewModel,
+                    storeId = "store_demo",
+                    rangeStart = "2026-08-01",
+                    rangeEnd = "2026-08-07",
                     modifier = Modifier.padding(contentPadding)
                 )
                 WorkspaceTab.TASKS -> TasksScreen(

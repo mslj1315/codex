@@ -40,6 +40,18 @@ class OperationsViewModelTest {
     }
 
     @Test
+    fun `configured unavailable source stays distinct from a network error`() = runTest {
+        val viewModel = OperationsViewModel(UnavailableOperationsRepository(), this)
+
+        viewModel.load("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.isServiceUnavailable)
+        assertNull(viewModel.requestError)
+        assertNull(viewModel.readiness)
+    }
+
+    @Test
     fun `failed refresh preserves the previously displayed operations state`() = runTest {
         val repository = FakeOperationsRepository()
         val viewModel = OperationsViewModel(repository, this)
