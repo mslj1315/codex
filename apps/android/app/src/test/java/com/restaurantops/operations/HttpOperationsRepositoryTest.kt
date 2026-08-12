@@ -23,6 +23,9 @@ class HttpOperationsRepositoryTest {
         assertEquals(OperationsConfidence.MEDIUM, readiness.confidence)
         assertEquals(listOf("average_spend"), readiness.missingMetrics)
         assertEquals("revenue_decline", diagnostic!!.kind)
+        assertEquals("diagnostic_run_1", diagnostic.diagnosticRunId)
+        assertEquals("revenue_decline_v1", diagnostic.ruleVersion)
+        assertEquals(DiagnosticEvidence("revenue", 3826000, 4400000, -13.05), diagnostic.evidence.single())
         assertEquals("action_1", cards.single().id)
         assertEquals("in_progress", api.status)
     }
@@ -45,6 +48,10 @@ class HttpOperationsRepositoryTest {
         assertEquals("/v1/stores/{storeId}/action-cards/{actionCardId}/verification-summary", requireNotNull(api.methods.single { it.name == "verificationSummary" }.getAnnotation(GET::class.java)).value)
         assertNull(ActionCardResponse::class.java.declaredFields.singleOrNull { it.name == "objectKey" })
         assertNull(ActionCardResponse::class.java.declaredFields.singleOrNull { it.name == "batchId" })
+        assertNull(DeterministicDiagnosticResponse::class.java.declaredFields.singleOrNull { it.name == "factVersionId" })
+        assertNull(DeterministicDiagnosticResponse::class.java.declaredFields.singleOrNull { it.name == "sourceBatchId" })
+        assertNull(DeterministicDiagnosticResponse::class.java.declaredFields.singleOrNull { it.name == "sourceCandidateId" })
+        assertNull(DeterministicDiagnosticResponse::class.java.declaredFields.singleOrNull { it.name == "objectKey" })
     }
 
     @Test
@@ -81,7 +88,7 @@ class HttpOperationsRepositoryTest {
 
 private class FakeOperationsApi : OperationsApi {
     var status: String? = null
-    var diagnostic: DeterministicDiagnosticResponse? = DeterministicDiagnosticResponse("revenue_decline", "2026-08-01", "2026-08-07", "2026-07-25", "2026-07-31", DiagnosticFactResponse("revenue", 3826000, 4400000, -13.05), "high")
+    var diagnostic: DeterministicDiagnosticResponse? = DeterministicDiagnosticResponse("revenue_decline", "2026-08-01", "2026-08-07", "2026-07-25", "2026-07-31", DiagnosticFactResponse("revenue", 3826000, 4400000, -13.05), "high", "diagnostic_run_1", "revenue_decline_v1", listOf(DiagnosticEvidenceResponse("revenue", 3826000, 4400000, -13.05)))
     var verificationSummary: ActionCardVerificationSummaryResponse? = null
     var readinessFailure: Throwable? = null
     var statusRequest: ActionCardStatusRequest? = null

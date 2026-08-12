@@ -29,8 +29,9 @@ interface OperationsApi {
 
 data class DataReadinessResponse(val rangeStart: String, val rangeEnd: String, val requiredMetrics: List<String>, val presentMetrics: List<String>, val missingMetrics: List<String>, val confidence: String, val comparisonAvailable: Boolean)
 data class DiagnosticFactResponse(val metricKey: String, val currentValue: Long, val priorValue: Long, val changePercent: Double)
-data class DeterministicDiagnosticResponse(val kind: String, val rangeStart: String, val rangeEnd: String, val priorRangeStart: String, val priorRangeEnd: String, val fact: DiagnosticFactResponse, val confidence: String)
-data class ActionCardResponse(val id: String, val diagnosticKind: String, val rangeStart: String, val rangeEnd: String, val title: String, val action: String, val verificationMetric: String, val status: String, val executionNote: String?, val verificationOutcome: String?, val dueDate: String?)
+data class DiagnosticEvidenceResponse(val metricKey: String, val currentValue: Long, val priorValue: Long, val changePercent: Double)
+data class DeterministicDiagnosticResponse(val kind: String, val rangeStart: String, val rangeEnd: String, val priorRangeStart: String, val priorRangeEnd: String, val fact: DiagnosticFactResponse, val confidence: String, val diagnosticRunId: String = "", val ruleVersion: String = "", val evidence: List<DiagnosticEvidenceResponse> = emptyList())
+data class ActionCardResponse(val id: String, val diagnosticKind: String, val rangeStart: String, val rangeEnd: String, val title: String, val action: String, val verificationMetric: String, val status: String, val executionNote: String?, val verificationOutcome: String?, val dueDate: String?, val diagnosticRunId: String? = null)
 data class ActionCardVerificationSummaryResponse(val baselineRangeStart: String, val baselineRangeEnd: String, val comparisonRangeStart: String, val comparisonRangeEnd: String, val metrics: List<VerificationMetricResponse>)
 data class VerificationMetricResponse(val metricKey: String, val baselineValue: Long, val comparisonValue: Long, val changePercent: Double)
 data class ActionCardStatusRequest(

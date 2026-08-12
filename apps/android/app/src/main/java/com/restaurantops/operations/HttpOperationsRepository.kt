@@ -9,11 +9,19 @@ enum class OperationsConfidence { HIGH, MEDIUM, LOW }
 enum class ActionCardStatus { PROPOSED, IN_PROGRESS, COMPLETED, VERIFIED, CANCELLED }
 enum class ActionCardVerificationOutcome { EFFECTIVE, INEFFECTIVE, NOT_EXECUTED, DATA_INSUFFICIENT }
 data class DataReadiness(val missingMetrics: List<String>, val confidence: OperationsConfidence, val comparisonAvailable: Boolean)
-data class DeterministicDiagnostic(val kind: String, val confidence: OperationsConfidence)
+data class DiagnosticEvidence(val metricKey: String, val currentValue: Long, val priorValue: Long, val changePercent: Double)
+data class DeterministicDiagnostic(
+    val kind: String,
+    val confidence: OperationsConfidence,
+    val diagnosticRunId: String = "",
+    val ruleVersion: String = "",
+    val evidence: List<DiagnosticEvidence> = emptyList()
+)
 data class ActionCard(
     val id: String,
     val status: ActionCardStatus,
     val title: String,
+    val diagnosticRunId: String? = null,
     val executionNote: String? = null,
     val verificationOutcome: ActionCardVerificationOutcome? = null
 )
@@ -43,7 +51,19 @@ interface OperationsRepository {
 
 class HttpOperationsRepository(private val api: OperationsApi) : OperationsRepository {
     override suspend fun loadReadiness(storeId: String, rangeStart: String, rangeEnd: String) = request { api.readiness(storeId, rangeStart, rangeEnd).let { DataReadiness(it.missingMetrics, it.confidence.toConfidence(), it.comparisonAvailable) } }
-    override suspend fun loadDeterministicDiagnostic(storeId: String, rangeStart: String, rangeEnd: String) = request { api.deterministicDiagnostic(storeId, rangeStart, rangeEnd)?.let { DeterministicDiagnostic(it.kind, it.confidence.toConfidence()) } }
+    override suspend fun loadDeterministicDiagnostic(storeId: String, rangeStart: String, rangeEnd: String) = request {
+        api.deterministicDiagnostic(storeId, rangeStart, rangeEnd)?.let {
+            DeterministicDiagnostic(
+                it.kind,
+                it.confidence.toConfidence(),
+                it.diagnosticRunId,
+                it.ruleVersion,
+                it.evidence.map { evidence ->
+                    DiagnosticEvidence(evidence.metricKey, evidence.currentValue, evidence.priorValue, evidence.changePercent)
+                }
+            )
+        }
+    }
     override suspend fun loadActionCards(storeId: String, status: String?) = request { api.actionCards(storeId, status).map(::toActionCard) }
     override suspend fun loadVerificationSummary(storeId: String, actionCardId: String) = request { api.verificationSummary(storeId, actionCardId)?.let { ActionVerificationSummary(it.metrics.map { metric -> VerificationMetric(metric.metricKey, metric.baselineValue, metric.comparisonValue, metric.changePercent) }) } }
     override suspend fun updateActionCard(storeId: String, actionCardId: String, update: ActionCardUpdate) = request {
@@ -71,6 +91,7 @@ private fun toActionCard(response: ActionCardResponse) = ActionCard(
     id = response.id,
     status = response.status.toActionCardStatus(),
     title = response.title,
+    diagnosticRunId = response.diagnosticRunId,
     executionNote = response.executionNote,
     verificationOutcome = response.verificationOutcome?.toActionCardVerificationOutcome()
 )

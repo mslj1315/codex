@@ -143,6 +143,13 @@ private fun DiagnosticContent(
                         "置信度：${diagnostic.confidence.name.lowercase()}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Text(
+                        "规则版本：${diagnostic.ruleVersion}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    diagnostic.evidence.forEach { evidence ->
+                        Text("${evidence.metricKey}: 当前 ${evidence.currentValue}，前期 ${evidence.priorValue}，变化 ${evidence.changePercent}%")
+                    }
                 }
             }
         }
@@ -189,6 +196,9 @@ private fun ActionCardContent(
         ) {
             Text(card.title, style = MaterialTheme.typography.titleSmall)
             Text("状态：${card.status.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (card.diagnosticRunId != null) {
+                Text("来源：已关联记录证据", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             card.executionNote?.let { Text("执行说明：$it") }
             card.verificationOutcome?.let { Text("复盘结果：${it.name.lowercase()}") }
             if (card.status.canViewVerificationSummary()) {
