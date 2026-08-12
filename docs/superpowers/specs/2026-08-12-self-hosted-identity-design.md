@@ -45,14 +45,17 @@ this increment does not rewrite their history.
   (`owner` or `operator`), enabled state, and timestamps. The composite scope
   is unique per account.
 - `service_operator_roles`: account ID, global role
-  (`metric_catalog_operator`), enabled state, and timestamps. It is separate
-  from a store membership and cannot be inferred from one.
+  (`metric_catalog_operator` or `provider_feedback_viewer`), enabled state,
+  and timestamps. It is separate from a store membership and cannot be inferred
+  from one.
 
 The initial role set is deliberately small. `owner` and `operator` may operate
 the store routes that currently exist. `metric_catalog_operator` authorizes
-future service-provider catalog management but grants no store membership.
-There are no employee hierarchy, cross-enterprise, customer, or billing roles
-in this increment.
+future service-provider catalog management, and `provider_feedback_viewer`
+authorizes only the provider feedback projection described below. Neither role
+grants store membership or access to a store-scoped business route. There are no
+employee hierarchy, cross-enterprise customer-management, or billing roles in
+this increment.
 
 ## Credentials And Tokens
 
@@ -121,6 +124,40 @@ authenticate an account and verify `metric_catalog_operator` before invoking
 the existing draft/publish lifecycle; it must not gain direct database mutation
 paths.
 
+## Provider Feedback Projection
+
+The future provider backend may show customer usage and outcome feedback, but
+only through a purpose-built read model protected by
+`provider_feedback_viewer`. It is not a cross-tenant version of the store API
+and it does not allow a provider account to fetch a store's imports, facts,
+files, diagnostic evidence, action-card text, execution notes, or verification
+metric values.
+
+Each provider-feedback row is keyed by the enterprise/store scope already used
+by the product and contains only the minimum operational feedback needed to
+understand adoption and effectiveness:
+
+- stable customer scope reference for support follow-up;
+- last successful import/confirmation timestamp and recent activity state;
+- current readiness state and missing-metric count, not the metric values;
+- deterministic diagnostic availability/count by rule kind, not evidence;
+- action-card status counts and verification-outcome counts;
+- coverage timestamps used to identify stale or incomplete product usage.
+
+The feedback projection excludes original filenames and bytes, object keys,
+checksums, raw fact values and money amounts, candidate values, diagnostic
+evidence, action titles/actions, execution notes, account login names, refresh
+sessions, and authentication material. Its API permits bounded pagination and
+server-selected aggregate filters only; it has no arbitrary SQL, per-metric
+value, export, or cross-role impersonation capability.
+
+`provider_feedback_viewer` is independent from `metric_catalog_operator`, so a
+service provider can be granted one capability without acquiring the other. All
+feedback reads emit an auditable account ID, request ID, role, and selected
+scope/filter category, never raw token or customer content. A later decision on
+customer-facing privacy notices, retention, or expanded support identity is
+required before this projection can include names or personal contact data.
+
 ## Android Boundary
 
 The Android app gains a login/session repository, encrypted-at-rest refresh
@@ -144,8 +181,10 @@ login flow. Release configuration has no default API base URL or demo bypass.
 - Login-name conflicts and provisioning failures are stable, non-secret CLI
   errors; normal HTTP login does not reveal whether an account exists.
 - Structured logs may include event type, request ID, account ID, and requested
-  store ID after authentication. They never include passwords, hashes, access
-  tokens, refresh tokens, authorization headers, or `AUTH_TOKEN_SECRET`.
+  store ID after authentication. Provider feedback reads additionally record the
+  service role and selected aggregate filter category. Logs never include
+  passwords, hashes, access tokens, refresh tokens, authorization headers, or
+  `AUTH_TOKEN_SECRET`.
 - Rate limiting, password-reset delivery, MFA, SSO, and organization self-signup
   are deferred until there is a production identity-provider or notification
   decision.
@@ -167,8 +206,11 @@ migration, provisions accounts explicitly, and uses authenticated requests.
 API tests cover credential hashing/verification, token expiry/signature/version
 validation, refresh rotation and replay rejection, logout and account disable,
 membership isolation, service-operator separation, no production demo fallback,
-and provision CLI privacy/transaction cleanup. Route tests prove a token for one
-store cannot access a second store or forge enterprise/actor context.
+and provision CLI privacy/transaction cleanup. Provider feedback tests prove
+that its role is required, its response contains only the approved aggregate
+shape, and that a feedback viewer cannot call a store route. Route tests prove a
+token for one store cannot access a second store or forge enterprise/actor
+context.
 
 Android tests cover login validation, encrypted refresh-token lifecycle, one
 refresh retry, logout cleanup, store selection, unauthenticated error handling,
