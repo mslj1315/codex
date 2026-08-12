@@ -9,6 +9,7 @@ import { AuthRepository } from "./auth/repository.js";
 import { registerAuthRoutes } from "./auth/routes.js";
 import { AuthService } from "./auth/service.js";
 import { authenticatedContextResolver } from "./imports/routes.js";
+import { registerProviderFeedbackRoutes } from "./provider-feedback/routes.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -43,6 +44,7 @@ export function buildServer(options: ServerOptions = {}) {
     : undefined;
   const contextResolver = explicitContextResolver ?? (auth ? authenticatedContextResolver(auth) : undefined);
   if (auth) app.register((instance) => registerAuthRoutes(instance, auth));
+  if (auth && database && !explicitContextResolver) app.register((instance) => registerProviderFeedbackRoutes(instance, { auth, database, now: options.now ?? (() => new Date()) }));
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, {
       database,
