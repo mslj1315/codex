@@ -2,6 +2,7 @@ import type { Database, Queryable } from "../db.js";
 import { randomUUID } from "node:crypto";
 
 export type StoreRole = "owner" | "operator";
+export type ServiceOperatorRole = "metric_catalog_operator" | "provider_feedback_viewer";
 
 export interface AuthAccount {
   id: string;
@@ -85,6 +86,14 @@ export class AuthRepository {
     return result.rows.map(membership);
   }
 
+  async hasEnabledServiceOperatorRole(accountId: string, role: ServiceOperatorRole): Promise<boolean> {
+    const result = await this.database.query(
+      "SELECT 1 FROM service_operator_roles WHERE account_id = $1 AND role = $2 AND enabled = true",
+      [accountId, role]
+    );
+    return result.rowCount === 1;
+  }
+
   async provision(input: {
     loginName: string;
     displayName: string;
@@ -92,7 +101,7 @@ export class AuthRepository {
     enterpriseId: string;
     storeId: string;
     storeRole: StoreRole;
-    serviceOperatorRole?: "metric_catalog_operator" | "provider_feedback_viewer";
+    serviceOperatorRole?: ServiceOperatorRole;
   }): Promise<{ accountId: string; membershipGranted: boolean; serviceOperatorRoleGranted: boolean }> {
     return this.transaction(async (client) => {
       const existing = await client.query<Row>("SELECT id FROM accounts WHERE login_name = $1 FOR UPDATE", [input.loginName]);

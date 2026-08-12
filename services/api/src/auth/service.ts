@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { TrustedContext } from "../imports/service.js";
 import { verifyPassword } from "./credentials.js";
-import { AuthRepository, type StoreMembership } from "./repository.js";
+import { AuthRepository, type ServiceOperatorRole, type StoreMembership } from "./repository.js";
 import { AuthenticationError, createRefreshToken, hashRefreshToken, issueAccessToken, parseAccessToken } from "./tokens.js";
 
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -63,6 +63,14 @@ export class AuthService {
   async listStores(accessToken: string): Promise<StoreMembership[]> {
     const account = await this.authenticateAccessToken(accessToken);
     return this.repository.listEnabledMemberships(account.id);
+  }
+
+  async requireServiceOperatorRole(accessToken: string, role: ServiceOperatorRole): Promise<{ id: string; displayName: string }> {
+    const account = await this.authenticateAccessToken(accessToken);
+    if (!await this.repository.hasEnabledServiceOperatorRole(account.id, role)) {
+      throw new AuthorizationError("Service role is not authorized");
+    }
+    return account;
   }
 
   private async createTokens(account: { id: string; displayName: string }): Promise<AuthTokens> {

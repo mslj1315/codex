@@ -56,6 +56,27 @@ describe("auth service", () => {
     ]);
   });
 
+  it("requires the independent enabled provider feedback role", async () => {
+    const passwordHash = await hashPassword("passphrase", () => Buffer.alloc(16, 8));
+    await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_viewer', 'viewer', 'Viewer', $1)", [passwordHash]);
+    await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_catalog', 'catalog', 'Catalog', $1)", [passwordHash]);
+    await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_disabled_viewer', 'disabled_viewer', 'Disabled viewer', $1)", [passwordHash]);
+    await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_viewer', 'provider_feedback_viewer')");
+    await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_catalog', 'metric_catalog_operator')");
+    await database.query("INSERT INTO service_operator_roles (account_id, role, enabled) VALUES ('account_disabled_viewer', 'provider_feedback_viewer', false)");
+
+    const viewer = await service.login({ loginName: "viewer", password: "passphrase" });
+    const catalog = await service.login({ loginName: "catalog", password: "passphrase" });
+    const disabled = await service.login({ loginName: "disabled_viewer", password: "passphrase" });
+
+    await expect(service.requireServiceOperatorRole(viewer.accessToken, "provider_feedback_viewer"))
+      .resolves.toEqual({ id: "account_viewer", displayName: "Viewer" });
+    await expect(service.requireServiceOperatorRole(catalog.accessToken, "provider_feedback_viewer"))
+      .rejects.toBeInstanceOf(AuthorizationError);
+    await expect(service.requireServiceOperatorRole(disabled.accessToken, "provider_feedback_viewer"))
+      .rejects.toBeInstanceOf(AuthorizationError);
+  });
+
   it("resolves only a bearer token and its URL store into trusted context", async () => {
     const login = await service.login({ loginName: "owner", password: "passphrase" });
     const resolver = authenticatedContextResolver(service);
