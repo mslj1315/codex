@@ -85,6 +85,17 @@ services:
       minio:
         condition: service_started
 
+  import-maintenance-status:
+    profiles: ["maintenance"]
+    build:
+      context: ./services/api
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    command: sh -c "npm run migrate && npm run maintenance:status"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
     name: import_postgres_data

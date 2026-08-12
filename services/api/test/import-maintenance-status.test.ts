@@ -1,7 +1,8 @@
 import { newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
-import { ImportRepository, ValidationError } from "../src/imports/repository.js";
+import { ImportRepository, ValidationError, type ImportMaintenanceStatus } from "../src/imports/repository.js";
+import { runImportMaintenanceStatus, IMPORT_MAINTENANCE_STATUS_ADVISORY_LOCK_KEY } from "../src/import-maintenance-status.js";
 
 const now = new Date("2026-11-09T08:00:00.000Z");
 
@@ -54,6 +55,56 @@ describe("import maintenance status", () => {
     await expect(imports.getImportMaintenanceStatus(value)).rejects.toBeInstanceOf(ValidationError);
   });
 });
+
+describe("import maintenance status CLI", () => {
+  it("requires only DATABASE_URL and holds the lock on the same client", async () => {
+    const status = { pendingReconciliationJobs: 1, eligibleReconciliationJobs: 1, graceDeferredReconciliationJobs: 0, retryDeferredReconciliationJobs: 0, failedReconciliationJobs: 0, oldestEligibleAt: now, reconciliationGuardCount: 1 };
+    const harness = createCliHarness(status);
+    await expect(runImportMaintenanceStatus({ DATABASE_URL: "postgres://private" }, harness.dependencies)).resolves.toEqual(status);
+    expect(harness.lockKey).toBe(IMPORT_MAINTENANCE_STATUS_ADVISORY_LOCK_KEY);
+    expect(harness.events).toEqual(["connect", "try-lock", "status", "unlock", "release", "output", "end"]);
+    expect(harness.output).toHaveLength(1);
+  });
+
+  it("returns a privacy-safe skipped result on lock contention", async () => {
+    const harness = createCliHarness({} as never, { lockAcquired: false });
+    const result = await runImportMaintenanceStatus({ DATABASE_URL: "postgres://private", MINIO_SECRET_KEY: "must-not-read" }, harness.dependencies);
+    expect(result).toEqual({ skipped: true, reason: "already_running" });
+    expect(harness.events).toEqual(["connect", "try-lock", "release", "output", "end"]);
+  });
+
+  it("always releases resources when status fails", async () => {
+    const failure = new Error("private database details");
+    const harness = createCliHarness(failure);
+    await expect(runImportMaintenanceStatus({ DATABASE_URL: "postgres://private" }, harness.dependencies)).rejects.toBe(failure);
+    expect(harness.events).toEqual(["connect", "try-lock", "status", "unlock", "release", "end"]);
+    expect(harness.output).toEqual([]);
+  });
+});
+
+function createCliHarness(status: ImportMaintenanceStatus | Error, options: { lockAcquired?: boolean } = {}) {
+  const state = { events: [] as string[], output: [] as string[], lockKey: 0 };
+  const client = {
+    async query(text: string, values?: readonly unknown[]) {
+      if (text.includes("pg_try_advisory_lock")) { state.events.push("try-lock"); state.lockKey = Number(values?.[0]); return { rows: [{ locked: options.lockAcquired ?? true }], rowCount: 1 }; }
+      if (text.includes("pg_advisory_unlock")) { state.events.push("unlock"); return { rows: [{ unlocked: true }], rowCount: 1 }; }
+      throw new Error(`unexpected query: ${text}`);
+    },
+    release() { state.events.push("release"); }
+  };
+  const database = {
+    async connect() { state.events.push("connect"); return client; },
+    async end() { state.events.push("end"); },
+    async query() { throw new Error("pool query forbidden"); }
+  } as never;
+  const dependencies = {
+    createDatabase() { return database; },
+    now: () => now,
+    async getStatus() { state.events.push("status"); if (status instanceof Error) throw status; return status; },
+    writeOutput(value: string) { state.events.push("output"); state.output.push(value); }
+  };
+  return Object.assign(state, { dependencies });
+}
 
 async function seed(database: Database): Promise<void> {
   await database.query(
