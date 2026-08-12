@@ -82,6 +82,7 @@ function duplicateRaceDatabase(reloadFailure: Error): Database {
       return {
         async query(text: string, values: readonly unknown[] = []) {
           if (text === "BEGIN" || text === "ROLLBACK") return result([]);
+          if (text.includes("import_batch_reconciliation_guards")) return result([]);
           if (text.includes("INSERT INTO import_batches")) {
             return result([{
               id: values[0], enterprise_id: values[1], store_id: values[2], actor_id: values[3],
@@ -115,6 +116,7 @@ function lostCommitDatabase(): Database {
       return {
         async query(text: string, values: readonly unknown[] = []) {
           if (text === "BEGIN" || text === "ROLLBACK") return result([]);
+          if (text.includes("import_batch_reconciliation_guards")) return result([]);
           if (text === "COMMIT") throw Object.assign(new Error("commit response lost"), { code: "ETIMEDOUT" });
           if (text.includes("INSERT INTO import_batches")) {
             batch = {

@@ -10,6 +10,10 @@ import {
 export interface ImportObjectReconciliationRepository {
   listEligibleImportObjectReconciliationJobs(now: Date, limit?: number): Promise<ImportObjectReconciliationJob[]>;
   countDeferredImportObjectReconciliationJobs(now: Date): Promise<number>;
+  withImportBatchReconciliationGuard<T>(
+    batchId: string,
+    work: (guarded: ImportObjectReconciliationRepository) => Promise<T>
+  ): Promise<T>;
   getBatch(scope: FactVersionScope): Promise<unknown>;
   resolveImportObjectReconciliationJob(
     id: string,
@@ -100,42 +104,35 @@ async function reconcileJob(
   if (job.kind === "delete_orphan") {
     try {
       await storage.deleteObject(job.objectKey);
-      return await resolve(repository, job, now, "object_removed");
     } catch {
       await recordFailure(repository, job.id, now, "StorageError");
-      return false;
-    }
-  }
-
-  try {
-    await repository.getBatch({ id: job.batchId, enterpriseId: job.enterpriseId, storeId: job.storeId });
-  } catch (error) {
-    if (!(error instanceof NotFoundError)) {
-      await recordFailure(repository, job.id, now, "DatabaseError");
       return false;
     }
     try {
-      await storage.deleteObject(job.objectKey);
-      return await resolve(repository, job, now, "object_removed");
+      return await repository.resolveImportObjectReconciliationJob(job.id, now, "object_removed");
     } catch {
-      await recordFailure(repository, job.id, now, "StorageError");
+      await recordFailure(repository, job.id, now, "DatabaseError");
       return false;
     }
   }
 
-  return resolve(repository, job, now, "persistence_committed");
-}
-
-async function resolve(
-  repository: ImportObjectReconciliationRepository,
-  job: ImportObjectReconciliationJob,
-  now: Date,
-  resolution: ImportObjectReconciliationResolution
-): Promise<boolean> {
   try {
-    return await repository.resolveImportObjectReconciliationJob(job.id, now, resolution);
-  } catch {
-    await recordFailure(repository, job.id, now, "DatabaseError");
+    return await repository.withImportBatchReconciliationGuard(job.batchId, async (guarded) => {
+      try {
+        await guarded.getBatch({ id: job.batchId, enterpriseId: job.enterpriseId, storeId: job.storeId });
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+        try {
+          await storage.deleteObject(job.objectKey);
+        } catch (storageError) {
+          throw new ReconciliationStorageFailure(storageError);
+        }
+        return guarded.resolveImportObjectReconciliationJob(job.id, now, "object_removed");
+      }
+      return guarded.resolveImportObjectReconciliationJob(job.id, now, "persistence_committed");
+    });
+  } catch (error) {
+    await recordFailure(repository, job.id, now, error instanceof ReconciliationStorageFailure ? "StorageError" : "DatabaseError");
     return false;
   }
 }
@@ -156,5 +153,11 @@ async function recordFailure(
 function assertPositiveInteger(value: number, maximum: number, name: string): void {
   if (!Number.isInteger(value) || value < 1 || value > maximum) {
     throw new ValidationError(`${name} must be an integer between 1 and ${maximum}`);
+  }
+}
+
+class ReconciliationStorageFailure extends Error {
+  constructor(cause: unknown) {
+    super("Object storage reconciliation failed", { cause });
   }
 }

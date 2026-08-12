@@ -237,6 +237,11 @@ describe("import repository", () => {
     expect(migration).toContain("WHERE state = 'pending'");
   });
 
+  it("declares a narrow batch guard shared by persistence and reconciliation", () => {
+    expect(migration).toContain("CREATE TABLE import_batch_reconciliation_guards");
+    expect(migration).toContain("batch_id TEXT PRIMARY KEY");
+  });
+
   it("enqueues one reconciliation job per object key", async () => {
     const input = reconciliationJobInput({ id: "reconciliation_first" });
 
@@ -475,6 +480,8 @@ describe("import repository", () => {
     expect(batch).toMatchObject({ id: "batch_transaction_success", candidates: [{ value: 12 }] });
     expect(await database.query("SELECT id FROM import_files WHERE batch_id = $1", [batch.id]))
       .toMatchObject({ rowCount: 1, rows: [{ id: "file_transaction_success" }] });
+    expect(await database.query("SELECT batch_id FROM import_batch_reconciliation_guards WHERE batch_id = $1", [batch.id]))
+      .toMatchObject({ rowCount: 1, rows: [{ batch_id: batch.id }] });
   });
 
   it("rejects file metadata whose batch or store scope differs from the new batch", async () => {

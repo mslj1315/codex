@@ -44,6 +44,33 @@ describe("import object reconciliation", () => {
     expect(repository.resolutions).toEqual([["missing", "object_removed"]]);
   });
 
+  it("waits for original persistence holding the batch guard, then retains the committed object", async () => {
+    const repository = new BlockingQueueRepository([job("racing", "verify_batch_then_delete")]);
+    const storage = new Storage("deleted");
+    const commitPersistence = repository.holdOriginalPersistence();
+
+    const reconciliation = reconcileImportObjects(repository, storage, now);
+    await repository.waitForRunnerAtGuard();
+    expect(storage.deletedKeys).toEqual([]);
+
+    repository.batchExists = true;
+    commitPersistence();
+
+    await expect(reconciliation).resolves.toEqual({ scanned: 1, resolved: 1, failed: 0 });
+    expect(storage.deletedKeys).toEqual([]);
+    expect(repository.resolutions).toEqual([["racing", "persistence_committed"]]);
+  });
+
+  it("deletes after the runner obtains an uncontended batch guard and confirms the batch is absent", async () => {
+    const repository = new BlockingQueueRepository([job("guarded_missing", "verify_batch_then_delete")]);
+    const storage = new Storage("deleted");
+
+    await expect(reconcileImportObjects(repository, storage, now)).resolves.toEqual({
+      scanned: 1, resolved: 1, failed: 0
+    });
+    expect(storage.deletedKeys).toEqual(["imports/guarded_missing"]);
+  });
+
   it.each([
     ["database", new Error("database down")],
     ["storage", new Error("storage down")]
@@ -114,6 +141,13 @@ class QueueRepository implements ImportObjectReconciliationRepository {
 
   async countDeferredImportObjectReconciliationJobs() { return this.deferred; }
 
+  async withImportBatchReconciliationGuard<T>(
+    _batchId: string,
+    work: (guarded: ImportObjectReconciliationRepository) => Promise<T>
+  ): Promise<T> {
+    return work(this);
+  }
+
   async getBatch(scope: { id: string; enterpriseId: string; storeId: string }) {
     this.batchScopes.push(scope);
     if (this.batchError) throw this.batchError;
@@ -132,6 +166,35 @@ class QueueRepository implements ImportObjectReconciliationRepository {
   async recordImportObjectReconciliationFailure(id: string, _at: Date, type: string | null, code: string | null) {
     this.failures.push([id, type, code]);
     return true;
+  }
+}
+
+class BlockingQueueRepository extends QueueRepository {
+  private releaseOriginal: (() => void) | null = null;
+  private readonly originalFinished = new Promise<void>((resolve) => { this.releaseOriginal = resolve; });
+  private signalRunner: (() => void) | null = null;
+  private readonly runnerAtGuard = new Promise<void>((resolve) => { this.signalRunner = resolve; });
+  private originalIsHolding = false;
+
+  holdOriginalPersistence(): () => void {
+    this.originalIsHolding = true;
+    return () => {
+      this.originalIsHolding = false;
+      this.releaseOriginal?.();
+    };
+  }
+
+  async waitForRunnerAtGuard(): Promise<void> { await this.runnerAtGuard; }
+
+  override async withImportBatchReconciliationGuard<T>(
+    batchId: string,
+    work: (guarded: ImportObjectReconciliationRepository) => Promise<T>
+  ): Promise<T> {
+    if (this.originalIsHolding) {
+      this.signalRunner?.();
+      await this.originalFinished;
+    }
+    return super.withImportBatchReconciliationGuard(batchId, work);
   }
 }
 

@@ -194,11 +194,11 @@ export class ImportRepository {
     candidates: readonly Omit<CreateCandidateInput, "batchId" | "enterpriseId" | "storeId">[],
     file?: CreateImportFileInput
   ): Promise<ImportBatchDetails> {
+    const batchInput = { ...input, id: input.id ?? randomUUID() };
     if (file && (
-      input.id === undefined
-      || file.batchId !== input.id
-      || file.enterpriseId !== input.enterpriseId
-      || file.storeId !== input.storeId
+      file.batchId !== batchInput.id
+      || file.enterpriseId !== batchInput.enterpriseId
+      || file.storeId !== batchInput.storeId
     )) {
       throw new ValidationError("Import file scope must match its import batch");
     }
@@ -207,11 +207,12 @@ export class ImportRepository {
     const client = await database.connect();
     try {
       await client.query("BEGIN");
+      await acquireImportBatchReconciliationGuard(client, batchInput.id);
       const transaction = new ImportRepository(client);
-      const batch = await transaction.createBatch(input);
+      const batch = await transaction.createBatch(batchInput);
       if (file) await transaction.createImportFile(file);
-      for (const candidate of candidates) await transaction.createCandidate({ ...candidate, batchId: batch.id, enterpriseId: input.enterpriseId, storeId: input.storeId });
-      const details = await transaction.getBatch({ id: batch.id, enterpriseId: input.enterpriseId, storeId: input.storeId });
+      for (const candidate of candidates) await transaction.createCandidate({ ...candidate, batchId: batch.id, enterpriseId: batchInput.enterpriseId, storeId: batchInput.storeId });
+      const details = await transaction.getBatch({ id: batch.id, enterpriseId: batchInput.enterpriseId, storeId: batchInput.storeId });
       await client.query("COMMIT");
       return details;
     } catch (error) {
@@ -376,6 +377,25 @@ export class ImportRepository {
       [now]
     );
     return Number(result.rows[0].count);
+  }
+
+  async withImportBatchReconciliationGuard<T>(
+    batchId: string,
+    work: (guarded: ImportRepository) => Promise<T>
+  ): Promise<T> {
+    const database = this.transactionDatabase ?? (isDatabase(this.database) ? this.database : undefined);
+    if (!database) throw new Error("Transactions require a database connection");
+    const client = await database.connect();
+    try {
+      await client.query("BEGIN");
+      await acquireImportBatchReconciliationGuard(client, batchId);
+      const result = await work(new ImportRepository(client));
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
   }
 
   async resolveImportObjectReconciliationJob(
@@ -695,6 +715,17 @@ function assertResolution(value: string): asserts value is ImportObjectReconcili
   if (value !== "object_removed" && value !== "persistence_committed") {
     throw new ValidationError("Reconciliation resolution is invalid");
   }
+}
+
+async function acquireImportBatchReconciliationGuard(database: Queryable, batchId: string): Promise<void> {
+  await database.query(
+    "INSERT INTO import_batch_reconciliation_guards (batch_id) VALUES ($1) ON CONFLICT (batch_id) DO NOTHING",
+    [batchId]
+  );
+  await database.query(
+    "SELECT batch_id FROM import_batch_reconciliation_guards WHERE batch_id = $1 FOR UPDATE",
+    [batchId]
+  );
 }
 function normalizeReconciliationErrorType(value: string | null): string | null {
   return value !== null && RECONCILIATION_ERROR_TYPES.has(value) ? value : null;
