@@ -74,6 +74,37 @@ describe("auth service", () => {
 
     await expect(resolver(request("Bearer one.two.three", "store_demo"))).rejects.toThrow("database unavailable");
   });
+
+  it("provisions one account and upserts its store and provider grants", async () => {
+    const repository = new AuthRepository(database);
+    const first = await repository.provision({
+      loginName: "provider", displayName: "Provider", passwordHash: "hash_one",
+      enterpriseId: "ent_demo", storeId: "store_provider", storeRole: "operator",
+      serviceOperatorRole: "provider_feedback_viewer"
+    });
+    const second = await repository.provision({
+      loginName: "provider", displayName: "Provider Updated", passwordHash: "hash_two",
+      enterpriseId: "ent_demo", storeId: "store_provider", storeRole: "owner"
+    });
+
+    expect(second.accountId).toBe(first.accountId);
+    await expect(database.query("SELECT login_name, display_name, password_hash FROM accounts WHERE id = $1", [first.accountId]))
+      .resolves.toMatchObject({ rows: [{ login_name: "provider", display_name: "Provider Updated", password_hash: "hash_two" }] });
+    await expect(database.query("SELECT role FROM store_memberships WHERE account_id = $1 AND store_id = 'store_provider'", [first.accountId]))
+      .resolves.toMatchObject({ rows: [{ role: "owner" }] });
+    await expect(database.query("SELECT role FROM service_operator_roles WHERE account_id = $1", [first.accountId]))
+      .resolves.toMatchObject({ rows: [{ role: "provider_feedback_viewer" }] });
+  });
+
+  it("revokes existing sessions when controlled provisioning resets a password", async () => {
+    const login = await service.login({ loginName: "owner", password: "passphrase" });
+    await new AuthRepository(database).provision({
+      loginName: "owner", displayName: "Owner", passwordHash: "replacement_hash",
+      enterpriseId: "ent_demo", storeId: "store_demo", storeRole: "owner"
+    });
+
+    await expect(service.authenticateAccessToken(login.accessToken)).rejects.toBeInstanceOf(AuthenticationError);
+  });
 });
 
 async function applyTestMigrations(database: Database): Promise<void> {

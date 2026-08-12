@@ -1,4 +1,5 @@
 import type { Database, Queryable } from "../db.js";
+import { randomUUID } from "node:crypto";
 
 export type StoreRole = "owner" | "operator";
 
@@ -82,6 +83,47 @@ export class AuthRepository {
       [accountId]
     );
     return result.rows.map(membership);
+  }
+
+  async provision(input: {
+    loginName: string;
+    displayName: string;
+    passwordHash: string;
+    enterpriseId: string;
+    storeId: string;
+    storeRole: StoreRole;
+    serviceOperatorRole?: "metric_catalog_operator" | "provider_feedback_viewer";
+  }): Promise<{ accountId: string; membershipGranted: boolean; serviceOperatorRoleGranted: boolean }> {
+    return this.transaction(async (client) => {
+      const existing = await client.query<Row>("SELECT id FROM accounts WHERE login_name = $1 FOR UPDATE", [input.loginName]);
+      const accountId = existing.rowCount === 1 ? String(existing.rows[0].id) : randomUUID();
+      if (existing.rowCount === 1) {
+        await client.query(
+          "UPDATE accounts SET display_name = $1, password_hash = $2, enabled = true, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+          [input.displayName, input.passwordHash, accountId]
+        );
+        await client.query("UPDATE account_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE account_id = $1 AND revoked_at IS NULL", [accountId]);
+      } else {
+        await client.query(
+          "INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ($1, $2, $3, $4)",
+          [accountId, input.loginName, input.displayName, input.passwordHash]
+        );
+      }
+      await client.query(
+        `INSERT INTO store_memberships (account_id, enterprise_id, store_id, role, enabled)
+         VALUES ($1, $2, $3, $4, true)
+         ON CONFLICT (account_id, enterprise_id, store_id) DO UPDATE SET role = EXCLUDED.role, enabled = true, updated_at = CURRENT_TIMESTAMP`,
+        [accountId, input.enterpriseId, input.storeId, input.storeRole]
+      );
+      if (input.serviceOperatorRole) {
+        await client.query(
+          `INSERT INTO service_operator_roles (account_id, role, enabled) VALUES ($1, $2, true)
+           ON CONFLICT (account_id, role) DO UPDATE SET enabled = true, updated_at = CURRENT_TIMESTAMP`,
+          [accountId, input.serviceOperatorRole]
+        );
+      }
+      return { accountId, membershipGranted: true, serviceOperatorRoleGranted: input.serviceOperatorRole !== undefined };
+    });
   }
 
   private async transaction<T>(operation: (client: Queryable) => Promise<T>): Promise<T> {

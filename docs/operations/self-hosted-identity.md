@@ -1,0 +1,52 @@
+# Self-Hosted Identity Operations
+
+## Production Configuration
+
+Set a unique high-entropy `AUTH_TOKEN_SECRET` for every production deployment.
+The API refuses to start with a database unless this secret is present or an
+explicit development context mode is selected. Terminate TLS before accepting
+passwords or bearer tokens; do not send either across an unencrypted public
+connection.
+
+`LOCAL_CONTAINER_DEVELOPMENT_MODE=true` remains an explicit local demonstration
+mode. It creates the fixed demo trusted context and must not be set in a
+production deployment.
+
+## Provision An Initial Account
+
+There is no public sign-up route. Run the following from `services/api` with a
+database URL that points to the intended deployment:
+
+```powershell
+$env:DATABASE_URL='postgresql://...'
+$env:PROVISION_LOGIN_NAME='owner'
+$env:PROVISION_DISPLAY_NAME='门店负责人'
+$env:PROVISION_PASSWORD='use-a-unique-long-password'
+$env:PROVISION_ENTERPRISE_ID='ent_example'
+$env:PROVISION_STORE_ID='store_example'
+$env:PROVISION_STORE_ROLE='owner'
+npm run provision:account
+```
+
+The command creates or updates the named account and grants the specified store
+membership in one database transaction. It prints one JSON summary containing
+only the account ID and grant booleans. It never prints the password, password
+hash, access token, refresh token, or signing secret.
+
+To grant one independent service-provider capability during the same controlled
+operation, set `PROVISION_SERVICE_OPERATOR_ROLE` to either
+`metric_catalog_operator` or `provider_feedback_viewer`. This does not grant
+the account access to any store route. Do not add this variable for ordinary
+store users.
+
+## Token Lifecycle
+
+Login returns a 15-minute access token and a 30-day refresh token. Refreshing
+rotates the session, so replaying the old refresh token fails. Logout revokes
+the current session and invalidates its access token before expiry. Rotating
+`AUTH_TOKEN_SECRET` invalidates all access tokens; revoke or re-provision
+sessions as part of the same incident response.
+
+The API derives enterprise, store, and actor context from the bearer account's
+enabled membership. Clients must not send tenant or actor headers to select a
+scope; they are ignored by the business routes.

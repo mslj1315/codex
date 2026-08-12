@@ -267,6 +267,7 @@ describe("import repository", () => {
     await expect(database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_duplicate', 'owner', 'Duplicate', 'hash')")).rejects.toThrow();
     await database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('account_owner', 'ent_demo', 'store_demo', 'owner')");
     await expect(database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('account_owner', 'ent_demo', 'store_demo', 'owner')")).rejects.toThrow();
+    await expect(database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('account_owner', 'ent_other', 'store_demo', 'operator')")).rejects.toThrow();
     await expect(database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'unsupported')")).rejects.toThrow();
   });
 

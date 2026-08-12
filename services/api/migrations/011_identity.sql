@@ -29,7 +29,8 @@ CREATE TABLE store_memberships (
   enabled BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (account_id, enterprise_id, store_id)
+  PRIMARY KEY (account_id, enterprise_id, store_id),
+  UNIQUE (account_id, store_id)
 );
 
 CREATE INDEX store_memberships_store_idx
