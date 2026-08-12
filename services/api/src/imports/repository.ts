@@ -852,6 +852,15 @@ export class ImportRepository {
 
   async getDeterministicDiagnostic(scope: DataReadinessScope): Promise<DeterministicDiagnostic | null> {
     assertDateOnlyRange(scope.rangeStart, scope.rangeEnd);
+    const diagnosticMetric = await this.database.query<Row>(
+      `SELECT 1
+       FROM metric_catalog_versions catalog
+       JOIN metric_definitions definition ON definition.metric_catalog_version_id = catalog.id
+       WHERE catalog.state = 'published' AND definition.metric_key = 'revenue'
+         AND definition.enabled = true AND definition.usable_for_diagnostic = true
+       LIMIT 1`
+    );
+    if (diagnosticMetric.rowCount !== 1) return null;
     const start = new Date(`${scope.rangeStart}T00:00:00Z`);
     const end = new Date(`${scope.rangeEnd}T00:00:00Z`);
     const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;

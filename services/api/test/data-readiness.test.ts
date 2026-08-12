@@ -16,7 +16,8 @@ describe("data readiness", () => {
       );
       CREATE TABLE metric_definitions (
         metric_catalog_version_id TEXT NOT NULL, metric_key TEXT NOT NULL,
-        enabled BOOLEAN NOT NULL, usable_for_readiness BOOLEAN NOT NULL
+        enabled BOOLEAN NOT NULL, usable_for_readiness BOOLEAN NOT NULL,
+        usable_for_diagnostic BOOLEAN NOT NULL
       );
       CREATE TABLE fact_values (
         id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL,
@@ -45,11 +46,11 @@ describe("data readiness", () => {
     `);
     imports = new ImportRepository(database);
     await database.query(`INSERT INTO metric_catalog_versions (id, version_number, state) VALUES ('metric_catalog_v1', 1, 'published');
-      INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_readiness) VALUES
-        ('metric_catalog_v1', 'revenue', true, true),
-        ('metric_catalog_v1', 'orders', true, true),
-        ('metric_catalog_v1', 'average_spend', true, true),
-        ('metric_catalog_v1', 'package_sales', true, false);`);
+      INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_readiness, usable_for_diagnostic) VALUES
+        ('metric_catalog_v1', 'revenue', true, true, true),
+        ('metric_catalog_v1', 'orders', true, true, false),
+        ('metric_catalog_v1', 'average_spend', true, true, false),
+        ('metric_catalog_v1', 'package_sales', true, false, false);`);
     await database.query(`INSERT INTO fact_values
       (id, enterprise_id, store_id, metric_key, value, unit, range_start, range_end, fact_version_id, source_candidate_id, source_batch_id)
       VALUES
@@ -77,8 +78,8 @@ describe("data readiness", () => {
   });
 
   it("uses enabled readiness metrics from the currently published catalog", async () => {
-    await database.query(`INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_readiness)
-      VALUES ('metric_catalog_v1', 'lunch_orders', true, true);
+    await database.query(`INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_readiness, usable_for_diagnostic)
+      VALUES ('metric_catalog_v1', 'lunch_orders', true, true, false);
       UPDATE metric_definitions SET enabled = false WHERE metric_catalog_version_id = 'metric_catalog_v1' AND metric_key = 'orders'`);
     await database.query(`INSERT INTO fact_values
       (id, enterprise_id, store_id, metric_key, value, unit, range_start, range_end, fact_version_id, source_candidate_id, source_batch_id)
@@ -103,6 +104,12 @@ describe("data readiness", () => {
     expect(repeat?.diagnosticRunId).toBe(diagnostic?.diagnosticRunId);
     await expect(database.query("SELECT id FROM diagnostic_runs")).resolves.toMatchObject({ rowCount: 1 });
     await expect(database.query("SELECT id FROM diagnostic_evidence")).resolves.toMatchObject({ rowCount: 1 });
+  });
+
+  it("does not run the revenue rule when the published catalog disables diagnostics", async () => {
+    await database.query("UPDATE metric_definitions SET usable_for_diagnostic = false WHERE metric_catalog_version_id = 'metric_catalog_v1' AND metric_key = 'revenue'");
+    await expect(imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" })).resolves.toBeNull();
+    await expect(database.query("SELECT id FROM diagnostic_runs")).resolves.toMatchObject({ rowCount: 0 });
   });
 
   it("creates a new evidence snapshot when the confirmed fact version changes", async () => {
