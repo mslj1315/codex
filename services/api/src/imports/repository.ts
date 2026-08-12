@@ -130,12 +130,13 @@ export interface DeterministicDiagnostic {
 }
 
 export type ActionCardStatus = "proposed" | "in_progress" | "completed" | "verified" | "cancelled";
+export type ActionCardVerificationOutcome = "effective" | "ineffective" | "not_executed" | "data_insufficient";
 export interface CreateActionCardInput {
   id?: string; enterpriseId: string; storeId: string; actorId: string; diagnosticKind: string;
   rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; dueDate?: string;
 }
 export interface ActionCard extends Omit<CreateActionCardInput, "id" | "actorId"> {
-  id: string; createdByActorId: string; status: ActionCardStatus; completedAt: Date | null; verifiedAt: Date | null; createdAt: Date; updatedAt: Date;
+  id: string; createdByActorId: string; status: ActionCardStatus; executionNote: string | null; verificationOutcome: ActionCardVerificationOutcome | null; completedAt: Date | null; verifiedAt: Date | null; createdAt: Date; updatedAt: Date;
 }
 
 export interface ImportBatch {
@@ -859,7 +860,7 @@ export class ImportRepository {
     return result.rows.map(toActionCard);
   }
 
-  async updateActionCardStatus(input: { id: string; enterpriseId: string; storeId: string; status: ActionCardStatus; now: Date }): Promise<ActionCard> {
+  async updateActionCardStatus(input: { id: string; enterpriseId: string; storeId: string; status: ActionCardStatus; now: Date; executionNote?: string; verificationOutcome?: ActionCardVerificationOutcome }): Promise<ActionCard> {
     assertValidDate(input.now, "now");
     const allowed: Record<ActionCardStatus, ActionCardStatus[]> = {
       proposed: ["in_progress", "cancelled"], in_progress: ["completed", "cancelled"], completed: ["verified"], verified: [], cancelled: []
@@ -868,12 +869,16 @@ export class ImportRepository {
     if (current.rowCount !== 1) throw new ValidationError("Action card is outside trusted store context");
     const currentStatus = current.rows[0].status as ActionCardStatus;
     if (!allowed[currentStatus].includes(input.status)) throw new ConflictError("Action card status transition is invalid");
+    if (input.executionNote !== undefined && (input.status !== "completed" || !validActionNote(input.executionNote))) throw new ValidationError("Action card execution note is invalid");
+    if (input.verificationOutcome !== undefined && (input.status !== "verified" || !["effective", "ineffective", "not_executed", "data_insufficient"].includes(input.verificationOutcome))) throw new ValidationError("Action card verification outcome is invalid");
     const result = await this.database.query<Row>(
       `UPDATE action_cards SET status = $1,
          completed_at = CASE WHEN $1 = 'completed' THEN $2 ELSE completed_at END,
          verified_at = CASE WHEN $1 = 'verified' THEN $2 ELSE verified_at END,
-         updated_at = $2 WHERE id = $3 AND enterprise_id = $4 AND store_id = $5 RETURNING *`,
-      [input.status, input.now, input.id, input.enterpriseId, input.storeId]
+         execution_note = CASE WHEN $1 = 'completed' THEN COALESCE($3, execution_note) ELSE execution_note END,
+         verification_outcome = CASE WHEN $1 = 'verified' THEN COALESCE($4, verification_outcome) ELSE verification_outcome END,
+         updated_at = $2 WHERE id = $5 AND enterprise_id = $6 AND store_id = $7 RETURNING *`,
+      [input.status, input.now, input.executionNote ?? null, input.verificationOutcome ?? null, input.id, input.enterpriseId, input.storeId]
     );
     return toActionCard(result.rows[0]);
   }
@@ -963,7 +968,7 @@ function toActionCard(row: Row): ActionCard {
     id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id), createdByActorId: string(row.created_by_actor_id),
     diagnosticKind: string(row.diagnostic_kind), rangeStart: dateOnly(row.range_start), rangeEnd: dateOnly(row.range_end), title: string(row.title),
     action: string(row.action), verificationMetric: string(row.verification_metric), dueDate: row.due_date == null ? undefined : dateOnly(row.due_date),
-    status: row.status as ActionCardStatus, completedAt: nullableDate(row.completed_at), verifiedAt: nullableDate(row.verified_at), createdAt: date(row.created_at), updatedAt: date(row.updated_at)
+    status: row.status as ActionCardStatus, executionNote: nullableString(row.execution_note), verificationOutcome: nullableString(row.verification_outcome) as ActionCardVerificationOutcome | null, completedAt: nullableDate(row.completed_at), verifiedAt: nullableDate(row.verified_at), createdAt: date(row.created_at), updatedAt: date(row.updated_at)
   };
 }
 function nullableDateOnly(value: unknown): string | null { return value == null ? null : dateOnly(value); }
@@ -977,6 +982,7 @@ function assertDateOnlyRange(start: string, end: string): void {
     throw new ValidationError("Invalid date range");
   }
 }
+function validActionNote(value: string): boolean { return value.trim().length > 0 && value.length <= 500 && !/[\u0000-\u001F\u007F]/.test(value); }
 function assertSafeInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value)) {
     throw new ValidationError(`${name} must be a JSON safe integer`);

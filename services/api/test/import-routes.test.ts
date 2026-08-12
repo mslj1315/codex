@@ -138,6 +138,12 @@ describe("import API routes", () => {
     const listed = await app.inject({ method: "GET", url: "/v1/stores/store_demo/action-cards?status=in_progress" });
     expect(listed.statusCode).toBe(200);
     expect(listed.json()).toEqual([expect.objectContaining({ id: card.id, status: "in_progress" })]);
+    const completed = await app.inject({ method: "PATCH", url: `/v1/stores/store_demo/action-cards/${card.id}/status`, payload: { status: "completed", executionNote: "已检查套餐展示与核销流程" } });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({ status: "completed", executionNote: "已检查套餐展示与核销流程" });
+    const verified = await app.inject({ method: "PATCH", url: `/v1/stores/store_demo/action-cards/${card.id}/status`, payload: { status: "verified", verificationOutcome: "data_insufficient" } });
+    expect(verified.statusCode).toBe(200);
+    expect(verified.json()).toMatchObject({ status: "verified", verificationOutcome: "data_insufficient" });
     const outside = await app.inject({ method: "GET", url: `/v1/stores/store_other/action-cards/${card.id}` });
     expect(outside.statusCode).toBe(403);
   });

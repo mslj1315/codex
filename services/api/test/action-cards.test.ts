@@ -15,7 +15,7 @@ describe("action cards", () => {
       id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, created_by_actor_id TEXT NOT NULL,
       diagnostic_kind TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL, title TEXT NOT NULL,
       action TEXT NOT NULL, verification_metric TEXT NOT NULL, status TEXT NOT NULL, due_date DATE,
-      completed_at TIMESTAMPTZ, verified_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      execution_note TEXT, verification_outcome TEXT, completed_at TIMESTAMPTZ, verified_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
     imports = new ImportRepository(database);
@@ -36,11 +36,20 @@ describe("action cards", () => {
   });
 
   it("lists cards newest first and supports a validated status filter", async () => {
-    await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "旧", action: "执行", verificationMetric: "营业额" });
-    const newest = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "新", action: "执行", verificationMetric: "营业额" });
+    await imports.createActionCard({ id: "action_001", enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "旧", action: "执行", verificationMetric: "营业额" });
+    const newest = await imports.createActionCard({ id: "action_002", enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "新", action: "执行", verificationMetric: "营业额" });
     await imports.updateActionCardStatus({ id: newest.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
     const cards = await imports.listActionCards({ enterpriseId: "ent_demo", storeId: "store_demo" });
     expect(cards.map((card) => card.title)).toEqual(["新", "旧"]);
     await expect(imports.listActionCards({ enterpriseId: "ent_demo", storeId: "store_demo", status: "invalid" as never })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("records bounded execution evidence on completion and a fixed review outcome on verification", async () => {
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查", action: "执行", verificationMetric: "营业额" });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    const completed = await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "completed", now: new Date(), executionNote: "已检查午市套餐展示与核销流程" });
+    expect(completed).toMatchObject({ status: "completed", executionNote: "已检查午市套餐展示与核销流程" });
+    const verified = await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "verified", now: new Date(), verificationOutcome: "data_insufficient" });
+    expect(verified).toMatchObject({ status: "verified", verificationOutcome: "data_insufficient" });
   });
 });

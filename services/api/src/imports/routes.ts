@@ -115,7 +115,7 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     const body = record(request.body);
     const status = stringField(body, "status");
     if (!["proposed", "in_progress", "completed", "verified", "cancelled"].includes(status)) throw new ValidationError("Action card status is invalid");
-    return service.updateActionCardStatus(scopedContext(request), stringParam(request, "actionCardId"), status as never, options.now());
+    return service.updateActionCardStatus(scopedContext(request), stringParam(request, "actionCardId"), status as never, options.now(), optionalString(body.executionNote, "executionNote"), optionalString(body.verificationOutcome, "verificationOutcome") as never);
   });
   app.get("/v1/stores/:storeId/action-cards/:actionCardId", async (request) => service.getActionCard(scopedContext(request), stringParam(request, "actionCardId")));
 

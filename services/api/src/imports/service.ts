@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ParserInputError, parseCsvBytes, parseXlsx } from "./parser.js";
-import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness, DeterministicDiagnostic, ActionCard, ActionCardStatus } from "./repository.js";
+import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness, DeterministicDiagnostic, ActionCard, ActionCardStatus, ActionCardVerificationOutcome } from "./repository.js";
 import type { MetricKey } from "./models.js";
 import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
 import {
@@ -182,8 +182,8 @@ export class ImportService {
     return this.imports.createActionCard({ ...context, ...input });
   }
 
-  updateActionCardStatus(context: TrustedContext, id: string, status: ActionCardStatus, now: Date): Promise<ActionCard> {
-    return this.imports.updateActionCardStatus({ id, enterpriseId: context.enterpriseId, storeId: context.storeId, status, now });
+  updateActionCardStatus(context: TrustedContext, id: string, status: ActionCardStatus, now: Date, executionNote?: string, verificationOutcome?: ActionCardVerificationOutcome): Promise<ActionCard> {
+    return this.imports.updateActionCardStatus({ id, enterpriseId: context.enterpriseId, storeId: context.storeId, status, now, executionNote, verificationOutcome });
   }
   getActionCard(context: TrustedContext, id: string): Promise<ActionCard> {
     return this.imports.getActionCard({ id, enterpriseId: context.enterpriseId, storeId: context.storeId });
