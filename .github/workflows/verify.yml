@@ -1,0 +1,61 @@
+name: Verify
+
+on:
+  push:
+    branches: [main, master, feature/android-import-api]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: services/api/package-lock.json
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm audit --audit-level=high
+
+      - name: Validate Compose profiles
+        working-directory: .
+        run: |
+          docker compose --env-file .env.example config --quiet
+          docker compose --env-file .env.example --profile maintenance config --quiet
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run JVM tests
+        run: ./gradlew :apps:android:app:testDebugUnitTest --no-daemon
+
+      - name: Build Debug and Release
+        run: ./gradlew :apps:android:app:assembleDebug :apps:android:app:assembleRelease --no-daemon
