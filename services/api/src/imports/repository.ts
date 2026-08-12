@@ -142,10 +142,10 @@ export type ActionCardStatus = "proposed" | "in_progress" | "completed" | "verif
 export type ActionCardVerificationOutcome = "effective" | "ineffective" | "not_executed" | "data_insufficient";
 export interface CreateActionCardInput {
   id?: string; enterpriseId: string; storeId: string; actorId: string; diagnosticKind: string;
-  rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; dueDate?: string;
+  rangeStart: string; rangeEnd: string; title: string; action: string; verificationMetric: string; dueDate?: string; diagnosticRunId?: string;
 }
-export interface ActionCard extends Omit<CreateActionCardInput, "id" | "actorId"> {
-  id: string; createdByActorId: string; status: ActionCardStatus; executionNote: string | null; verificationOutcome: ActionCardVerificationOutcome | null; completedAt: Date | null; verifiedAt: Date | null; createdAt: Date; updatedAt: Date;
+export interface ActionCard extends Omit<CreateActionCardInput, "id" | "actorId" | "diagnosticRunId"> {
+  id: string; diagnosticRunId: string | null; createdByActorId: string; status: ActionCardStatus; executionNote: string | null; verificationOutcome: ActionCardVerificationOutcome | null; completedAt: Date | null; verifiedAt: Date | null; createdAt: Date; updatedAt: Date;
 }
 export interface ActionCardVerificationSummary {
   baselineRangeStart: string; baselineRangeEnd: string; comparisonRangeStart: string; comparisonRangeEnd: string;
@@ -915,9 +915,9 @@ export class ImportRepository {
     assertDateOnlyRange(input.rangeStart, input.rangeEnd);
     if (input.dueDate !== undefined) assertDateOnlyRange(input.dueDate, input.dueDate);
     const result = await this.database.query<Row>(
-      `INSERT INTO action_cards (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, status, due_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'proposed', $11) RETURNING *`,
-      [input.id ?? randomUUID(), input.enterpriseId, input.storeId, input.actorId, input.diagnosticKind, input.rangeStart, input.rangeEnd, input.title, input.action, input.verificationMetric, input.dueDate ?? null]
+      `INSERT INTO action_cards (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, status, due_date, diagnostic_run_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'proposed', $11, $12) RETURNING *`,
+      [input.id ?? randomUUID(), input.enterpriseId, input.storeId, input.actorId, input.diagnosticKind, input.rangeStart, input.rangeEnd, input.title, input.action, input.verificationMetric, input.dueDate ?? null, input.diagnosticRunId ?? null]
     );
     return toActionCard(result.rows[0]);
   }
@@ -1071,7 +1071,7 @@ function toActionCard(row: Row): ActionCard {
   return {
     id: string(row.id), enterpriseId: string(row.enterprise_id), storeId: string(row.store_id), createdByActorId: string(row.created_by_actor_id),
     diagnosticKind: string(row.diagnostic_kind), rangeStart: dateOnly(row.range_start), rangeEnd: dateOnly(row.range_end), title: string(row.title),
-    action: string(row.action), verificationMetric: string(row.verification_metric), dueDate: row.due_date == null ? undefined : dateOnly(row.due_date),
+    action: string(row.action), verificationMetric: string(row.verification_metric), dueDate: row.due_date == null ? undefined : dateOnly(row.due_date), diagnosticRunId: nullableString(row.diagnostic_run_id),
     status: row.status as ActionCardStatus, executionNote: nullableString(row.execution_note), verificationOutcome: nullableString(row.verification_outcome) as ActionCardVerificationOutcome | null, completedAt: nullableDate(row.completed_at), verifiedAt: nullableDate(row.verified_at), createdAt: date(row.created_at), updatedAt: date(row.updated_at)
   };
 }

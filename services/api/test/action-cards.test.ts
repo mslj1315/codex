@@ -11,12 +11,18 @@ describe("action cards", () => {
     memory.public.registerFunction({ name: "length", args: [DataType.text], returns: DataType.integer, implementation: (value: string) => value.length });
     const { Pool } = memory.adapters.createPg();
     database = new Pool();
+    await database.query(`CREATE TABLE diagnostic_runs (
+      id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL,
+      UNIQUE (id, enterprise_id, store_id)
+    )`);
     await database.query(`CREATE TABLE action_cards (
       id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, created_by_actor_id TEXT NOT NULL,
       diagnostic_kind TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL, title TEXT NOT NULL,
       action TEXT NOT NULL, verification_metric TEXT NOT NULL, status TEXT NOT NULL, due_date DATE,
+      diagnostic_run_id TEXT,
       execution_note TEXT, verification_outcome TEXT, completed_at TIMESTAMPTZ, verified_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (diagnostic_run_id, enterprise_id, store_id) REFERENCES diagnostic_runs (id, enterprise_id, store_id)
     )`);
     imports = new ImportRepository(database);
   });
@@ -27,6 +33,16 @@ describe("action cards", () => {
     await expect(imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "verified", now: new Date() })).rejects.toBeInstanceOf(ConflictError);
     const started = await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
     expect(started.status).toBe("in_progress");
+  });
+
+  it("preserves a nullable diagnostic run reference and rejects another store's run", async () => {
+    await database.query("INSERT INTO diagnostic_runs (id, enterprise_id, store_id) VALUES ('run_demo', 'ent_demo', 'store_demo')");
+    const linked = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Linked", action: "Review", verificationMetric: "Revenue", diagnosticRunId: "run_demo" });
+    const manual = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Manual", action: "Review", verificationMetric: "Revenue" });
+
+    expect(linked.diagnosticRunId).toBe("run_demo");
+    expect(manual.diagnosticRunId).toBeNull();
+    await expect(imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_other", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Cross scope", action: "Review", verificationMetric: "Revenue", diagnosticRunId: "run_demo" })).rejects.toThrow();
   });
 
   it("isolates cards and validates date/status input", async () => {
