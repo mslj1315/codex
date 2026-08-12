@@ -197,8 +197,8 @@ class OperationsViewModel(
     }
 
     private companion object {
-        const val CONNECTION_FAILURE_MESSAGE = "Unable to reach the operations service"
-        const val FAILURE_MESSAGE = "Unable to load operations data"
+        const val CONNECTION_FAILURE_MESSAGE = "无法连接运营服务，请稍后重试"
+        const val FAILURE_MESSAGE = "运营数据暂时无法加载，请稍后重试"
     }
 }
 

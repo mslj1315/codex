@@ -110,7 +110,7 @@ class OperationsViewModelTest {
         failure.load("store_demo", "2026-08-01", "2026-08-07")
         advanceUntilIdle()
         assertNull(failure.readiness)
-        assertEquals("Unable to reach the operations service", failure.requestError)
+        assertEquals("无法连接运营服务，请稍后重试", failure.requestError)
     }
 
     @Test
@@ -139,7 +139,7 @@ class OperationsViewModelTest {
         assertEquals(OperationsConfidence.MEDIUM, viewModel.readiness!!.confidence)
         assertEquals("revenue_decline", viewModel.diagnostic!!.kind)
         assertEquals(listOf("action_1"), viewModel.actionCards.map { it.id })
-        assertEquals("Unable to load operations data", viewModel.requestError)
+        assertEquals("运营数据暂时无法加载，请稍后重试", viewModel.requestError)
     }
 
     @Test
@@ -172,7 +172,7 @@ class OperationsViewModelTest {
         advanceUntilIdle()
 
         assertEquals(summary, viewModel.verificationSummary)
-        assertEquals("Unable to load operations data", viewModel.requestError)
+        assertEquals("运营数据暂时无法加载，请稍后重试", viewModel.requestError)
     }
 
     @Test
@@ -211,7 +211,7 @@ class OperationsViewModelTest {
         assertEquals(linked.id, viewModel.selectedActionCardId)
         assertEquals(summary, viewModel.verificationSummary)
         assertNull(viewModel.selectedDiagnosticRun)
-        assertEquals("Unable to load operations data", viewModel.requestError)
+        assertEquals("运营数据暂时无法加载，请稍后重试", viewModel.requestError)
     }
 
     @Test
@@ -253,7 +253,7 @@ class OperationsViewModelTest {
 
         assertEquals(proposed, viewModel.actionCards.single())
         assertEquals(summary, viewModel.verificationSummary)
-        assertEquals("Unable to load operations data", viewModel.requestError)
+        assertEquals("运营数据暂时无法加载，请稍后重试", viewModel.requestError)
     }
 
     @Test
