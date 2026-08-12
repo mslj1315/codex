@@ -37,6 +37,11 @@ class UnavailableOperationsRepository : OperationsRepository {
         rangeEnd: String
     ): DeterministicDiagnostic? = unavailable()
 
+    override suspend fun loadDiagnosticRun(
+        storeId: String,
+        diagnosticRunId: String
+    ): DiagnosticRunDetail = unavailable()
+
     override suspend fun loadActionCards(storeId: String, status: String?): List<ActionCard> = unavailable()
 
     override suspend fun loadVerificationSummary(

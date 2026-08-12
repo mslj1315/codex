@@ -17,6 +17,12 @@ data class DeterministicDiagnostic(
     val ruleVersion: String = "",
     val evidence: List<DiagnosticEvidence> = emptyList()
 )
+data class DiagnosticRunDetail(
+    val kind: String,
+    val ruleVersion: String,
+    val confidence: OperationsConfidence,
+    val evidence: List<DiagnosticEvidence>
+)
 data class ActionCard(
     val id: String,
     val status: ActionCardStatus,
@@ -44,6 +50,7 @@ data class VerificationMetric(val metricKey: String, val baselineValue: Long, va
 interface OperationsRepository {
     suspend fun loadReadiness(storeId: String, rangeStart: String, rangeEnd: String): DataReadiness
     suspend fun loadDeterministicDiagnostic(storeId: String, rangeStart: String, rangeEnd: String): DeterministicDiagnostic?
+    suspend fun loadDiagnosticRun(storeId: String, diagnosticRunId: String): DiagnosticRunDetail
     suspend fun loadActionCards(storeId: String, status: String? = null): List<ActionCard>
     suspend fun loadVerificationSummary(storeId: String, actionCardId: String): ActionVerificationSummary?
     suspend fun updateActionCard(storeId: String, actionCardId: String, update: ActionCardUpdate): ActionCard
@@ -58,6 +65,18 @@ class HttpOperationsRepository(private val api: OperationsApi) : OperationsRepos
                 it.confidence.toConfidence(),
                 it.diagnosticRunId,
                 it.ruleVersion,
+                it.evidence.map { evidence ->
+                    DiagnosticEvidence(evidence.metricKey, evidence.currentValue, evidence.priorValue, evidence.changePercent)
+                }
+            )
+        }
+    }
+    override suspend fun loadDiagnosticRun(storeId: String, diagnosticRunId: String) = request {
+        api.diagnosticRun(storeId, diagnosticRunId).let {
+            DiagnosticRunDetail(
+                it.kind,
+                it.ruleVersion,
+                it.confidence.toConfidence(),
                 it.evidence.map { evidence ->
                     DiagnosticEvidence(evidence.metricKey, evidence.currentValue, evidence.priorValue, evidence.changePercent)
                 }

@@ -94,7 +94,8 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
     ActionCardsContent(
         cards = viewModel.actionCards,
         selectedActionCardId = viewModel.selectedActionCardId,
-        onSelect = { viewModel.loadVerificationSummary(storeId, it) },
+        selectedDiagnosticRun = viewModel.selectedDiagnosticRun,
+        onSelect = { viewModel.loadActionCardDetails(storeId, it) },
         onUpdate = { actionCardId, update -> viewModel.updateActionCard(storeId, actionCardId, update) },
         updatingActionCardId = viewModel.updatingActionCardId
     )
@@ -160,7 +161,8 @@ private fun DiagnosticContent(
 private fun ActionCardsContent(
     cards: List<ActionCard>,
     selectedActionCardId: String?,
-    onSelect: (String) -> Unit,
+    selectedDiagnosticRun: DiagnosticRunDetail?,
+    onSelect: (ActionCard) -> Unit,
     onUpdate: (String, ActionCardUpdate) -> Unit,
     updatingActionCardId: String?
 ) {
@@ -173,9 +175,12 @@ private fun ActionCardsContent(
             card = card,
             selected = selectedActionCardId == card.id,
             isUpdating = updatingActionCardId == card.id,
-            onSelect = { onSelect(card.id) },
+            onSelect = { onSelect(card) },
             onUpdate = { onUpdate(card.id, it) }
         )
+        if (selectedActionCardId == card.id && card.diagnosticRunId != null && selectedDiagnosticRun != null) {
+            RecordedDiagnosticEvidenceContent(selectedDiagnosticRun)
+        }
     }
 }
 
@@ -263,6 +268,17 @@ private fun VerificationSummaryContent(summary: ActionVerificationSummary) {
     }
 }
 
+@Composable
+private fun RecordedDiagnosticEvidenceContent(detail: DiagnosticRunDetail) {
+    Text("已记录诊断依据", style = MaterialTheme.typography.titleSmall)
+    Text(detail.kind)
+    Text("规则版本：${detail.ruleVersion}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("置信度：${detail.confidence.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    detail.evidence.forEach { evidence ->
+        Text(formatDiagnosticEvidence(evidence))
+    }
+}
+
 internal enum class ActionCardCommand { START, COMPLETE, VERIFY, CANCEL }
 
 internal fun ActionCardStatus.nextCommands(): Set<ActionCardCommand> = when (this) {
@@ -277,3 +293,6 @@ internal fun ActionCardStatus.canViewVerificationSummary(): Boolean =
 
 internal fun isValidExecutionNote(note: String): Boolean =
     note.trim().isNotEmpty() && note.length <= 500
+
+internal fun formatDiagnosticEvidence(evidence: DiagnosticEvidence): String =
+    "${evidence.metricKey}: current ${evidence.currentValue}, prior ${evidence.priorValue}, change ${evidence.changePercent}%"

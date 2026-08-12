@@ -31,6 +31,8 @@ class OperationsViewModel(
         private set
     var verificationSummary by mutableStateOf<ActionVerificationSummary?>(null)
         private set
+    var selectedDiagnosticRun by mutableStateOf<DiagnosticRunDetail?>(null)
+        private set
     var updatingActionCardId by mutableStateOf<String?>(null)
         private set
 
@@ -57,6 +59,7 @@ class OperationsViewModel(
                     actionCards = loadedActionCards
                     selectedActionCardId = null
                     verificationSummary = null
+                    selectedDiagnosticRun = null
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -96,6 +99,37 @@ class OperationsViewModel(
         }
     }
 
+    fun loadActionCardDetails(storeId: String, card: ActionCard) {
+        if (isLoading) return
+        isLoading = true
+        requestError = null
+        isServiceUnavailable = false
+        selectedDiagnosticRun = null
+        operationScope.launch {
+            try {
+                val loadedSummary = repository.loadVerificationSummary(storeId, card.id)
+                selectedActionCardId = card.id
+                verificationSummary = loadedSummary
+                if (card.diagnosticRunId != null) {
+                    selectedDiagnosticRun = repository.loadDiagnosticRun(storeId, card.diagnosticRunId)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: OperationsServiceUnavailableException) {
+                selectedDiagnosticRun = null
+                isServiceUnavailable = true
+            } catch (error: OperationsRequestException) {
+                selectedDiagnosticRun = null
+                requestError = neutralMessage(error)
+            } catch (_: Throwable) {
+                selectedDiagnosticRun = null
+                requestError = FAILURE_MESSAGE
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
     fun updateActionCard(storeId: String, actionCardId: String, update: ActionCardUpdate) {
         if (updatingActionCardId != null || isLoading) return
         updatingActionCardId = actionCardId
@@ -110,6 +144,7 @@ class OperationsViewModel(
                 if (selectedActionCardId == updatedCard.id) {
                     selectedActionCardId = null
                     verificationSummary = null
+                    selectedDiagnosticRun = null
                 }
             } catch (error: CancellationException) {
                 throw error

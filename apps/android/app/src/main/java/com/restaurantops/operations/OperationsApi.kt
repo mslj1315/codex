@@ -13,6 +13,9 @@ interface OperationsApi {
     @GET("/v1/stores/{storeId}/diagnostics/deterministic")
     suspend fun deterministicDiagnostic(@Path("storeId") storeId: String, @Query("rangeStart") rangeStart: String, @Query("rangeEnd") rangeEnd: String): DeterministicDiagnosticResponse?
 
+    @GET("/v1/stores/{storeId}/diagnostic-runs/{diagnosticRunId}")
+    suspend fun diagnosticRun(@Path("storeId") storeId: String, @Path("diagnosticRunId") diagnosticRunId: String): DiagnosticRunResponse
+
     @GET("/v1/stores/{storeId}/action-cards")
     suspend fun actionCards(@Path("storeId") storeId: String, @Query("status") status: String? = null): List<ActionCardResponse>
 
@@ -31,6 +34,7 @@ data class DataReadinessResponse(val rangeStart: String, val rangeEnd: String, v
 data class DiagnosticFactResponse(val metricKey: String, val currentValue: Long, val priorValue: Long, val changePercent: Double)
 data class DiagnosticEvidenceResponse(val metricKey: String, val currentValue: Long, val priorValue: Long, val changePercent: Double)
 data class DeterministicDiagnosticResponse(val kind: String, val rangeStart: String, val rangeEnd: String, val priorRangeStart: String, val priorRangeEnd: String, val fact: DiagnosticFactResponse, val confidence: String, val diagnosticRunId: String = "", val ruleVersion: String = "", val evidence: List<DiagnosticEvidenceResponse> = emptyList())
+data class DiagnosticRunResponse(val id: String, val kind: String, val rangeStart: String, val rangeEnd: String, val priorRangeStart: String, val priorRangeEnd: String, val ruleVersion: String, val confidence: String, val createdAt: String, val evidence: List<DiagnosticEvidenceResponse>)
 data class ActionCardResponse(val id: String, val diagnosticKind: String, val rangeStart: String, val rangeEnd: String, val title: String, val action: String, val verificationMetric: String, val status: String, val executionNote: String?, val verificationOutcome: String?, val dueDate: String?, val diagnosticRunId: String? = null)
 data class ActionCardVerificationSummaryResponse(val baselineRangeStart: String, val baselineRangeEnd: String, val comparisonRangeStart: String, val comparisonRangeEnd: String, val metrics: List<VerificationMetricResponse>)
 data class VerificationMetricResponse(val metricKey: String, val baselineValue: Long, val comparisonValue: Long, val changePercent: Double)

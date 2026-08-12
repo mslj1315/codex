@@ -102,6 +102,45 @@ class OperationsViewModelTest {
     }
 
     @Test
+    fun `loads frozen evidence only for the selected linked card`() = runTest {
+        val linked = ActionCard("action_linked", ActionCardStatus.COMPLETED, "Linked", diagnosticRunId = "run_1")
+        val manual = ActionCard("action_manual", ActionCardStatus.COMPLETED, "Manual")
+        val detail = DiagnosticRunDetail("revenue_decline", "revenue_decline_v1", OperationsConfidence.HIGH, listOf(DiagnosticEvidence("revenue", 1000, 1200, -16.67)))
+        val repository = FakeOperationsRepository(cards = listOf(linked, manual), diagnosticRun = detail)
+        val viewModel = OperationsViewModel(repository, this)
+
+        viewModel.loadActionCardDetails("store_demo", linked)
+        advanceUntilIdle()
+        assertEquals(linked.id, viewModel.selectedActionCardId)
+        assertEquals(detail, viewModel.selectedDiagnosticRun)
+        assertEquals(1, repository.diagnosticRunRequests)
+
+        viewModel.loadActionCardDetails("store_demo", manual)
+        advanceUntilIdle()
+        assertEquals(manual.id, viewModel.selectedActionCardId)
+        assertNull(viewModel.selectedDiagnosticRun)
+        assertEquals(1, repository.diagnosticRunRequests)
+    }
+
+    @Test
+    fun `evidence detail failure clears stale evidence but preserves verification summary`() = runTest {
+        val linked = ActionCard("action_linked", ActionCardStatus.COMPLETED, "Linked", diagnosticRunId = "run_1")
+        val summary = ActionVerificationSummary(listOf(VerificationMetric("revenue", 1000, 1100, 10.0)))
+        val repository = FakeOperationsRepository(cards = listOf(linked), summary = summary).apply {
+            diagnosticRunFailure = OperationsRequestException(503, "private detail")
+        }
+        val viewModel = OperationsViewModel(repository, this)
+
+        viewModel.loadActionCardDetails("store_demo", linked)
+        advanceUntilIdle()
+
+        assertEquals(linked.id, viewModel.selectedActionCardId)
+        assertEquals(summary, viewModel.verificationSummary)
+        assertNull(viewModel.selectedDiagnosticRun)
+        assertEquals("Unable to load operations data", viewModel.requestError)
+    }
+
+    @Test
     fun `successful update replaces only matching card and clears its summary`() = runTest {
         val proposed = ActionCard("action_1", ActionCardStatus.PROPOSED, "First")
         val other = ActionCard("action_2", ActionCardStatus.IN_PROGRESS, "Second")
@@ -174,10 +213,13 @@ private class FakeOperationsRepository(
     var failure: Throwable? = null,
     var diagnosticFailure: Throwable? = null,
     var summaryFailure: Throwable? = null,
+    var diagnosticRunFailure: Throwable? = null,
     var updateFailure: Throwable? = null,
     private val summary: ActionVerificationSummary? = null,
+    private val diagnosticRun: DiagnosticRunDetail = DiagnosticRunDetail("revenue_decline", "revenue_decline_v1", OperationsConfidence.HIGH, listOf(DiagnosticEvidence("revenue", 3826000, 4400000, -13.05))),
     private val cards: List<ActionCard> = listOf(ActionCard("action_1", ActionCardStatus.IN_PROGRESS, "Action card"))
 ) : OperationsRepository {
+    var diagnosticRunRequests = 0
     override suspend fun loadReadiness(storeId: String, rangeStart: String, rangeEnd: String): DataReadiness {
         failure?.let { throw it }
         return DataReadiness(listOf("average_spend"), OperationsConfidence.MEDIUM, true)
@@ -189,6 +231,11 @@ private class FakeOperationsRepository(
     ): DeterministicDiagnostic? {
         diagnosticFailure?.let { throw it }
         return diagnostic
+    }
+    override suspend fun loadDiagnosticRun(storeId: String, diagnosticRunId: String): DiagnosticRunDetail {
+        diagnosticRunRequests += 1
+        diagnosticRunFailure?.let { throw it }
+        return diagnosticRun
     }
     override suspend fun loadActionCards(storeId: String, status: String?) = cards
     override suspend fun loadVerificationSummary(

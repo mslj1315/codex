@@ -19,6 +19,7 @@ class HttpOperationsRepositoryTest {
         val readiness = repository.loadReadiness("store_demo", "2026-08-01", "2026-08-07")
         val diagnostic = repository.loadDeterministicDiagnostic("store_demo", "2026-08-01", "2026-08-07")
         val cards = repository.loadActionCards("store_demo", "in_progress")
+        val detail = repository.loadDiagnosticRun("store_demo", "diagnostic_run_1")
 
         assertEquals(OperationsConfidence.MEDIUM, readiness.confidence)
         assertEquals(listOf("average_spend"), readiness.missingMetrics)
@@ -27,6 +28,8 @@ class HttpOperationsRepositoryTest {
         assertEquals("revenue_decline_v1", diagnostic.ruleVersion)
         assertEquals(DiagnosticEvidence("revenue", 3826000, 4400000, -13.05), diagnostic.evidence.single())
         assertEquals("action_1", cards.single().id)
+        assertEquals("revenue_decline_v1", detail.ruleVersion)
+        assertEquals(DiagnosticEvidence("revenue", 3826000, 4400000, -13.05), detail.evidence.single())
         assertEquals("in_progress", api.status)
     }
 
@@ -52,6 +55,11 @@ class HttpOperationsRepositoryTest {
         assertNull(DeterministicDiagnosticResponse::class.java.declaredFields.singleOrNull { it.name == "sourceBatchId" })
         assertNull(DeterministicDiagnosticResponse::class.java.declaredFields.singleOrNull { it.name == "sourceCandidateId" })
         assertNull(DeterministicDiagnosticResponse::class.java.declaredFields.singleOrNull { it.name == "objectKey" })
+        assertEquals("/v1/stores/{storeId}/diagnostic-runs/{diagnosticRunId}", requireNotNull(api.methods.single { it.name == "diagnosticRun" }.getAnnotation(GET::class.java)).value)
+        assertNull(DiagnosticRunResponse::class.java.declaredFields.singleOrNull { it.name == "factVersionId" })
+        assertNull(DiagnosticRunResponse::class.java.declaredFields.singleOrNull { it.name == "sourceBatchId" })
+        assertNull(DiagnosticRunResponse::class.java.declaredFields.singleOrNull { it.name == "sourceCandidateId" })
+        assertNull(DiagnosticRunResponse::class.java.declaredFields.singleOrNull { it.name == "objectKey" })
     }
 
     @Test
@@ -98,6 +106,18 @@ private class FakeOperationsApi : OperationsApi {
         return DataReadinessResponse("2026-08-01", "2026-08-07", listOf("revenue", "orders", "average_spend"), listOf("orders", "revenue"), listOf("average_spend"), "medium", true)
     }
     override suspend fun deterministicDiagnostic(storeId: String, rangeStart: String, rangeEnd: String) = diagnostic
+    override suspend fun diagnosticRun(storeId: String, diagnosticRunId: String) = DiagnosticRunResponse(
+        diagnosticRunId,
+        "revenue_decline",
+        "2026-08-01",
+        "2026-08-07",
+        "2026-07-25",
+        "2026-07-31",
+        "revenue_decline_v1",
+        "high",
+        "2026-08-12T00:00:00.000Z",
+        listOf(DiagnosticEvidenceResponse("revenue", 3826000, 4400000, -13.05))
+    )
     override suspend fun actionCards(storeId: String, status: String?): List<ActionCardResponse> {
         this.status = status
         return listOf(ActionCardResponse("action_1", "revenue_decline", "2026-08-01", "2026-08-07", "检查午市套餐", "检查订单量", "下一周期营业额与订单数", "in_progress", null, null, null))
