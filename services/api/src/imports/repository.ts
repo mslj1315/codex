@@ -368,6 +368,16 @@ export class ImportRepository {
     return result.rows.map(toImportObjectReconciliationJob);
   }
 
+  async countDeferredImportObjectReconciliationJobs(now: Date): Promise<number> {
+    assertValidDate(now, "Reconciliation time");
+    const result = await this.database.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM import_object_reconciliation_jobs
+       WHERE state = 'pending' AND kind = 'verify_batch_then_delete' AND not_before > $1`,
+      [now]
+    );
+    return Number(result.rows[0].count);
+  }
+
   async resolveImportObjectReconciliationJob(
     id: string,
     resolvedAt: Date,
