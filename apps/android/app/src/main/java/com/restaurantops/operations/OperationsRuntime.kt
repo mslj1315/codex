@@ -1,6 +1,10 @@
 package com.restaurantops.operations
 
 import com.restaurantops.imports.network.LocalImportApiRuntime
+import com.restaurantops.imports.network.HttpMetricCatalogRepository
+import com.restaurantops.imports.network.ImportApi
+import com.restaurantops.imports.network.MetricCatalogRepository
+import com.restaurantops.imports.network.UnavailableMetricCatalogRepository
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -21,6 +25,19 @@ object OperationsRuntime {
             )
         } else {
             UnavailableOperationsRepository()
+        }
+
+    fun metricCatalogRepository(isDebug: Boolean, baseUrl: String): MetricCatalogRepository =
+        if (canUseHttpRepository(isDebug, baseUrl)) {
+            HttpMetricCatalogRepository(
+                Retrofit.Builder()
+                    .baseUrl(baseUrl)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(ImportApi::class.java)
+            )
+        } else {
+            UnavailableMetricCatalogRepository()
         }
 }
 

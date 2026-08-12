@@ -71,8 +71,11 @@ fun WorkspaceRoot(
     val operationsRepository = remember {
         OperationsRuntime.repository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
     }
-    val operationsViewModel = remember(operationsRepository) {
-        OperationsViewModel(operationsRepository)
+    val operationsMetricCatalogRepository = remember {
+        OperationsRuntime.metricCatalogRepository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
+    }
+    val operationsViewModel = remember(operationsRepository, operationsMetricCatalogRepository) {
+        OperationsViewModel(operationsRepository, metricCatalogRepository = operationsMetricCatalogRepository)
     }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(

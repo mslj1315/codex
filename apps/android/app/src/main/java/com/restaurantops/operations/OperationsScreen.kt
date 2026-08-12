@@ -97,7 +97,8 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
         selectedDiagnosticRun = viewModel.selectedDiagnosticRun,
         onSelect = { viewModel.loadActionCardDetails(storeId, it) },
         onUpdate = { actionCardId, update -> viewModel.updateActionCard(storeId, actionCardId, update) },
-        updatingActionCardId = viewModel.updatingActionCardId
+        updatingActionCardId = viewModel.updatingActionCardId,
+        verificationMetricLabels = viewModel.verificationMetricLabels
     )
     viewModel.verificationSummary?.let { summary ->
         VerificationSummaryContent(summary)
@@ -164,7 +165,8 @@ private fun ActionCardsContent(
     selectedDiagnosticRun: DiagnosticRunDetail?,
     onSelect: (ActionCard) -> Unit,
     onUpdate: (String, ActionCardUpdate) -> Unit,
-    updatingActionCardId: String?
+    updatingActionCardId: String?,
+    verificationMetricLabels: Map<String, String>
 ) {
     Text("行动卡", style = MaterialTheme.typography.titleMedium)
     if (cards.isEmpty()) {
@@ -175,6 +177,7 @@ private fun ActionCardsContent(
             card = card,
             selected = selectedActionCardId == card.id,
             isUpdating = updatingActionCardId == card.id,
+            verificationMetricLabels = verificationMetricLabels,
             onSelect = { onSelect(card) },
             onUpdate = { onUpdate(card.id, it) }
         )
@@ -189,6 +192,7 @@ private fun ActionCardContent(
     card: ActionCard,
     selected: Boolean,
     isUpdating: Boolean,
+    verificationMetricLabels: Map<String, String>,
     onSelect: () -> Unit,
     onUpdate: (ActionCardUpdate) -> Unit
 ) {
@@ -200,7 +204,7 @@ private fun ActionCardContent(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(card.title, style = MaterialTheme.typography.titleSmall)
-            verificationMetricKeysText(card.verificationMetricKeys)?.let { metricKeys ->
+            verificationMetricKeysText(card.verificationMetricKeys, verificationMetricLabels)?.let { metricKeys ->
                 Text(metricKeys, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text("状态：${card.status.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -251,8 +255,13 @@ private fun ActionCardContent(
     }
 }
 
-internal fun verificationMetricKeysText(metricKeys: List<String>): String? =
-    metricKeys.takeIf { it.isNotEmpty() }?.joinToString(prefix = "验证指标：", separator = "、")
+internal fun verificationMetricKeysText(
+    metricKeys: List<String>,
+    labels: Map<String, String> = emptyMap()
+): String? = metricKeys.takeIf { it.isNotEmpty() }?.joinToString(
+    prefix = "验证指标：",
+    separator = "、"
+) { metricKey -> labels[metricKey] ?: metricKey }
 
 @Composable
 private fun VerificationSummaryContent(summary: ActionVerificationSummary) {

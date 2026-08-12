@@ -1,5 +1,6 @@
 package com.restaurantops.operations
 
+import com.restaurantops.imports.network.MetricCatalogRepository
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -13,7 +14,8 @@ import kotlinx.coroutines.supervisorScope
 
 class OperationsViewModel(
     private val repository: OperationsRepository,
-    private val scope: CoroutineScope? = null
+    private val scope: CoroutineScope? = null,
+    private val metricCatalogRepository: MetricCatalogRepository? = null
 ) : ViewModel() {
     var readiness by mutableStateOf<DataReadiness?>(null)
         private set
@@ -35,6 +37,10 @@ class OperationsViewModel(
         private set
     var updatingActionCardId by mutableStateOf<String?>(null)
         private set
+    var verificationMetricLabels by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
+    private val metricLabelsByStore = mutableMapOf<String, Map<String, String>>()
 
     private val operationScope: CoroutineScope
         get() = scope ?: viewModelScope
@@ -50,13 +56,16 @@ class OperationsViewModel(
                     val readinessRequest = async { repository.loadReadiness(storeId, rangeStart, rangeEnd) }
                     val diagnosticRequest = async { repository.loadDeterministicDiagnostic(storeId, rangeStart, rangeEnd) }
                     val cardsRequest = async { repository.loadActionCards(storeId) }
+                    val metricLabelsRequest = async { loadMetricLabels(storeId) }
                     val loadedReadiness = readinessRequest.await()
                     val loadedDiagnostic = diagnosticRequest.await()
                     val loadedActionCards = cardsRequest.await()
+                    val loadedMetricLabels = metricLabelsRequest.await()
 
                     readiness = loadedReadiness
                     diagnostic = loadedDiagnostic
                     actionCards = loadedActionCards
+                    verificationMetricLabels = loadedMetricLabels
                     selectedActionCardId = null
                     verificationSummary = null
                     selectedDiagnosticRun = null
@@ -163,8 +172,32 @@ class OperationsViewModel(
     private fun neutralMessage(error: OperationsRequestException): String =
         if (error.statusCode == 0) CONNECTION_FAILURE_MESSAGE else FAILURE_MESSAGE
 
+    private suspend fun loadMetricLabels(storeId: String): Map<String, String> {
+        metricLabelsByStore[storeId]?.let { return it }
+        val catalog = metricCatalogRepository ?: return emptyMap()
+        return try {
+            catalog.loadMetricCatalog(storeId).definitions
+                .filter { it.usableForVerification }
+                .associate { definition ->
+                    definition.metricKey to "${definition.displayName}（${definition.storageUnit.displayUnit()}）"
+                }
+                .also { labels -> metricLabelsByStore[storeId] = labels }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            emptyMap()
+        }
+    }
+
     private companion object {
         const val CONNECTION_FAILURE_MESSAGE = "Unable to reach the operations service"
         const val FAILURE_MESSAGE = "Unable to load operations data"
     }
+}
+
+private fun String.displayUnit(): String = when (this) {
+    "cents" -> "元"
+    "count" -> "次"
+    "basis_points" -> "%"
+    else -> this
 }

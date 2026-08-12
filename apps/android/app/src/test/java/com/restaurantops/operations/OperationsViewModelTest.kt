@@ -1,5 +1,8 @@
 package com.restaurantops.operations
 
+import com.restaurantops.imports.network.MetricCatalog
+import com.restaurantops.imports.network.MetricCatalogRepository
+import com.restaurantops.imports.network.MetricDefinition
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -11,6 +14,68 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class OperationsViewModelTest {
+    @Test
+    fun `uses cached catalog labels for action verification metrics`() = runTest {
+        val catalogRepository = FakeMetricCatalogRepository(
+            MetricCatalog(
+                versionNumber = 1,
+                definitions = listOf(
+                    MetricDefinition("revenue", "营业额", "amount", "cents", true, true, true),
+                    MetricDefinition("orders", "订单数", "count", "count", true, true, true)
+                )
+            )
+        )
+        val card = ActionCard(
+            id = "action_1",
+            status = ActionCardStatus.IN_PROGRESS,
+            title = "Action card",
+            verificationMetricKeys = listOf("revenue", "unknown_metric", "orders")
+        )
+        val viewModel = OperationsViewModel(
+            FakeOperationsRepository(cards = listOf(card)),
+            this,
+            catalogRepository
+        )
+
+        viewModel.load("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+        viewModel.load("store_demo", "2026-08-08", "2026-08-14")
+        advanceUntilIdle()
+
+        assertEquals(
+            mapOf("revenue" to "营业额（元）", "orders" to "订单数（次）"),
+            viewModel.verificationMetricLabels
+        )
+        assertEquals(1, catalogRepository.requests)
+        assertEquals(
+            "验证指标：营业额（元）、unknown_metric、订单数（次）",
+            verificationMetricKeysText(card.verificationMetricKeys, viewModel.verificationMetricLabels)
+        )
+    }
+
+    @Test
+    fun `catalog failure preserves action card loading and metric key fallback`() = runTest {
+        val card = ActionCard(
+            id = "action_1",
+            status = ActionCardStatus.IN_PROGRESS,
+            title = "Action card",
+            verificationMetricKeys = listOf("revenue")
+        )
+        val viewModel = OperationsViewModel(
+            FakeOperationsRepository(cards = listOf(card)),
+            this,
+            FakeMetricCatalogRepository(failure = IllegalStateException("private catalog failure"))
+        )
+
+        viewModel.load("store_demo", "2026-08-01", "2026-08-07")
+        advanceUntilIdle()
+
+        assertEquals(listOf(card), viewModel.actionCards)
+        assertTrue(viewModel.verificationMetricLabels.isEmpty())
+        assertNull(viewModel.requestError)
+        assertEquals("验证指标：revenue", verificationMetricKeysText(card.verificationMetricKeys, viewModel.verificationMetricLabels))
+    }
+
     @Test
     fun `loads readiness optional diagnostic and action cards into one screen state`() = runTest {
         val viewModel = OperationsViewModel(FakeOperationsRepository(), this)
@@ -256,5 +321,18 @@ private class FakeOperationsRepository(
             executionNote = update.executionNote ?: cards.single { it.id == actionCardId }.executionNote,
             verificationOutcome = update.verificationOutcome ?: cards.single { it.id == actionCardId }.verificationOutcome
         )
+    }
+}
+
+private class FakeMetricCatalogRepository(
+    private val catalog: MetricCatalog? = null,
+    private val failure: Throwable? = null
+) : MetricCatalogRepository {
+    var requests = 0
+
+    override suspend fun loadMetricCatalog(storeId: String): MetricCatalog {
+        requests += 1
+        failure?.let { throw it }
+        return requireNotNull(catalog)
     }
 }
