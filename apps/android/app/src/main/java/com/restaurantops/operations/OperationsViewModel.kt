@@ -25,6 +25,8 @@ class OperationsViewModel(
         private set
     var requestError by mutableStateOf<String?>(null)
         private set
+    var isServiceUnavailable by mutableStateOf(false)
+        private set
 
     private val operationScope: CoroutineScope
         get() = scope ?: viewModelScope
@@ -33,6 +35,7 @@ class OperationsViewModel(
         if (isLoading) return
         isLoading = true
         requestError = null
+        isServiceUnavailable = false
         operationScope.launch {
             try {
                 supervisorScope {
@@ -49,6 +52,8 @@ class OperationsViewModel(
                 }
             } catch (error: CancellationException) {
                 throw error
+            } catch (_: OperationsServiceUnavailableException) {
+                isServiceUnavailable = true
             } catch (error: OperationsRequestException) {
                 requestError = if (error.statusCode == 0) {
                     CONNECTION_FAILURE_MESSAGE
