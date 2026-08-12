@@ -121,7 +121,7 @@ private class FakeOperationsRepository(
         diagnosticFailure?.let { throw it }
         return diagnostic
     }
-    override suspend fun loadActionCards(storeId: String, status: String?) = listOf(ActionCard("action_1", "in_progress", "检查午市套餐"))
+    override suspend fun loadActionCards(storeId: String, status: String?) = listOf(ActionCard("action_1", ActionCardStatus.IN_PROGRESS, "检查午市套餐"))
     override suspend fun loadVerificationSummary(
         storeId: String,
         actionCardId: String
@@ -129,4 +129,9 @@ private class FakeOperationsRepository(
         summaryFailure?.let { throw it }
         return summary
     }
+    override suspend fun updateActionCard(
+        storeId: String,
+        actionCardId: String,
+        update: ActionCardUpdate
+    ): ActionCard = throw UnsupportedOperationException("Not used by this test")
 }

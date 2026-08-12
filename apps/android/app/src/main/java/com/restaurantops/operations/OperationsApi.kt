@@ -1,6 +1,8 @@
 package com.restaurantops.operations
 
 import retrofit2.http.GET
+import retrofit2.http.Body
+import retrofit2.http.PATCH
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -16,6 +18,13 @@ interface OperationsApi {
 
     @GET("/v1/stores/{storeId}/action-cards/{actionCardId}/verification-summary")
     suspend fun verificationSummary(@Path("storeId") storeId: String, @Path("actionCardId") actionCardId: String): ActionCardVerificationSummaryResponse?
+
+    @PATCH("/v1/stores/{storeId}/action-cards/{actionCardId}/status")
+    suspend fun updateActionCardStatus(
+        @Path("storeId") storeId: String,
+        @Path("actionCardId") actionCardId: String,
+        @Body request: ActionCardStatusRequest
+    ): ActionCardResponse
 }
 
 data class DataReadinessResponse(val rangeStart: String, val rangeEnd: String, val requiredMetrics: List<String>, val presentMetrics: List<String>, val missingMetrics: List<String>, val confidence: String, val comparisonAvailable: Boolean)
@@ -24,3 +33,8 @@ data class DeterministicDiagnosticResponse(val kind: String, val rangeStart: Str
 data class ActionCardResponse(val id: String, val diagnosticKind: String, val rangeStart: String, val rangeEnd: String, val title: String, val action: String, val verificationMetric: String, val status: String, val executionNote: String?, val verificationOutcome: String?, val dueDate: String?)
 data class ActionCardVerificationSummaryResponse(val baselineRangeStart: String, val baselineRangeEnd: String, val comparisonRangeStart: String, val comparisonRangeEnd: String, val metrics: List<VerificationMetricResponse>)
 data class VerificationMetricResponse(val metricKey: String, val baselineValue: Long, val comparisonValue: Long, val changePercent: Double)
+data class ActionCardStatusRequest(
+    val status: String,
+    val executionNote: String? = null,
+    val verificationOutcome: String? = null
+)

@@ -44,5 +44,11 @@ class UnavailableOperationsRepository : OperationsRepository {
         actionCardId: String
     ): ActionVerificationSummary? = unavailable()
 
+    override suspend fun updateActionCard(
+        storeId: String,
+        actionCardId: String,
+        update: ActionCardUpdate
+    ): ActionCard = unavailable()
+
     private fun unavailable(): Nothing = throw OperationsServiceUnavailableException()
 }

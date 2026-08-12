@@ -60,6 +60,23 @@ class HttpOperationsRepositoryTest {
         assertEquals(0, networkError.statusCode)
         assertEquals("Unable to reach the operations service", networkError.message)
     }
+
+    @Test
+    fun `completion sends only execution note and maps returned card`() = runBlocking {
+        val api = FakeOperationsApi()
+        val updated = HttpOperationsRepository(api).updateActionCard(
+            "store_demo",
+            "action_1",
+            ActionCardUpdate.completed("Checked menu placement")
+        )
+
+        val request = requireNotNull(api.statusRequest)
+        assertEquals("completed", request.status)
+        assertEquals("Checked menu placement", request.executionNote)
+        assertNull(request.verificationOutcome)
+        assertEquals(ActionCardStatus.COMPLETED, updated.status)
+        assertEquals("Checked menu placement", updated.executionNote)
+    }
 }
 
 private class FakeOperationsApi : OperationsApi {
@@ -67,6 +84,7 @@ private class FakeOperationsApi : OperationsApi {
     var diagnostic: DeterministicDiagnosticResponse? = DeterministicDiagnosticResponse("revenue_decline", "2026-08-01", "2026-08-07", "2026-07-25", "2026-07-31", DiagnosticFactResponse("revenue", 3826000, 4400000, -13.05), "high")
     var verificationSummary: ActionCardVerificationSummaryResponse? = null
     var readinessFailure: Throwable? = null
+    var statusRequest: ActionCardStatusRequest? = null
 
     override suspend fun readiness(storeId: String, rangeStart: String, rangeEnd: String): DataReadinessResponse {
         readinessFailure?.let { throw it }
@@ -78,4 +96,24 @@ private class FakeOperationsApi : OperationsApi {
         return listOf(ActionCardResponse("action_1", "revenue_decline", "2026-08-01", "2026-08-07", "检查午市套餐", "检查订单量", "下一周期营业额与订单数", "in_progress", null, null, null))
     }
     override suspend fun verificationSummary(storeId: String, actionCardId: String) = verificationSummary
+    override suspend fun updateActionCardStatus(
+        storeId: String,
+        actionCardId: String,
+        request: ActionCardStatusRequest
+    ): ActionCardResponse {
+        statusRequest = request
+        return ActionCardResponse(
+            actionCardId,
+            "revenue_decline",
+            "2026-08-01",
+            "2026-08-07",
+            "Check menu placement",
+            "Review placement",
+            "Revenue",
+            request.status,
+            request.executionNote,
+            request.verificationOutcome,
+            null
+        )
+    }
 }
