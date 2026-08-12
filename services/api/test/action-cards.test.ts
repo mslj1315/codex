@@ -34,4 +34,13 @@ describe("action cards", () => {
     await expect(imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_other", status: "in_progress", now: new Date() })).rejects.toBeInstanceOf(ValidationError);
     await expect(imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-08", rangeEnd: "2026-08-01", title: "", action: "执行", verificationMetric: "营业额" })).rejects.toBeInstanceOf(ValidationError);
   });
+
+  it("lists cards newest first and supports a validated status filter", async () => {
+    await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "旧", action: "执行", verificationMetric: "营业额" });
+    const newest = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "新", action: "执行", verificationMetric: "营业额" });
+    await imports.updateActionCardStatus({ id: newest.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    const cards = await imports.listActionCards({ enterpriseId: "ent_demo", storeId: "store_demo" });
+    expect(cards.map((card) => card.title)).toEqual(["新", "旧"]);
+    await expect(imports.listActionCards({ enterpriseId: "ent_demo", storeId: "store_demo", status: "invalid" as never })).rejects.toBeInstanceOf(ValidationError);
+  });
 });

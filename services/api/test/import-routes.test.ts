@@ -133,6 +133,9 @@ describe("import API routes", () => {
     const updated = await app.inject({ method: "PATCH", url: `/v1/stores/store_demo/action-cards/${card.id}/status`, payload: { status: "in_progress" } });
     expect(updated.statusCode).toBe(200);
     expect(updated.json()).toMatchObject({ id: card.id, status: "in_progress" });
+    const listed = await app.inject({ method: "GET", url: "/v1/stores/store_demo/action-cards?status=in_progress" });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual([expect.objectContaining({ id: card.id, status: "in_progress" })]);
     const outside = await app.inject({ method: "GET", url: `/v1/stores/store_other/action-cards/${card.id}` });
     expect(outside.statusCode).toBe(403);
   });

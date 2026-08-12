@@ -100,6 +100,12 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     });
     return reply.code(201).send(card);
   });
+  app.get("/v1/stores/:storeId/action-cards", async (request) => {
+    const query = request.query as Record<string, unknown>;
+    const status = query.status === undefined ? undefined : stringField(query, "status");
+    if (status !== undefined && !["proposed", "in_progress", "completed", "verified", "cancelled"].includes(status)) throw new ValidationError("Action card status is invalid");
+    return service.listActionCards(scopedContext(request), status as never);
+  });
   app.patch("/v1/stores/:storeId/action-cards/:actionCardId/status", async (request) => {
     const body = record(request.body);
     const status = stringField(body, "status");

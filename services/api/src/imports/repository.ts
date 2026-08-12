@@ -849,6 +849,16 @@ export class ImportRepository {
     return toActionCard(result.rows[0]);
   }
 
+  async listActionCards(scope: { enterpriseId: string; storeId: string; status?: ActionCardStatus }): Promise<ActionCard[]> {
+    if (scope.status !== undefined && !["proposed", "in_progress", "completed", "verified", "cancelled"].includes(scope.status)) throw new ValidationError("Action card status is invalid");
+    const result = await this.database.query<Row>(
+      `SELECT * FROM action_cards WHERE enterprise_id = $1 AND store_id = $2
+       ${scope.status === undefined ? "" : "AND status = $3"} ORDER BY created_at DESC, id DESC LIMIT 100`,
+      scope.status === undefined ? [scope.enterpriseId, scope.storeId] : [scope.enterpriseId, scope.storeId, scope.status]
+    );
+    return result.rows.map(toActionCard);
+  }
+
   async updateActionCardStatus(input: { id: string; enterpriseId: string; storeId: string; status: ActionCardStatus; now: Date }): Promise<ActionCard> {
     assertValidDate(input.now, "now");
     const allowed: Record<ActionCardStatus, ActionCardStatus[]> = {

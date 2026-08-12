@@ -174,6 +174,9 @@ export class ImportService {
   getActionCard(context: TrustedContext, id: string): Promise<ActionCard> {
     return this.imports.getActionCard({ id, enterpriseId: context.enterpriseId, storeId: context.storeId });
   }
+  listActionCards(context: TrustedContext, status?: ActionCardStatus): Promise<ActionCard[]> {
+    return this.imports.listActionCards({ enterpriseId: context.enterpriseId, storeId: context.storeId, status });
+  }
 
   getBatch(context: TrustedContext, batchId: string) { return this.imports.getBatch({ id: batchId, enterpriseId: context.enterpriseId, storeId: context.storeId }); }
   getLatest(context: TrustedContext) { return this.imports.getLatestFactVersion(context); }
