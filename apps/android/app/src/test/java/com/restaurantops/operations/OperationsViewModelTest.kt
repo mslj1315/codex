@@ -289,6 +289,13 @@ class OperationsViewModelTest {
     }
 
     @Test
+    fun `operations confidence uses store-facing labels`() {
+        assertEquals("高", OperationsConfidence.HIGH.displayName())
+        assertEquals("中", OperationsConfidence.MEDIUM.displayName())
+        assertEquals("低", OperationsConfidence.LOW.displayName())
+    }
+
+    @Test
     fun `execution note requires meaningful text within 500 characters`() {
         assertFalse(isValidExecutionNote("   "))
         assertTrue(isValidExecutionNote("a".repeat(500)))

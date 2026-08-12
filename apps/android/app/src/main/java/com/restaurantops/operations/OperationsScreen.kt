@@ -121,7 +121,7 @@ private fun ReadinessCard(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text("数据就绪度", style = MaterialTheme.typography.titleMedium)
-            Text("置信度：${readiness.confidence.name.lowercase()}")
+            Text("置信度：${readiness.confidence.displayName()}")
             Text(if (readiness.comparisonAvailable) "可进行周期比较" else "暂不可进行周期比较")
             readinessMissingMetricsText(readiness.missingMetrics, metricLabels)?.let { missingMetrics ->
                 Text(missingMetrics, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -156,7 +156,7 @@ private fun DiagnosticContent(
                 else -> {
                     Text(diagnostic.kind)
                     Text(
-                        "置信度：${diagnostic.confidence.name.lowercase()}",
+                        "置信度：${diagnostic.confidence.displayName()}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
@@ -332,7 +332,7 @@ private fun RecordedDiagnosticEvidenceContent(
     Text("已记录诊断依据", style = MaterialTheme.typography.titleSmall)
     Text(detail.kind)
     Text("规则版本：${detail.ruleVersion}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Text("置信度：${detail.confidence.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("置信度：${detail.confidence.displayName()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
     detail.evidence.forEach { evidence -> Text(formatDiagnosticEvidence(evidence, presentations)) }
 }
 
@@ -361,6 +361,12 @@ internal fun ActionCardVerificationOutcome.displayName(): String = when (this) {
     ActionCardVerificationOutcome.INEFFECTIVE -> "已执行但无效"
     ActionCardVerificationOutcome.NOT_EXECUTED -> "未执行"
     ActionCardVerificationOutcome.DATA_INSUFFICIENT -> "数据不足"
+}
+
+internal fun OperationsConfidence.displayName(): String = when (this) {
+    OperationsConfidence.HIGH -> "高"
+    OperationsConfidence.MEDIUM -> "中"
+    OperationsConfidence.LOW -> "低"
 }
 
 internal fun isValidExecutionNote(note: String): Boolean =
