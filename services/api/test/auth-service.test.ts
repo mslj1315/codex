@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
 import { hashPassword } from "../src/auth/credentials.js";
 import { AuthRepository } from "../src/auth/repository.js";
-import { AuthService } from "../src/auth/service.js";
+import { AuthService, AuthorizationError } from "../src/auth/service.js";
 import { AuthenticationError } from "../src/auth/tokens.js";
 import { authenticatedContextResolver } from "../src/imports/routes.js";
 
@@ -50,7 +50,7 @@ describe("auth service", () => {
     await expect(service.resolveStoreContext(login.accessToken, "store_demo")).resolves.toEqual({
       enterpriseId: "ent_demo", storeId: "store_demo", actorId: "account_owner"
     });
-    await expect(service.resolveStoreContext(login.accessToken, "store_disabled")).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(service.resolveStoreContext(login.accessToken, "store_disabled")).rejects.toBeInstanceOf(AuthorizationError);
     await expect(service.listStores(login.accessToken)).resolves.toEqual([
       { enterpriseId: "ent_demo", storeId: "store_demo", role: "owner" }
     ]);

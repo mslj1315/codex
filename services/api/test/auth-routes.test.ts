@@ -56,9 +56,12 @@ describe("authentication routes", () => {
     const accessToken = (await loginOwner(app)).json<{ accessToken: string }>().accessToken;
     const allowed = await app.inject({ method: "GET", url: "/v1/stores/store_demo/readiness?rangeStart=2026-08-01&rangeEnd=2026-08-07", headers: bearer(accessToken) });
     const denied = await app.inject({ method: "GET", url: "/v1/stores/store_other/readiness?rangeStart=2026-08-01&rangeEnd=2026-08-07", headers: bearer(accessToken) });
+    const invalid = await app.inject({ method: "GET", url: "/v1/stores/store_demo/readiness?rangeStart=2026-08-01&rangeEnd=2026-08-07", headers: bearer("forged.token.value") });
 
     expect(allowed.statusCode).toBe(200);
     expect(denied.statusCode).toBe(403);
+    expect(invalid.statusCode).toBe(401);
+    expect(invalid.json()).toEqual({ error: "Authentication required" });
   });
 
   it("rejects production startup without an auth token secret", () => {

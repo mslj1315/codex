@@ -4,7 +4,7 @@ import type { Database } from "../db.js";
 import { ParserInputError, ImportService, type TrustedContext } from "./service.js";
 import { ConflictError, ForbiddenError, ImportRepository, NotFoundError, ValidationError } from "./repository.js";
 import { ObjectStorageError, type ObjectStorage } from "../storage/object-storage.js";
-import type { AuthService } from "../auth/service.js";
+import { AuthorizationError, type AuthService } from "../auth/service.js";
 import { AuthenticationError } from "../auth/tokens.js";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -26,14 +26,18 @@ export function authenticatedContextResolver(auth: AuthService): TrustedContextR
     try {
       return await auth.resolveStoreContext(accessToken, storeId);
     } catch (error) {
-      if (error instanceof AuthenticationError) return undefined;
+      if (error instanceof AuthenticationError) {
+        request.authenticationFailed = true;
+        return undefined;
+      }
+      if (error instanceof AuthorizationError) return undefined;
       throw error;
     }
   };
 }
 
 declare module "fastify" {
-  interface FastifyRequest { trustedContext?: TrustedContext; }
+  interface FastifyRequest { trustedContext?: TrustedContext; authenticationFailed?: boolean; }
 }
 
 export interface ImportRouteOptions {
@@ -48,7 +52,10 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
   app.decorateRequest("trustedContext", undefined);
   app.addHook("onRequest", async (request, reply) => {
     request.trustedContext = await options.contextResolver(request);
-    if (!request.trustedContext) return reply.code(403).send(errorBody("No trusted request context"));
+    if (!request.trustedContext) {
+      if (request.authenticationFailed) return reply.code(401).send(errorBody("Authentication required"));
+      return reply.code(403).send(errorBody("No trusted request context"));
+    }
   });
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.includes("/imports/file")) return;

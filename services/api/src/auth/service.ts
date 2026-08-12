@@ -13,6 +13,8 @@ export interface AuthTokens {
   account: { id: string; displayName: string };
 }
 
+export class AuthorizationError extends Error {}
+
 export class AuthService {
   constructor(
     private readonly repository: AuthRepository,
@@ -54,7 +56,7 @@ export class AuthService {
   async resolveStoreContext(accessToken: string, storeId: string): Promise<TrustedContext> {
     const account = await this.authenticateAccessToken(accessToken);
     const membership = await this.repository.findEnabledMembership(account.id, storeId);
-    if (!membership) throw new AuthenticationError("Authentication required");
+    if (!membership) throw new AuthorizationError("Store is not authorized");
     return { enterpriseId: membership.enterpriseId, storeId: membership.storeId, actorId: account.id };
   }
 

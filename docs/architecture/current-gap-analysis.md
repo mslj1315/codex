@@ -30,6 +30,9 @@ The current branch provides a reliable import and local-workspace foundation:
   publish CLI.
 - Data-readiness calculation, a deterministic revenue-decline diagnostic with
   persisted evidence, action-card lifecycle, and verification summaries.
+- Self-hosted API account authentication with scrypt password hashing,
+  revocable/rotatable sessions, server-derived store memberships, and controlled
+  account provisioning. Service-provider roles are independent of store access.
 - API/Android tests, Compose validation, CI workflow, and health checks.
 
 This is the framework's data-entry and reliability substrate, not yet the full
@@ -44,69 +47,72 @@ AI operations product.
 | Import batches and traceability | Covered for manual/file imports | No external source-system adapters or mapping-version registry yet |
 | Data quality and confirmation | Covered for parser confidence, unresolved candidates, catalog validation, and readiness | Custom header-to-metric mapping and source-report mapping versions are not implemented |
 | Metric semantics | Covered by a versioned published catalog and provider publish CLI | No authenticated web console; adding a metric does not automatically alter an existing diagnostic rule |
-| Android operating workspace | Debug builds consume trusted API readiness, diagnosis, catalog, action, and verification data | Release/local-demo remains deliberately unavailable; there is no account sign-in or remote workspace provisioning |
+| Android operating workspace | Debug builds consume trusted API readiness, diagnosis, catalog, action, and verification data | Android login, encrypted session storage, and remote workspace provisioning remain unimplemented |
 | Video workflow | Six-stage local demo covered | No real project, asset, render, publish, or performance entities |
 | Single-store P0 isolation | Covered by trusted context and composite tenant/store keys | Authentication and account/entitlement service are not implemented |
 | Maintenance operations | Covered | Operational jobs are not yet connected to business outcome metrics |
 
 ### Not implemented yet
 
-1. **Identity and service-operator access boundary**
-   - Account identity, authenticated tenant/store claims, and entitlement
-     checks that replace the current trusted development context.
-   - A separately authorized service-operator surface for metric catalog,
-     mapping, rule, and support administration. The existing catalog CLI is an
-     intentional interim operator interface, not a public HTTP administration
-     endpoint.
+1. **Android identity session and store selection**
+   - Login, refresh-token storage, logout, and an authenticated store selector
+     using the completed API contracts.
+   - Local-demo isolation and release-safe API configuration.
 
-2. **Metric mapping and broader normalized snapshots**
+2. **Service-provider feedback projection and administration**
+   - An aggregate-only feedback read model requiring the completed
+     `provider_feedback_viewer` role; it must not reuse store routes or expose
+     raw business data.
+   - An authenticated provider web console which invokes the existing catalog
+     lifecycle only after verifying `metric_catalog_operator`.
+
+3. **Metric mapping and broader normalized snapshots**
    - Mapping versions and source report types for custom headers and future
      independent source adapters.
    - Normalized snapshots for channel funnel, dishes, packages, members,
      reviews, and content performance. POS, membership, and platform
      integrations remain explicitly out of this independent P0 scope.
 
-3. **Diagnostic expansion**
+4. **Diagnostic expansion**
    - Additional deterministic rules, hypotheses, report versions, and
      cross-period coverage beyond the implemented revenue-decline rule.
    - Explicit rule-to-catalog compatibility so a newly published definition is
      usable only after an appropriate rule is deliberately added.
 
-4. **Owner question interface**
+5. **Owner question interface**
    - Evidence-bound question classification and structured answers.
    - Explicit insufficient-data responses and action creation from a question.
 
-5. **Content and inspiration domain**
+6. **Content and inspiration domain**
    - Inspiration pool, scoring, deduplication, cooling period, compliance
      records, content projects, publication records, and performance links.
    - Real template-based rendering and publish-result capture.
 
-6. **Private-domain and platform operations**
+7. **Private-domain and platform operations**
    - Audience segments, contact plans, coupon/use outcomes, platform funnel
      adapters, and review aggregation.
 
-7. **Operations web console**
+8. **Operations web console**
    - Authenticated mapping, rule, template, compliance, customer-support, and
      multi-store administration. It must use the same versioned catalog
      lifecycle as the provider CLI.
 
 ## Recommended Next Sequence
 
-The next implementation unit should be an **identity and service-operator
-access boundary**, before a web administration console, model integration, or
-real video rendering:
+The next implementation unit should be the **Android identity session and store
+selection**, before a provider web console, model integration, or real video
+rendering:
 
-1. Define account, tenant, store, actor, and service-operator roles without
-   weakening the existing composite tenant/store isolation.
-2. Replace trusted HTTP context with validated claims at the API boundary while
-   keeping maintenance CLIs as separately configured operator processes.
-3. Define the operator authorization policy for catalog publication and future
-   mapping/rule changes before registering any operator HTTP route.
-4. Add an authenticated provider web console only after these boundaries are
-   tested; it should call the existing catalog lifecycle rather than mutate
-   published definitions directly.
-5. Expand metric mapping and diagnostic rules after their authoring surface has
-   an auditable identity and version history.
+1. Add a login flow, encrypted refresh-token storage, one serialized refresh
+   retry, logout cleanup, and a list of enabled stores from `/v1/auth/me/stores`.
+2. Ensure the app attaches only access tokens and never parses them to derive
+   scope or stores credentials after successful login.
+3. Preserve the explicit offline local-demo path and ensure release builds have
+   no demo context or default API URL.
+4. Build the provider feedback projection after Android identity is stable; it
+   must require `provider_feedback_viewer` and return only audited aggregates.
+5. Add an authenticated provider console only after its feedback and catalog
+   roles are independently verified.
 
 This sequence preserves the framework's most important guarantee: the AI may
 explain and draft language, but it cannot invent business facts or skip data
