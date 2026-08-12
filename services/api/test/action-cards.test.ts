@@ -15,6 +15,17 @@ describe("action cards", () => {
       id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL,
       UNIQUE (id, enterprise_id, store_id)
     )`);
+    await database.query(`CREATE TABLE metric_catalog_versions (
+      id TEXT PRIMARY KEY, state TEXT NOT NULL
+    );
+    CREATE TABLE metric_definitions (
+      metric_catalog_version_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL, usable_for_verification BOOLEAN NOT NULL
+    );
+    INSERT INTO metric_catalog_versions (id, state) VALUES ('metric_catalog_v1', 'published');
+    INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_verification) VALUES
+      ('metric_catalog_v1', 'revenue', true, true),
+      ('metric_catalog_v1', 'orders', true, true);`);
     await database.query(`CREATE TABLE action_cards (
       id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, created_by_actor_id TEXT NOT NULL,
       diagnostic_kind TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL, title TEXT NOT NULL,
@@ -92,5 +103,25 @@ describe("action cards", () => {
     });
     await database.query("DELETE FROM fact_values WHERE id = 'next-o'");
     await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toBeNull();
+  });
+
+  it("limits verification summaries to enabled verification metrics in the published catalog", async () => {
+    await database.query(`CREATE TABLE fact_values (
+      id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+      value BIGINT NOT NULL, unit TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL
+    )`);
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Review", action: "Review", verificationMetric: "Revenue and orders" });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "completed", now: new Date(), executionNote: "Completed" });
+    await database.query(`INSERT INTO fact_values VALUES
+      ('base-r','ent_demo','store_demo','revenue',100,'cents','2026-08-01','2026-08-07'),
+      ('next-r','ent_demo','store_demo','revenue',110,'cents','2026-08-08','2026-08-14'),
+      ('base-o','ent_demo','store_demo','orders',10,'count','2026-08-01','2026-08-07'),
+      ('next-o','ent_demo','store_demo','orders',12,'count','2026-08-08','2026-08-14')`);
+    await database.query("UPDATE metric_definitions SET usable_for_verification = false WHERE metric_key = 'orders'");
+
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toMatchObject({
+      metrics: [{ metricKey: "revenue", baselineValue: 100, comparisonValue: 110, changePercent: 10 }]
+    });
   });
 });

@@ -163,7 +163,7 @@ export interface ActionCard extends Omit<CreateActionCardInput, "id" | "actorId"
 }
 export interface ActionCardVerificationSummary {
   baselineRangeStart: string; baselineRangeEnd: string; comparisonRangeStart: string; comparisonRangeEnd: string;
-  metrics: { metricKey: "revenue" | "orders"; baselineValue: number; comparisonValue: number; changePercent: number }[];
+  metrics: { metricKey: string; baselineValue: number; comparisonValue: number; changePercent: number }[];
 }
 
 export interface ImportBatch {
@@ -1020,17 +1020,26 @@ export class ImportRepository {
     const comparisonEnd = new Date(comparisonStart.getTime() + (days - 1) * 86400000);
     const comparisonRangeStart = comparisonStart.toISOString().slice(0, 10);
     const comparisonRangeEnd = comparisonEnd.toISOString().slice(0, 10);
+    const verificationDefinitions = await this.database.query<Row>(
+      `SELECT definition.metric_key
+       FROM metric_catalog_versions catalog
+       JOIN metric_definitions definition ON definition.metric_catalog_version_id = catalog.id
+       WHERE catalog.state = 'published' AND definition.enabled = true AND definition.usable_for_verification = true
+       ORDER BY definition.metric_key`
+    );
+    const verificationMetricKeys = verificationDefinitions.rows.map((row) => string(row.metric_key));
+    if (verificationMetricKeys.length === 0) return { baselineRangeStart: card.rangeStart, baselineRangeEnd: card.rangeEnd, comparisonRangeStart, comparisonRangeEnd, metrics: [] };
     const values = await this.database.query<Row>(
       `SELECT metric_key, value, range_start FROM fact_values
-       WHERE enterprise_id = $1 AND store_id = $2 AND metric_key IN ('revenue', 'orders')
+       WHERE enterprise_id = $1 AND store_id = $2 AND metric_key = ANY($7::text[])
          AND ((range_start = $3 AND range_end = $4) OR (range_start = $5 AND range_end = $6))`,
-      [scope.enterpriseId, scope.storeId, card.rangeStart, card.rangeEnd, comparisonRangeStart, comparisonRangeEnd]
+      [scope.enterpriseId, scope.storeId, card.rangeStart, card.rangeEnd, comparisonRangeStart, comparisonRangeEnd, verificationMetricKeys]
     );
-    const metricSummary = ["orders", "revenue"].map((metricKey) => {
+    const metricSummary = verificationMetricKeys.map((metricKey) => {
       const baseline = values.rows.find((row) => row.metric_key === metricKey && dateOnly(row.range_start) === card.rangeStart);
       const comparison = values.rows.find((row) => row.metric_key === metricKey && dateOnly(row.range_start) === comparisonRangeStart);
       if (!baseline || !comparison || Number(baseline.value) <= 0) return null;
-      return { metricKey: metricKey as "revenue" | "orders", baselineValue: Number(baseline.value), comparisonValue: Number(comparison.value), changePercent: Math.round(((Number(comparison.value) - Number(baseline.value)) / Number(baseline.value)) * 10000) / 100 };
+      return { metricKey, baselineValue: Number(baseline.value), comparisonValue: Number(comparison.value), changePercent: Math.round(((Number(comparison.value) - Number(baseline.value)) / Number(baseline.value)) * 10000) / 100 };
     });
     if (metricSummary.some((metric) => metric === null)) return null;
     return { baselineRangeStart: card.rangeStart, baselineRangeEnd: card.rangeEnd, comparisonRangeStart, comparisonRangeEnd, metrics: metricSummary as ActionCardVerificationSummary["metrics"] };
