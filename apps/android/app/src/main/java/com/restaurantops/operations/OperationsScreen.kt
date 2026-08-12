@@ -88,7 +88,7 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
         Text(error, color = MaterialTheme.colorScheme.error)
     }
     viewModel.readiness?.let { readiness ->
-        ReadinessCard(readiness)
+        ReadinessCard(readiness, viewModel.verificationMetricLabels)
     }
     DiagnosticContent(
         diagnostic = viewModel.diagnostic,
@@ -111,7 +111,10 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
 }
 
 @Composable
-private fun ReadinessCard(readiness: DataReadiness) {
+private fun ReadinessCard(
+    readiness: DataReadiness,
+    metricLabels: Map<String, String>
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -120,15 +123,20 @@ private fun ReadinessCard(readiness: DataReadiness) {
             Text("数据就绪度", style = MaterialTheme.typography.titleMedium)
             Text("置信度：${readiness.confidence.name.lowercase()}")
             Text(if (readiness.comparisonAvailable) "可进行周期比较" else "暂不可进行周期比较")
-            if (readiness.missingMetrics.isNotEmpty()) {
-                Text(
-                    "缺少指标：${readiness.missingMetrics.joinToString()}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            readinessMissingMetricsText(readiness.missingMetrics, metricLabels)?.let { missingMetrics ->
+                Text(missingMetrics, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
+
+internal fun readinessMissingMetricsText(
+    metricKeys: List<String>,
+    labels: Map<String, String> = emptyMap()
+): String? = metricKeys.takeIf { it.isNotEmpty() }?.joinToString(
+    prefix = "缺少指标：",
+    separator = "、"
+) { metricKey -> labels[metricKey] ?: metricKey }
 
 @Composable
 private fun DiagnosticContent(
