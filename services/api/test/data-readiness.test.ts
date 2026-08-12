@@ -52,4 +52,9 @@ describe("data readiness", () => {
     expect(diagnostic).toMatchObject({ kind: "revenue_decline", confidence: "high", verificationMetric: "下一周期营业额与订单数" });
     expect(diagnostic?.fact).toMatchObject({ currentValue: 3826000, priorValue: 4400000, changePercent: -13.05 });
   });
+
+  it("does not diagnose a stable or improving revenue period", async () => {
+    await database.query("UPDATE fact_values SET value = 4500000 WHERE id = 'current-revenue'");
+    await expect(imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" })).resolves.toBeNull();
+  });
 });

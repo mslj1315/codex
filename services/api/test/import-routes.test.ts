@@ -116,6 +116,12 @@ describe("import API routes", () => {
     expect(response.body).not.toContain("batch_");
   });
 
+  it("returns no deterministic diagnosis when the confirmed fact history is insufficient", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/diagnostics/deterministic?rangeStart=2026-08-01&rangeEnd=2026-08-07" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toBeNull();
+  });
+
   it("keeps manual imports available but routes unconfigured file storage through a neutral 503", async () => {
     const unconfigured = buildServer({ database: pool, developmentMode: true });
     const manual = await unconfigured.inject({
