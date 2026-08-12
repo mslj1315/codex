@@ -64,6 +64,9 @@ describe("action cards", () => {
       ('base-o','ent_demo','store_demo','orders',120,'count','2026-08-01','2026-08-07'),
       ('next-r','ent_demo','store_demo','revenue',4200000,'cents','2026-08-08','2026-08-14'),
       ('next-o','ent_demo','store_demo','orders',130,'count','2026-08-08','2026-08-14')`);
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toBeNull();
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "completed", now: new Date(), executionNote: "已执行" });
     await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toEqual({
       baselineRangeStart: "2026-08-01", baselineRangeEnd: "2026-08-07", comparisonRangeStart: "2026-08-08", comparisonRangeEnd: "2026-08-14",
       metrics: [

@@ -866,6 +866,7 @@ export class ImportRepository {
 
   async getActionCardVerificationSummary(scope: { id: string; enterpriseId: string; storeId: string }): Promise<ActionCardVerificationSummary | null> {
     const card = await this.getActionCard(scope);
+    if (card.status !== "completed" && card.status !== "verified") return null;
     const baselineStart = new Date(`${card.rangeStart}T00:00:00Z`);
     const baselineEnd = new Date(`${card.rangeEnd}T00:00:00Z`);
     const days = Math.round((baselineEnd.getTime() - baselineStart.getTime()) / 86400000) + 1;
