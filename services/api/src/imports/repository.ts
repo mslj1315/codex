@@ -115,6 +115,20 @@ export interface DataReadiness {
   comparisonAvailable: boolean;
 }
 
+export interface DeterministicDiagnostic {
+  kind: "revenue_decline";
+  rangeStart: string;
+  rangeEnd: string;
+  priorRangeStart: string;
+  priorRangeEnd: string;
+  fact: { metricKey: "revenue"; currentValue: number; priorValue: number; changePercent: number };
+  evidence: string[];
+  hypothesis: string;
+  action: string;
+  verificationMetric: string;
+  confidence: "high" | "medium";
+}
+
 export interface ImportBatch {
   id: string;
   enterpriseId: string;
@@ -773,6 +787,39 @@ export class ImportRepository {
         ? "medium"
         : "low";
     return { rangeStart: scope.rangeStart, rangeEnd: scope.rangeEnd, requiredMetrics, presentMetrics, missingMetrics, confidence, comparisonAvailable };
+  }
+
+  async getDeterministicDiagnostic(scope: DataReadinessScope): Promise<DeterministicDiagnostic | null> {
+    assertDateOnlyRange(scope.rangeStart, scope.rangeEnd);
+    const start = new Date(`${scope.rangeStart}T00:00:00Z`);
+    const end = new Date(`${scope.rangeEnd}T00:00:00Z`);
+    const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+    const priorEnd = new Date(start.getTime() - 86400000);
+    const priorStart = new Date(priorEnd.getTime() - (days - 1) * 86400000);
+    const priorRangeStart = priorStart.toISOString().slice(0, 10);
+    const priorRangeEnd = priorEnd.toISOString().slice(0, 10);
+    const readRevenue = async (rangeStart: string, rangeEnd: string) => this.database.query<Row>(
+      `SELECT value FROM fact_values
+       WHERE enterprise_id = $1 AND store_id = $2 AND metric_key = 'revenue'
+         AND range_start = $3 AND range_end = $4 LIMIT 1`,
+      [scope.enterpriseId, scope.storeId, rangeStart, rangeEnd]
+    );
+    const currentResult = await readRevenue(scope.rangeStart, scope.rangeEnd);
+    const priorResult = await readRevenue(priorRangeStart, priorRangeEnd);
+    const current = currentResult.rows[0];
+    const prior = priorResult.rows[0];
+    if (!current || !prior || Number(prior.value) <= 0) return null;
+    const changePercent = Math.round(((Number(current.value) - Number(prior.value)) / Number(prior.value)) * 10000) / 100;
+    if (changePercent > -10) return null;
+    return {
+      kind: "revenue_decline", rangeStart: scope.rangeStart, rangeEnd: scope.rangeEnd, priorRangeStart, priorRangeEnd,
+      fact: { metricKey: "revenue", currentValue: Number(current.value), priorValue: Number(prior.value), changePercent },
+      evidence: [`revenue:${scope.rangeStart}/${scope.rangeEnd}`, `revenue:${priorRangeStart}/${priorRangeEnd}`],
+      hypothesis: "营业额较上一周期明显下降，需要结合订单数与客单价进一步核查。",
+      action: "检查本周期订单量、客单价和重点套餐表现，选择一个可执行的门店或内容动作。",
+      verificationMetric: "下一周期营业额与订单数",
+      confidence: "high"
+    };
   }
 }
 

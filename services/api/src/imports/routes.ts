@@ -86,6 +86,10 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
     const query = request.query as Record<string, unknown>;
     return service.getDataReadiness(scopedContext(request), stringField(query, "rangeStart"), stringField(query, "rangeEnd"));
   });
+  app.get("/v1/stores/:storeId/diagnostics/deterministic", async (request) => {
+    const query = request.query as Record<string, unknown>;
+    return service.getDeterministicDiagnostic(scopedContext(request), stringField(query, "rangeStart"), stringField(query, "rangeEnd"));
+  });
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ObjectStorageError) {
