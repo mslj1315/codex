@@ -14,10 +14,15 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -89,7 +94,9 @@ private fun OperationsContent(viewModel: OperationsViewModel, storeId: String) {
     ActionCardsContent(
         cards = viewModel.actionCards,
         selectedActionCardId = viewModel.selectedActionCardId,
-        onSelect = { viewModel.loadVerificationSummary(storeId, it) }
+        onSelect = { viewModel.loadVerificationSummary(storeId, it) },
+        onUpdate = { actionCardId, update -> viewModel.updateActionCard(storeId, actionCardId, update) },
+        updatingActionCardId = viewModel.updatingActionCardId
     )
     viewModel.verificationSummary?.let { summary ->
         VerificationSummaryContent(summary)
@@ -146,24 +153,80 @@ private fun DiagnosticContent(
 private fun ActionCardsContent(
     cards: List<ActionCard>,
     selectedActionCardId: String?,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    onUpdate: (String, ActionCardUpdate) -> Unit,
+    updatingActionCardId: String?
 ) {
     Text("行动卡", style = MaterialTheme.typography.titleMedium)
     if (cards.isEmpty()) {
         Text("当前没有行动卡。", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     cards.forEach { card ->
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(card.title, style = MaterialTheme.typography.titleSmall)
-                    Text("状态：${card.status}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ActionCardContent(
+            card = card,
+            selected = selectedActionCardId == card.id,
+            isUpdating = updatingActionCardId == card.id,
+            onSelect = { onSelect(card.id) },
+            onUpdate = { onUpdate(card.id, it) }
+        )
+    }
+}
+
+@Composable
+private fun ActionCardContent(
+    card: ActionCard,
+    selected: Boolean,
+    isUpdating: Boolean,
+    onSelect: () -> Unit,
+    onUpdate: (ActionCardUpdate) -> Unit
+) {
+    val commands = card.status.nextCommands()
+    var executionNote by rememberSaveable(card.id) { mutableStateOf("") }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(card.title, style = MaterialTheme.typography.titleSmall)
+            Text("状态：${card.status.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            card.executionNote?.let { Text("执行说明：$it") }
+            card.verificationOutcome?.let { Text("复盘结果：${it.name.lowercase()}") }
+            if (card.status.canViewVerificationSummary()) {
+                TextButton(onClick = onSelect, enabled = !isUpdating) {
+                    Text(if (selected) "已选择" else "查看验证")
                 }
-                TextButton(onClick = { onSelect(card.id) }) {
-                    Text(if (selectedActionCardId == card.id) "已选择" else "查看验证")
+            }
+            if (ActionCardCommand.START in commands) {
+                TextButton(onClick = { onUpdate(ActionCardUpdate.start()) }, enabled = !isUpdating) {
+                    Text("开始执行")
+                }
+            }
+            if (ActionCardCommand.CANCEL in commands) {
+                TextButton(onClick = { onUpdate(ActionCardUpdate.cancel()) }, enabled = !isUpdating) {
+                    Text("取消")
+                }
+            }
+            if (ActionCardCommand.COMPLETE in commands) {
+                OutlinedTextField(
+                    value = executionNote,
+                    onValueChange = { executionNote = it.take(500) },
+                    label = { Text("执行说明") },
+                    enabled = !isUpdating,
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                TextButton(
+                    onClick = { onUpdate(ActionCardUpdate.completed(executionNote.trim())) },
+                    enabled = !isUpdating && isValidExecutionNote(executionNote)
+                ) {
+                    Text("完成执行")
+                }
+            }
+            if (ActionCardCommand.VERIFY in commands) {
+                ActionCardVerificationOutcome.entries.forEach { outcome ->
+                    TextButton(onClick = { onUpdate(ActionCardUpdate.verified(outcome)) }, enabled = !isUpdating) {
+                        Text(outcome.name.lowercase())
+                    }
                 }
             }
         }
@@ -189,3 +252,18 @@ private fun VerificationSummaryContent(summary: ActionVerificationSummary) {
         }
     }
 }
+
+internal enum class ActionCardCommand { START, COMPLETE, VERIFY, CANCEL }
+
+internal fun ActionCardStatus.nextCommands(): Set<ActionCardCommand> = when (this) {
+    ActionCardStatus.PROPOSED -> setOf(ActionCardCommand.START, ActionCardCommand.CANCEL)
+    ActionCardStatus.IN_PROGRESS -> setOf(ActionCardCommand.COMPLETE, ActionCardCommand.CANCEL)
+    ActionCardStatus.COMPLETED -> setOf(ActionCardCommand.VERIFY)
+    ActionCardStatus.VERIFIED, ActionCardStatus.CANCELLED -> emptySet()
+}
+
+internal fun ActionCardStatus.canViewVerificationSummary(): Boolean =
+    this == ActionCardStatus.COMPLETED || this == ActionCardStatus.VERIFIED
+
+internal fun isValidExecutionNote(note: String): Boolean =
+    note.trim().isNotEmpty() && note.length <= 500

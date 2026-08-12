@@ -142,6 +142,31 @@ class OperationsViewModelTest {
         assertEquals(summary, viewModel.verificationSummary)
         assertEquals("Unable to load operations data", viewModel.requestError)
     }
+
+    @Test
+    fun `action card commands follow server status`() {
+        assertEquals(
+            setOf(ActionCardCommand.START, ActionCardCommand.CANCEL),
+            ActionCardStatus.PROPOSED.nextCommands()
+        )
+        assertEquals(
+            setOf(ActionCardCommand.COMPLETE, ActionCardCommand.CANCEL),
+            ActionCardStatus.IN_PROGRESS.nextCommands()
+        )
+        assertEquals(setOf(ActionCardCommand.VERIFY), ActionCardStatus.COMPLETED.nextCommands())
+        assertTrue(ActionCardStatus.VERIFIED.nextCommands().isEmpty())
+        assertTrue(ActionCardStatus.CANCELLED.nextCommands().isEmpty())
+        assertTrue(ActionCardStatus.COMPLETED.canViewVerificationSummary())
+        assertTrue(ActionCardStatus.VERIFIED.canViewVerificationSummary())
+        assertFalse(ActionCardStatus.IN_PROGRESS.canViewVerificationSummary())
+    }
+
+    @Test
+    fun `execution note requires meaningful text within 500 characters`() {
+        assertFalse(isValidExecutionNote("   "))
+        assertTrue(isValidExecutionNote("a".repeat(500)))
+        assertFalse(isValidExecutionNote("a".repeat(501)))
+    }
 }
 
 private class FakeOperationsRepository(
