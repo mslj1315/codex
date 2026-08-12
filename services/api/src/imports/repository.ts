@@ -138,6 +138,19 @@ export interface DiagnosticEvidence {
   changePercent: number;
 }
 
+export interface DiagnosticRunDetail {
+  id: string;
+  kind: "revenue_decline";
+  rangeStart: string;
+  rangeEnd: string;
+  priorRangeStart: string;
+  priorRangeEnd: string;
+  ruleVersion: string;
+  confidence: "high" | "medium";
+  createdAt: Date;
+  evidence: DiagnosticEvidence[];
+}
+
 export type ActionCardStatus = "proposed" | "in_progress" | "completed" | "verified" | "cancelled";
 export type ActionCardVerificationOutcome = "effective" | "ineffective" | "not_executed" | "data_insufficient";
 export interface CreateActionCardInput {
@@ -852,6 +865,31 @@ export class ImportRepository {
       action: "检查本周期订单量、客单价和重点套餐表现，选择一个可执行的门店或内容动作。",
       verificationMetric: "下一周期营业额与订单数",
       confidence: "high"
+    };
+  }
+
+  async getDiagnosticRun(scope: { id: string; enterpriseId: string; storeId: string }): Promise<DiagnosticRunDetail> {
+    const run = await this.database.query<Row>(
+      `SELECT id, kind, range_start, range_end, prior_range_start, prior_range_end, rule_version, confidence, created_at
+       FROM diagnostic_runs WHERE id = $1 AND enterprise_id = $2 AND store_id = $3`,
+      [scope.id, scope.enterpriseId, scope.storeId]
+    );
+    if (run.rowCount !== 1) throw new NotFoundError("Diagnostic run not found for enterprise and store");
+    const evidence = await this.database.query<Row>(
+      `SELECT metric_key, current_value, prior_value, change_percent
+       FROM diagnostic_evidence
+       WHERE diagnostic_run_id = $1 AND enterprise_id = $2 AND store_id = $3
+       ORDER BY metric_key`,
+      [scope.id, scope.enterpriseId, scope.storeId]
+    );
+    const row = run.rows[0];
+    return {
+      id: string(row.id), kind: "revenue_decline", rangeStart: dateOnly(row.range_start), rangeEnd: dateOnly(row.range_end),
+      priorRangeStart: dateOnly(row.prior_range_start), priorRangeEnd: dateOnly(row.prior_range_end),
+      ruleVersion: string(row.rule_version), confidence: row.confidence as "high" | "medium", createdAt: date(row.created_at),
+      evidence: evidence.rows.map((item) => ({
+        metricKey: "revenue", currentValue: Number(item.current_value), priorValue: Number(item.prior_value), changePercent: Number(item.change_percent)
+      }))
     };
   }
 

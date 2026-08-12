@@ -87,6 +87,20 @@ describe("data readiness", () => {
     await expect(database.query("SELECT id FROM diagnostic_runs")).resolves.toMatchObject({ rowCount: 2 });
   });
 
+  it("reads an immutable public diagnostic run only within its enterprise and store", async () => {
+    const diagnostic = await imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" });
+    await database.query("UPDATE fact_values SET value = 9999999 WHERE id = 'current-revenue'");
+
+    const detail = await imports.getDiagnosticRun({ id: diagnostic!.diagnosticRunId, enterpriseId: "ent_demo", storeId: "store_demo" });
+
+    expect(detail).toMatchObject({
+      id: diagnostic!.diagnosticRunId, kind: "revenue_decline", ruleVersion: "revenue_decline_v1",
+      evidence: [{ metricKey: "revenue", currentValue: 3826000, priorValue: 4400000, changePercent: -13.05 }]
+    });
+    expect(JSON.stringify(detail)).not.toMatch(/snapshot|factVersion|sourceBatch|sourceCandidate|objectKey/);
+    await expect(imports.getDiagnosticRun({ id: diagnostic!.diagnosticRunId, enterpriseId: "ent_demo", storeId: "store_other" })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
   it("does not diagnose a stable or improving revenue period", async () => {
     await database.query("UPDATE fact_values SET value = 4500000 WHERE id = 'current-revenue'");
     await expect(imports.getDeterministicDiagnostic({ enterpriseId: "ent_demo", storeId: "store_demo", rangeStart: "2026-08-01", rangeEnd: "2026-08-07" })).resolves.toBeNull();
