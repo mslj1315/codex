@@ -200,6 +200,9 @@ private fun ActionCardContent(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(card.title, style = MaterialTheme.typography.titleSmall)
+            verificationMetricKeysText(card.verificationMetricKeys)?.let { metricKeys ->
+                Text(metricKeys, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text("状态：${card.status.name.lowercase()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (card.diagnosticRunId != null) {
                 Text("来源：已关联记录证据", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -247,6 +250,9 @@ private fun ActionCardContent(
         }
     }
 }
+
+internal fun verificationMetricKeysText(metricKeys: List<String>): String? =
+    metricKeys.takeIf { it.isNotEmpty() }?.joinToString(prefix = "验证指标：", separator = "、")
 
 @Composable
 private fun VerificationSummaryContent(summary: ActionVerificationSummary) {

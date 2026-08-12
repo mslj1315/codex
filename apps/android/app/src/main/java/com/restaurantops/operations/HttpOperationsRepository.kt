@@ -27,6 +27,7 @@ data class ActionCard(
     val id: String,
     val status: ActionCardStatus,
     val title: String,
+    val verificationMetricKeys: List<String> = emptyList(),
     val diagnosticRunId: String? = null,
     val executionNote: String? = null,
     val verificationOutcome: ActionCardVerificationOutcome? = null
@@ -110,6 +111,7 @@ private fun toActionCard(response: ActionCardResponse) = ActionCard(
     id = response.id,
     status = response.status.toActionCardStatus(),
     title = response.title,
+    verificationMetricKeys = response.verificationMetricKeys,
     diagnosticRunId = response.diagnosticRunId,
     executionNote = response.executionNote,
     verificationOutcome = response.verificationOutcome?.toActionCardVerificationOutcome()

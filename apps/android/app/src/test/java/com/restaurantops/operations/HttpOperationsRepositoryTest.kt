@@ -12,6 +12,12 @@ import java.io.IOException
 
 class HttpOperationsRepositoryTest {
     @Test
+    fun `formats action verification metric keys for display`() {
+        assertNull(verificationMetricKeysText(emptyList()))
+        assertEquals("验证指标：revenue、orders", verificationMetricKeysText(listOf("revenue", "orders")))
+    }
+
+    @Test
     fun `maps readiness diagnostic and action card responses without source identifiers`() = runBlocking {
         val api = FakeOperationsApi()
         val repository = HttpOperationsRepository(api)
@@ -28,6 +34,7 @@ class HttpOperationsRepositoryTest {
         assertEquals("revenue_decline_v1", diagnostic.ruleVersion)
         assertEquals(DiagnosticEvidence("revenue", 3826000, 4400000, -13.05), diagnostic.evidence.single())
         assertEquals("action_1", cards.single().id)
+        assertEquals(listOf("revenue", "orders"), cards.single().verificationMetricKeys)
         assertEquals("revenue_decline_v1", detail.ruleVersion)
         assertEquals(DiagnosticEvidence("revenue", 3826000, 4400000, -13.05), detail.evidence.single())
         assertEquals("in_progress", api.status)
@@ -120,7 +127,7 @@ private class FakeOperationsApi : OperationsApi {
     )
     override suspend fun actionCards(storeId: String, status: String?): List<ActionCardResponse> {
         this.status = status
-        return listOf(ActionCardResponse("action_1", "revenue_decline", "2026-08-01", "2026-08-07", "检查午市套餐", "检查订单量", "下一周期营业额与订单数", "in_progress", null, null, null))
+        return listOf(ActionCardResponse("action_1", "revenue_decline", "2026-08-01", "2026-08-07", "检查午市套餐", "检查订单量", "下一周期营业额与订单数", "in_progress", null, null, null, verificationMetricKeys = listOf("revenue", "orders")))
     }
     override suspend fun verificationSummary(storeId: String, actionCardId: String) = verificationSummary
     override suspend fun updateActionCardStatus(
