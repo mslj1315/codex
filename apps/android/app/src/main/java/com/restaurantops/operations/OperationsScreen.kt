@@ -160,7 +160,7 @@ private fun DiagnosticContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        "规则版本：${diagnostic.ruleVersion}",
+                        "分析规则：${diagnostic.ruleVersion.diagnosticRuleDisplayName()}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     diagnostic.evidence.forEach { evidence -> Text(formatDiagnosticEvidence(evidence, presentations)) }
@@ -331,7 +331,7 @@ private fun RecordedDiagnosticEvidenceContent(
 ) {
     Text("已记录诊断依据", style = MaterialTheme.typography.titleSmall)
     Text(detail.kind.diagnosticDisplayName())
-    Text("规则版本：${detail.ruleVersion}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("分析规则：${detail.ruleVersion.diagnosticRuleDisplayName()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
     Text("置信度：${detail.confidence.displayName()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
     detail.evidence.forEach { evidence -> Text(formatDiagnosticEvidence(evidence, presentations)) }
 }
@@ -372,6 +372,11 @@ internal fun OperationsConfidence.displayName(): String = when (this) {
 internal fun String.diagnosticDisplayName(): String = when (this) {
     "revenue_decline" -> "营业额下降"
     else -> "经营诊断"
+}
+
+internal fun String.diagnosticRuleDisplayName(): String = when (this) {
+    "revenue_decline_v1" -> "营业额变化分析（第 1 版）"
+    else -> "已固化分析规则"
 }
 
 internal fun String.metricDisplayName(): String = "未命名指标"

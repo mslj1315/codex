@@ -302,6 +302,12 @@ class OperationsViewModelTest {
     }
 
     @Test
+    fun `diagnostic rule versions use store-facing labels with a neutral fallback`() {
+        assertEquals("营业额变化分析（第 1 版）", "revenue_decline_v1".diagnosticRuleDisplayName())
+        assertEquals("已固化分析规则", "future_provider_rule_v2".diagnosticRuleDisplayName())
+    }
+
+    @Test
     fun `execution note requires meaningful text within 500 characters`() {
         assertFalse(isValidExecutionNote("   "))
         assertTrue(isValidExecutionNote("a".repeat(500)))
