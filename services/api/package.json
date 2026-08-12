@@ -6,6 +6,7 @@
     "cleanup:imports": "tsx src/cleanup-import-files.ts",
     "reconcile:imports": "tsx src/reconcile-import-objects.ts",
     "maintenance:status": "tsx src/import-maintenance-status.ts",
+    "publish:metric-catalog": "tsx src/publish-metric-catalog.ts",
     "migrate": "tsx src/migrate.ts",
     "start": "tsx src/server.ts",
     "test": "vitest run",
