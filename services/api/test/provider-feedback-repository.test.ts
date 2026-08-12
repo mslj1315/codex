@@ -99,6 +99,29 @@ describe("provider feedback repository", () => {
     ]) expect(() => parseProviderFeedbackQuery(query)).toThrow();
   });
 
+  it("uses one repeatable-read snapshot and releases its client", async () => {
+    const calls: string[] = [];
+    const feedback = new ProviderFeedbackRepository({
+      async query() { throw new Error("pool query must not be used"); },
+      async connect() {
+        return {
+          async query(text: string) {
+            calls.push(text);
+            return text.startsWith("WITH scopes")
+              ? { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] }
+              : { rows: [], rowCount: 0, command: "BEGIN", oid: 0, fields: [] };
+          },
+          release() { calls.push("release"); }
+        } as never;
+      }
+    });
+
+    await expect(feedback.list({ now, limit: 1 })).resolves.toEqual({ items: [], hasMore: false });
+    expect(calls[0]).toBe("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    expect(calls[1]).toMatch(/^WITH scopes/);
+    expect(calls.slice(-2)).toEqual(["COMMIT", "release"]);
+  });
+
   async function seedImportOnly(input: { enterpriseId: string; storeId: string; importAt: string }) {
     await database.query(`INSERT INTO import_batches
       (id, enterprise_id, store_id, actor_id, source_type, original_file_name, original_file_checksum, status, created_at)
