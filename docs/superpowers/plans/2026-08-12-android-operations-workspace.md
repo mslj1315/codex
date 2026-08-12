@@ -89,7 +89,12 @@ object OperationsRuntime {
 }
 ```
 
-`UnavailableOperationsRepository` must implement each repository call by throwing `OperationsRequestException(0, "Unable to reach the operations service")`; it holds no sample data and calls no network code. Re-run green and commit with `feat(android): gate operations API runtime`.
+`UnavailableOperationsRepository` must implement each repository call by throwing
+`OperationsServiceUnavailableException`; it holds no sample data and calls no
+network code. Add private-set `isServiceUnavailable` state in
+`OperationsViewModel`; catch this exception before `OperationsRequestException`
+and set that state without presenting a network failure. Re-run green and commit
+with `feat(android): gate operations API runtime`.
 
 ### Task 3: Load Verification Summaries in the ViewModel
 
@@ -152,7 +157,7 @@ fun OperationsScreen(
 }
 ```
 
-- [ ] Render a scrollable operational surface: icon-only refresh button with tooltip, neutral loading/error state, readiness confidence/missing metrics, diagnosis or explicit no-diagnosis, action-card title/status rows, and public verification metrics after a card selection. The page creates or changes no cards.
+- [ ] Render a scrollable operational surface: icon-only refresh button with tooltip, a distinct service-not-configured state when `isServiceUnavailable` is true, neutral loading/error state for real request failures, readiness confidence/missing metrics, diagnosis or explicit no-diagnosis, action-card title/status rows, and public verification metrics after a card selection. The page creates or changes no cards.
 
 - [ ] In `WorkspaceRoot`, remember `OperationsRuntime.repository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)` and its ViewModel. Route the new tab to the screen with `store_demo`, `2026-08-01`, and `2026-08-07`. The unavailable source must show neutral connection state only, never demo results.
 
