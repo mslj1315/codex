@@ -77,13 +77,15 @@ export function ProviderCustomerEditor({
         {onClosed && <button className="secondary-button" disabled={state === "saving"} onClick={onClosed} type="button">Close</button>}
       </div>
       <form onSubmit={submit}>
-        <label>
+        <label htmlFor="customer-alias">
           Customer alias
-          <input maxLength={120} value={customerAlias} onChange={(event) => setCustomerAlias(event.target.value)} />
+          <input aria-label="Customer alias" id="customer-alias" value={customerAlias} onChange={(event) => setCustomerAlias(limitCodePoints(event.target.value, 120))} />
+          <span className="field-limit" aria-live="polite">{codePointCount(customerAlias)} / 120 characters</span>
         </label>
-        <label>
+        <label htmlFor="provider-note">
           Provider note
-          <textarea maxLength={2000} rows={5} value={providerNote} onChange={(event) => setProviderNote(event.target.value)} />
+          <textarea aria-label="Provider note" id="provider-note" rows={5} value={providerNote} onChange={(event) => setProviderNote(limitCodePoints(event.target.value, 2000))} />
+          <span className="field-limit" aria-live="polite">{codePointCount(providerNote)} / 2000 characters</span>
         </label>
         {state === "conflict" && (
           <div className="editor-message" role="status">
@@ -107,4 +109,12 @@ export function ProviderCustomerEditor({
 
 function emptyAsNull(value: string): string | null {
   return value === "" ? null : value;
+}
+
+function codePointCount(value: string): number {
+  return Array.from(value).length;
+}
+
+function limitCodePoints(value: string, limit: number): string {
+  return Array.from(value).slice(0, limit).join("");
 }

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderApiClient } from "./api";
@@ -21,8 +21,40 @@ describe("ProviderCustomerEditor", () => {
 
     expect(screen.getByLabelText("Customer alias")).toHaveValue("Pilot");
     expect(screen.getByLabelText("Provider note")).toHaveValue("Initial note");
-    expect(screen.getByLabelText("Customer alias")).toHaveAttribute("maxLength", "120");
-    expect(screen.getByLabelText("Provider note")).toHaveAttribute("maxLength", "2000");
+    expect(screen.getByText("5 / 120 characters")).toBeVisible();
+    expect(screen.getByText("12 / 2000 characters")).toBeVisible();
+  });
+
+  it("accepts and submits 120 non-BMP alias characters by Unicode code point", async () => {
+    const user = userEvent.setup();
+    const emojiAlias = "😀".repeat(120);
+    const api = apiWith(jsonResponse({ metadata: { customerAlias: emojiAlias, providerNote: null, version: 3, updatedAt: "2026-08-13T03:00:00.000Z" } }));
+    renderEditor({ api });
+
+    fireEvent.change(screen.getByLabelText("Customer alias"), { target: { value: emojiAlias } });
+    expect(screen.getByLabelText("Customer alias")).toHaveValue(emojiAlias);
+    expect(screen.getByText("120 / 120 characters")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(api.fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      body: JSON.stringify({ customerAlias: emojiAlias, providerNote: "Initial note", expectedVersion: 2 })
+    }));
+  });
+
+  it("accepts and submits 2000 non-BMP note characters and rejects code-point overflow", async () => {
+    const user = userEvent.setup();
+    const emojiNote = "🧪".repeat(2000);
+    const api = apiWith(jsonResponse({ metadata: { customerAlias: "Pilot", providerNote: emojiNote, version: 3, updatedAt: "2026-08-13T03:00:00.000Z" } }));
+    renderEditor({ api });
+
+    fireEvent.change(screen.getByLabelText("Provider note"), { target: { value: `${emojiNote}🧪` } });
+    expect(screen.getByLabelText("Provider note")).toHaveValue(emojiNote);
+    expect(screen.getByText("2000 / 2000 characters")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(api.fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      body: JSON.stringify({ customerAlias: "Pilot", providerNote: emojiNote, expectedVersion: 2 })
+    }));
   });
 
   it("submits one pending save with both fields and the current version", async () => {

@@ -81,6 +81,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .customer-editor label { display: grid; gap: 6px; color: #536159; font-size: 13px; font-weight: 700; }
 .customer-editor input, .customer-editor textarea { width: 100%; border: 1px solid #a9b5ae; border-radius: 5px; padding: 8px 10px; color: #17211d; background: white; }
 .customer-editor textarea { min-height: 110px; resize: vertical; }
+.field-limit { color: #64716a; font-size: 12px; font-weight: 500; }
 .customer-editor-actions { display: flex; justify-content: flex-end; }
 .editor-message, .customer-editor-message { padding: 12px; border-left: 3px solid #e9ac34; color: #536159; background: #fffdf7; }
 .editor-message p { margin: 0 0 10px; }
