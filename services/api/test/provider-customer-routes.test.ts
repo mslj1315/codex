@@ -3,7 +3,7 @@ import { DataType, newDb } from "pg-mem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "../src/db.js";
 import { hashPassword } from "../src/auth/credentials.js";
-import { ProviderCustomerMetadataRepository } from "../src/provider-customers/repository.js";
+import { ProviderCustomerMetadataRepository, providerCustomerScopeKey } from "../src/provider-customers/repository.js";
 import { buildServer } from "../src/server.js";
 
 const now = new Date("2026-08-13T00:00:00.000Z");
@@ -29,24 +29,48 @@ describe("provider customer routes", () => {
     }
     await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_viewer_editor', 'provider_feedback_viewer'), ('account_viewer_editor', 'provider_customer_metadata_editor'), ('account_editor', 'provider_customer_metadata_editor'), ('account_viewer', 'provider_feedback_viewer')");
     await seedConfirmedScope();
-    vi.spyOn(ProviderCustomerMetadataRepository.prototype, "listForScopes").mockResolvedValue(new Map());
+    vi.spyOn(ProviderCustomerMetadataRepository.prototype, "listForScopes").mockImplementation(async (scopes) => {
+      const metadata = new Map();
+      for (const scope of scopes) {
+        if (scope.enterpriseId === "ent_customer" && scope.storeId === "store_customer") {
+          metadata.set(providerCustomerScopeKey(scope), {
+            customerAlias: "Support alias", providerNote: "Support note", version: 3, updatedAt: now
+          });
+        }
+      }
+      return metadata;
+    });
     app = buildServer({ database, authTokenSecret: "a sufficiently long test signing secret", now: () => now, logger: captureInfoLogs(logs) });
   });
 
-  it("lists only confirmed aggregate feedback combined with the current metadata", async () => {
+  it("lists confirmed aggregate feedback with the current nested metadata", async () => {
     const accessToken = await login("viewer_editor");
     const response = await app.inject({ method: "GET", url: "/v1/provider-customers?limit=10", headers: bearer(accessToken) });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      items: [expect.objectContaining({ feedback: expect.objectContaining({ enterpriseId: "ent_customer", storeId: "store_customer" }), metadata: null })],
+    expect(response.json()).toEqual({
+      items: [{ feedback: {
+        enterpriseId: "ent_customer", storeId: "store_customer", lastSuccessfulImportAt: now.toISOString(),
+        lastConfirmedAt: now.toISOString(), activityState: "active", readinessState: "incomplete", missingMetricCount: 3,
+        diagnosticCounts: {}, actionCardStatusCounts: {}, verificationOutcomeCounts: {}, lastCoverageAt: now.toISOString()
+      }, metadata: { customerAlias: "Support alias", providerNote: "Support note", version: 3, updatedAt: now.toISOString() } }],
       nextCursor: null
     });
-    expect(response.body).not.toMatch(/customerAlias|providerNote|sentinel-alias|sentinel-private-note/);
+    expect(response.body).not.toMatch(/sentinel-alias|sentinel-private-note/);
     expect(logs.find((entry) => entry.event === "provider_customer_list_access")).toEqual(expect.objectContaining({
       accountId: "account_viewer_editor", role: "provider_feedback_viewer", outcome: "success", returnedCount: 1
     }));
     expect(JSON.stringify(logs)).not.toMatch(/ent_customer|store_customer|safe\.csv/i);
+  });
+
+  it("returns null metadata when the composed feedback scope has no metadata mapping", async () => {
+    await database.query("INSERT INTO action_cards (id, enterprise_id, store_id, created_by_actor_id, diagnostic_kind, range_start, range_end, title, action, verification_metric, status) VALUES ('action_without_metadata', 'ent_without_metadata', 'store_without_metadata', 'actor', 'manual', '2026-08-01', '2026-08-07', 'private', 'private', 'private', 'proposed')");
+    const accessToken = await login("viewer_editor");
+    const response = await app.inject({ method: "GET", url: "/v1/provider-customers?limit=10", headers: bearer(accessToken) });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ items: Array<{ feedback: { enterpriseId: string; storeId: string }; metadata: unknown }> }>().items)
+      .toContainEqual({ feedback: expect.objectContaining({ enterpriseId: "ent_without_metadata", storeId: "store_without_metadata" }), metadata: null });
   });
 
   it("requires the provider marker before write authentication and requires both roles without revealing scope existence", async () => {
