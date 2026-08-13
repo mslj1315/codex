@@ -146,7 +146,7 @@ Create a UI model with explicit states:
 
 Implement `OperationsHomeViewModel` with an injected clock (for deterministic 30-day freshness tests), `OperationsHomeRepository`, `OperationsRepository`, and coroutine scope/dispatcher matching existing `OperationsViewModel` conventions.
 
-After a period is returned, use `coroutineScope` and `async` to request `loadReadiness`, `loadDeterministicDiagnostic`, and `loadActionCards(storeId, status = "open")` concurrently for the exact returned range. Preserve the existing operations models rather than duplicating diagnostics or verification behavior.
+After a period is returned, use `coroutineScope` and `async` to request `loadReadiness`, `loadDeterministicDiagnostic`, and the existing unfiltered `loadActionCards` concurrently for the exact returned range. Locally retain only actionable `proposed` and `in_progress` cards because the current server contract has no `open` status. Preserve the existing operations models rather than duplicating diagnostics or verification behavior.
 
 **Step 3: Run focused ViewModel tests**
 
