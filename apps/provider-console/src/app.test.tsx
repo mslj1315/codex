@@ -100,6 +100,26 @@ describe("provider console application shell", () => {
     expect(session.snapshot()).toBeNull();
   });
 
+  it("clears the authenticated UI before a stalled browser logout completes", async () => {
+    const fetcher = vi.fn<typeof fetch>((input) => {
+      if (String(input) === "/v1/provider-auth/refresh") return Promise.resolve(jsonResponse(viewerSession));
+      if (String(input) === "/v1/provider-auth/logout") return new Promise<Response>(() => {});
+      return Promise.reject(new Error("Unexpected session request"));
+    });
+    const session = createSessionClient(fetcher);
+    const feedbackApi = feedbackApiResponse(jsonResponse(feedbackPage()));
+
+    render(<App session={session} feedbackApi={feedbackApi} />);
+    expect(await screen.findByText("ent-console")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(await screen.findByRole("button", { name: "Sign in" }, { timeout: 250 })).toBeVisible();
+    expect(screen.queryByText("ent-console")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Customer Feedback" })).not.toBeInTheDocument();
+    expect(fetcher.mock.calls.some(([input]) => String(input) === "/v1/provider-auth/logout")).toBe(true);
+    expect(session.snapshot()).toBeNull();
+  });
+
   it("shows the feedback workbench for a feedback viewer", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(viewerSession));
     const feedbackApi = feedbackApiResponse(jsonResponse(feedbackPage()));

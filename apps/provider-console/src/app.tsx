@@ -42,9 +42,9 @@ export function App({ session = sessionClient, feedbackApi = providerApiClient }
         session.clear();
         setState({ status: "anonymous" });
       }}
-      onLogout={async () => {
-        await session.logout();
+      onLogout={() => {
         setState({ status: "anonymous" });
+        return session.logout();
       }}
     />
   );
