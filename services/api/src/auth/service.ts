@@ -16,6 +16,7 @@ export interface AuthTokens {
 export interface ProviderCapabilities {
   providerFeedbackViewer: boolean;
   metricCatalogOperator: boolean;
+  providerCustomerMetadataEditor: boolean;
 }
 
 export class AuthorizationError extends Error {}
@@ -68,7 +69,8 @@ export class AuthService {
       account,
       capabilities: {
         providerFeedbackViewer: roles.has("provider_feedback_viewer"),
-        metricCatalogOperator: roles.has("metric_catalog_operator")
+        metricCatalogOperator: roles.has("metric_catalog_operator"),
+        providerCustomerMetadataEditor: roles.has("provider_customer_metadata_editor")
       }
     };
   }
@@ -86,8 +88,13 @@ export class AuthService {
   }
 
   async requireServiceOperatorRole(accessToken: string, role: ServiceOperatorRole): Promise<{ id: string; displayName: string }> {
+    return this.requireServiceOperatorRoles(accessToken, [role]);
+  }
+
+  async requireServiceOperatorRoles(accessToken: string, requiredRoles: readonly ServiceOperatorRole[]): Promise<{ id: string; displayName: string }> {
     const account = await this.authenticateAccessToken(accessToken);
-    if (!await this.repository.hasEnabledServiceOperatorRole(account.id, role)) {
+    const enabledRoles = new Set(await this.repository.listEnabledServiceOperatorRoles(account.id));
+    if (requiredRoles.some((role) => !enabledRoles.has(role))) {
       throw new AuthorizationError("Service role is not authorized");
     }
     return account;

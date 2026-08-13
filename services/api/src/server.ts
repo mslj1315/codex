@@ -11,6 +11,7 @@ import { registerProviderBrowserAuthRoutes } from "./auth/provider-browser-route
 import { AuthService } from "./auth/service.js";
 import { authenticatedContextResolver } from "./imports/routes.js";
 import { registerProviderFeedbackRoutes } from "./provider-feedback/routes.js";
+import { registerProviderCustomerRoutes } from "./provider-customers/routes.js";
 import { registerProviderConsoleStatic } from "./provider-console-static.js";
 
 export interface ServerOptions {
@@ -57,7 +58,11 @@ export function buildServer(options: ServerOptions = {}) {
       developmentMode: options.providerBrowserDevelopmentMode === true
     }));
   }
-  if (auth && database && !explicitContextResolver) app.register((instance) => registerProviderFeedbackRoutes(instance, { auth, database, now: options.now ?? (() => new Date()) }));
+  if (auth && database && !explicitContextResolver) {
+    const providerOptions = { auth, database, now: options.now ?? (() => new Date()) };
+    app.register((instance) => registerProviderFeedbackRoutes(instance, providerOptions));
+    app.register((instance) => registerProviderCustomerRoutes(instance, providerOptions));
+  }
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, {
       database,

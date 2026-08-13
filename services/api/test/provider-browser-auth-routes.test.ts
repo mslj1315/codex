@@ -23,6 +23,7 @@ describe("provider browser authentication routes", () => {
       ["account_viewer", "viewer", "Viewer", await hashPassword("passphrase", () => Buffer.alloc(16, 7))]
     );
     await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_viewer', 'provider_feedback_viewer')");
+    await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_viewer', 'provider_customer_metadata_editor')");
     app = buildServer({ database, authTokenSecret: "a sufficiently long test signing secret" });
   });
 
@@ -33,7 +34,7 @@ describe("provider browser authentication routes", () => {
     expect(response.json()).toEqual({
       accessToken: expect.any(String), expiresAt: expect.any(String),
       account: { id: "account_viewer", displayName: "Viewer" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: true }
     });
     expect(response.body).not.toContain("refreshToken");
     expect(cookie(response)).toMatch(/^provider_refresh=[A-Za-z0-9_-]+; HttpOnly; Secure; SameSite=Strict; Path=\/v1\/provider-auth\/; Max-Age=2592000$/);

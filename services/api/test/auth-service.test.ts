@@ -56,17 +56,20 @@ describe("auth service", () => {
     ]);
   });
 
-  it("requires the independent enabled provider feedback role", async () => {
+  it("requires every independent enabled provider role through one authorization check", async () => {
     const passwordHash = await hashPassword("passphrase", () => Buffer.alloc(16, 8));
     await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_viewer', 'viewer', 'Viewer', $1)", [passwordHash]);
     await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_catalog', 'catalog', 'Catalog', $1)", [passwordHash]);
+    await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_editor', 'editor', 'Editor', $1)", [passwordHash]);
     await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_disabled_viewer', 'disabled_viewer', 'Disabled viewer', $1)", [passwordHash]);
     await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_viewer', 'provider_feedback_viewer')");
     await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_catalog', 'metric_catalog_operator')");
+    await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_editor', 'provider_customer_metadata_editor')");
     await database.query("INSERT INTO service_operator_roles (account_id, role, enabled) VALUES ('account_disabled_viewer', 'provider_feedback_viewer', false)");
 
     const viewer = await service.login({ loginName: "viewer", password: "passphrase" });
     const catalog = await service.login({ loginName: "catalog", password: "passphrase" });
+    const editor = await service.login({ loginName: "editor", password: "passphrase" });
     const disabled = await service.login({ loginName: "disabled_viewer", password: "passphrase" });
 
     await expect(service.requireServiceOperatorRole(viewer.accessToken, "provider_feedback_viewer"))
@@ -75,6 +78,14 @@ describe("auth service", () => {
       .rejects.toBeInstanceOf(AuthorizationError);
     await expect(service.requireServiceOperatorRole(disabled.accessToken, "provider_feedback_viewer"))
       .rejects.toBeInstanceOf(AuthorizationError);
+    await expect(service.requireServiceOperatorRoles(viewer.accessToken, ["provider_feedback_viewer", "provider_customer_metadata_editor"]))
+      .rejects.toBeInstanceOf(AuthorizationError);
+    await expect(service.requireServiceOperatorRoles(editor.accessToken, ["provider_feedback_viewer", "provider_customer_metadata_editor"]))
+      .rejects.toBeInstanceOf(AuthorizationError);
+
+    await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_viewer', 'provider_customer_metadata_editor')");
+    await expect(service.requireServiceOperatorRoles(viewer.accessToken, ["provider_feedback_viewer", "provider_customer_metadata_editor"]))
+      .resolves.toEqual({ id: "account_viewer", displayName: "Viewer" });
   });
 
   it("returns exact provider capabilities from independent enabled service roles", async () => {
@@ -82,7 +93,7 @@ describe("auth service", () => {
 
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: false }
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: false, providerCustomerMetadataEditor: false }
     });
 
     await database.query(
@@ -90,7 +101,7 @@ describe("auth service", () => {
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: false }
     });
 
     await database.query(
@@ -101,7 +112,7 @@ describe("auth service", () => {
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: true }
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: true, providerCustomerMetadataEditor: false }
     });
 
     await database.query(
@@ -110,7 +121,14 @@ describe("auth service", () => {
     const providerSession = await service.providerSession(login.accessToken);
     expect(providerSession).toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: false }
+    });
+    await database.query(
+      "INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'provider_customer_metadata_editor')"
+    );
+    await expect(service.providerSession(login.accessToken)).resolves.toEqual({
+      account: { id: "account_owner", displayName: "Owner" },
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: true }
     });
     expect(JSON.stringify(providerSession)).not.toMatch(/loginName|passwordHash|refreshToken|sessionId|store_demo/);
   });

@@ -40,6 +40,7 @@ describe("provider feedback routes", () => {
     expect(denied.json()).toEqual({ error: "Provider feedback access is required" });
     expect(allowed.statusCode).toBe(200);
     expect(allowed.json()).toMatchObject({ items: [expect.objectContaining({ enterpriseId: "ent_feedback", storeId: "store_feedback", activityState: "active" })], nextCursor: null });
+    expect(allowed.body).not.toMatch(/metadata|customerAlias|providerNote/);
     expect(allowed.body).not.toMatch(/sentinel-file|sentinel-checksum|actor_sentinel|accessToken/i);
     const audit = logs.filter((entry) => entry.event === "provider_feedback_access");
     expect(audit).toHaveLength(3);

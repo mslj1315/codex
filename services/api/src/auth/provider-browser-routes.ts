@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { AuthenticationError } from "./tokens.js";
-import type { AuthService } from "./service.js";
+import type { AuthService, ProviderCapabilities } from "./service.js";
 import { clearProviderRefreshCookie, readProviderRefreshCookie, serializeProviderRefreshCookie } from "./cookies.js";
 
 export async function registerProviderBrowserAuthRoutes(
@@ -42,7 +42,7 @@ export async function registerProviderBrowserAuthRoutes(
 
 function browserSession(
   tokens: { accessToken: string; refreshToken: string; expiresAt: string },
-  session: { account: { id: string; displayName: string }; capabilities: { providerFeedbackViewer: boolean; metricCatalogOperator: boolean } },
+  session: { account: { id: string; displayName: string }; capabilities: ProviderCapabilities },
   reply: { header(name: string, value: string): unknown },
   developmentMode: boolean
 ) {
