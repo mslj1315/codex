@@ -155,6 +155,39 @@ describe("auth service", () => {
       .resolves.toMatchObject({ rows: [{ role: "provider_feedback_viewer" }] });
   });
 
+  it("grants the metadata editor role without changing an authenticated account", async () => {
+    const repository = new AuthRepository(database);
+    const login = await service.login({ loginName: "owner", password: "passphrase" });
+    const before = await database.query(
+      "SELECT password_hash FROM accounts WHERE id = 'account_owner'"
+    );
+    const membershipBefore = await database.query(
+      "SELECT enterprise_id, store_id, role, enabled FROM store_memberships WHERE account_id = 'account_owner'"
+    );
+
+    await expect(repository.grantServiceOperatorRole("account_owner", "provider_customer_metadata_editor")).resolves.toBe(true);
+
+    await expect(service.authenticateAccessToken(login.accessToken)).resolves.toEqual({ id: "account_owner", displayName: "Owner" });
+    await expect(database.query("SELECT password_hash FROM accounts WHERE id = 'account_owner'"))
+      .resolves.toEqual(before);
+    await expect(database.query("SELECT enterprise_id, store_id, role, enabled FROM store_memberships WHERE account_id = 'account_owner'"))
+      .resolves.toEqual(membershipBefore);
+    await expect(repository.listEnabledServiceOperatorRoles("account_owner"))
+      .resolves.toEqual(["provider_customer_metadata_editor"]);
+  });
+
+  it("does not create a role row for a missing or disabled account", async () => {
+    const repository = new AuthRepository(database);
+    await database.query(
+      "INSERT INTO accounts (id, login_name, display_name, password_hash, enabled) VALUES ('account_disabled', 'disabled', 'Disabled', 'hash', false)"
+    );
+
+    await expect(repository.grantServiceOperatorRole("account_missing", "provider_customer_metadata_editor")).resolves.toBe(false);
+    await expect(repository.grantServiceOperatorRole("account_disabled", "provider_customer_metadata_editor")).resolves.toBe(false);
+    await expect(database.query("SELECT account_id FROM service_operator_roles WHERE role = 'provider_customer_metadata_editor'"))
+      .resolves.toMatchObject({ rowCount: 0 });
+  });
+
   it("revokes existing sessions when controlled provisioning resets a password", async () => {
     const login = await service.login({ loginName: "owner", password: "passphrase" });
     await new AuthRepository(database).provision({

@@ -25,6 +25,27 @@ describe("account provisioning CLI", () => {
     expect(harness.output.join("\n")).not.toContain(environment.PROVISION_PASSWORD);
   });
 
+  it.each([
+    "metric_catalog_operator",
+    "provider_feedback_viewer",
+    "provider_customer_metadata_editor"
+  ] as const)("passes the exact configured %s service role to the provisioner", async (serviceOperatorRole) => {
+    const harness = createHarness();
+
+    await runProvisionAccount({ ...environment, PROVISION_SERVICE_OPERATOR_ROLE: serviceOperatorRole }, harness.dependencies);
+
+    expect(harness.provisionInput?.serviceOperatorRole).toBe(serviceOperatorRole);
+  });
+
+  it.each(["provider_customer_metadata_editor_extra", "administrator"])
+  ("rejects arbitrary service role %s before opening a database", async (serviceOperatorRole) => {
+    const harness = createHarness();
+
+    await expect(runProvisionAccount({ ...environment, PROVISION_SERVICE_OPERATOR_ROLE: serviceOperatorRole }, harness.dependencies))
+      .rejects.toThrow("PROVISION_SERVICE_OPERATOR_ROLE is invalid");
+    expect(harness.events).toEqual([]);
+  });
+
   it("rejects missing configuration before opening a database", async () => {
     const harness = createHarness();
 
@@ -49,7 +70,7 @@ describe("account provisioning CLI", () => {
 });
 
 function createHarness(failure?: Error) {
-  const state = { events: [] as string[], output: [] as string[] };
+  const state = { events: [] as string[], output: [] as string[], provisionInput: undefined as { serviceOperatorRole?: string } | undefined };
   const dependencies: ProvisionAccountDependencies = {
     createDatabase() {
       state.events.push("database");
@@ -60,7 +81,8 @@ function createHarness(failure?: Error) {
         async provision(input) {
           state.events.push("provision");
           if (failure) throw failure;
-          expect(input).toMatchObject({ loginName: "owner", storeRole: "owner", serviceOperatorRole: "provider_feedback_viewer" });
+          state.provisionInput = input;
+          expect(input).toMatchObject({ loginName: "owner", storeRole: "owner" });
           return { accountId: "account_owner", membershipGranted: true, serviceOperatorRoleGranted: true };
         }
       };

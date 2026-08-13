@@ -2,7 +2,10 @@ import type { Database, Queryable } from "../db.js";
 import { randomUUID } from "node:crypto";
 
 export type StoreRole = "owner" | "operator";
-export type ServiceOperatorRole = "metric_catalog_operator" | "provider_feedback_viewer";
+export type ServiceOperatorRole =
+  | "metric_catalog_operator"
+  | "provider_feedback_viewer"
+  | "provider_customer_metadata_editor";
 
 export interface AuthAccount {
   id: string;
@@ -100,6 +103,24 @@ export class AuthRepository {
       [accountId]
     );
     return result.rows.map((row) => row.role as ServiceOperatorRole);
+  }
+
+  async grantServiceOperatorRole(accountId: string, role: ServiceOperatorRole): Promise<boolean> {
+    return this.transaction(async (client) => {
+      const account = await client.query(
+        "SELECT id FROM accounts WHERE id = $1 AND enabled = true FOR UPDATE",
+        [accountId]
+      );
+      if (account.rowCount !== 1) return false;
+      await client.query(
+        `INSERT INTO service_operator_roles (account_id, role, enabled)
+         VALUES ($1, $2, true)
+         ON CONFLICT (account_id, role)
+         DO UPDATE SET enabled = true, updated_at = CURRENT_TIMESTAMP`,
+        [accountId, role]
+      );
+      return true;
+    });
   }
 
   async provision(input: {

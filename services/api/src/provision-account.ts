@@ -1,9 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { createDatabase, type Database } from "./db.js";
 import { hashPassword } from "./auth/credentials.js";
-import { AuthRepository, type StoreRole } from "./auth/repository.js";
-
-type ServiceOperatorRole = "metric_catalog_operator" | "provider_feedback_viewer";
+import { AuthRepository, type ServiceOperatorRole, type StoreRole } from "./auth/repository.js";
 
 export interface ProvisionAccountResult {
   accountId: string;
@@ -100,6 +98,6 @@ function role(value: string): StoreRole {
 }
 
 function providerRole(value: string): ServiceOperatorRole {
-  if (value === "metric_catalog_operator" || value === "provider_feedback_viewer") return value;
+  if (value === "metric_catalog_operator" || value === "provider_feedback_viewer" || value === "provider_customer_metadata_editor") return value;
   throw new Error("PROVISION_SERVICE_OPERATOR_ROLE is invalid");
 }

@@ -39,7 +39,7 @@ CREATE INDEX store_memberships_store_idx
 
 CREATE TABLE service_operator_roles (
   account_id TEXT NOT NULL REFERENCES accounts (id),
-  role TEXT NOT NULL CHECK (role IN ('metric_catalog_operator', 'provider_feedback_viewer')),
+  role TEXT NOT NULL CONSTRAINT service_operator_roles_role_check CHECK (role IN ('metric_catalog_operator', 'provider_feedback_viewer')),
   enabled BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

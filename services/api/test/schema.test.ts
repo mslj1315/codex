@@ -261,7 +261,8 @@ describe("import repository", () => {
     expect(migration).toContain("CREATE TABLE account_sessions");
     expect(migration).toContain("CREATE TABLE store_memberships");
     expect(migration).toContain("CREATE TABLE service_operator_roles");
-    expect(migration).toContain("role IN ('metric_catalog_operator', 'provider_feedback_viewer')");
+    expect(migration).toContain("provider_customer_metadata_editor");
+    expect(migration).toContain("CREATE TABLE provider_customer_metadata");
 
     await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_owner', 'owner', 'Owner', 'hash')");
     await expect(database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('account_duplicate', 'owner', 'Duplicate', 'hash')")).rejects.toThrow();
@@ -269,6 +270,18 @@ describe("import repository", () => {
     await expect(database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('account_owner', 'ent_demo', 'store_demo', 'owner')")).rejects.toThrow();
     await expect(database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('account_owner', 'ent_other', 'store_demo', 'operator')")).rejects.toThrow();
     await expect(database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'unsupported')")).rejects.toThrow();
+    await database.query(
+      "INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'provider_customer_metadata_editor')"
+    );
+    await database.query(`INSERT INTO provider_customer_metadata
+      (enterprise_id, store_id, customer_alias, provider_note, version, updated_by_account_id)
+      VALUES ('ent_demo', 'store_demo', 'Pilot', 'Internal note', 1, 'account_owner')`);
+    await expect(database.query(`INSERT INTO provider_customer_metadata
+      (enterprise_id, store_id, customer_alias, version, updated_by_account_id)
+      VALUES ('ent_demo', 'store_demo', 'Duplicate', 1, 'account_owner')`)).rejects.toThrow();
+    await expect(database.query(`INSERT INTO provider_customer_metadata
+      (enterprise_id, store_id, customer_alias, version, updated_by_account_id)
+      VALUES ('ent_other', 'store_other', 'Invalid', 0, 'account_owner')`)).rejects.toThrow();
   });
 
   it("keeps diagnostic evidence immutable, scoped, and uniquely snapshotted", async () => {

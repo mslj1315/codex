@@ -8,6 +8,7 @@
     "maintenance:status": "tsx src/import-maintenance-status.ts",
     "publish:metric-catalog": "tsx src/publish-metric-catalog.ts",
     "provision:account": "tsx src/provision-account.ts",
+    "grant:service-role": "tsx src/grant-service-role.ts",
     "migrate": "tsx src/migrate.ts",
     "start": "tsx src/server.ts",
     "test": "vitest run",
