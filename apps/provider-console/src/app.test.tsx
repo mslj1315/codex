@@ -195,6 +195,27 @@ describe("provider console application shell", () => {
 
     expect(await screen.findByRole("button", { name: "Edit customer details" })).toBeVisible();
   });
+
+  it("keeps the authenticated shell after metadata editing is forbidden", async () => {
+    const user = userEvent.setup();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sessionWithCapabilities(true, false, true)));
+    const feedbackApi = feedbackApiResponses(
+      jsonResponse(feedbackPage()),
+      new Response(null, { status: 403 })
+    );
+    const session = createSessionClient(fetcher);
+
+    render(<App session={session} feedbackApi={feedbackApi} />);
+    await user.click(await screen.findByRole("button", { name: "Edit customer details" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByRole("heading", { name: "Customer Feedback" });
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit customer details" })).not.toBeInTheDocument();
+    expect(session.snapshot()).not.toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });
 
 function sessionWithCapabilities(
@@ -217,6 +238,12 @@ function jsonResponse(value: unknown): Response {
 
 function feedbackApiResponse(response: Response): ProviderApiClient & { fetch: ReturnType<typeof vi.fn> } {
   return { fetch: vi.fn().mockResolvedValue(response) };
+}
+
+function feedbackApiResponses(...responses: Response[]): ProviderApiClient & { fetch: ReturnType<typeof vi.fn> } {
+  const fetch = vi.fn();
+  for (const response of responses) fetch.mockResolvedValueOnce(response);
+  return { fetch };
 }
 
 function feedbackPage() {

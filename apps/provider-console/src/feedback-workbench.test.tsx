@@ -136,6 +136,58 @@ describe("read-only feedback workbench", () => {
     expect(await screen.findByText("Normalized")).toBeVisible();
     expect(screen.queryByText("Internal note")).not.toBeInTheDocument();
   });
+
+  it("removes all local edit controls after metadata saving is forbidden without requesting authentication", async () => {
+    const user = userEvent.setup();
+    const onAuthenticationRequired = vi.fn();
+    const api = apiWithResponses(
+      jsonResponse(pagePayload([feedbackRow("ent-alpha", "store-1"), feedbackRow("ent-beta", "store-2")], null)),
+      new Response(null, { status: 403 })
+    );
+    render(<FeedbackWorkbench api={api} canEditMetadata onAuthenticationRequired={onAuthenticationRequired} />);
+    await user.click((await screen.findAllByRole("button", { name: "Edit customer details" }))[0]);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Edit customer details" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(onAuthenticationRequired).not.toHaveBeenCalled();
+  });
+
+  it("reloads the current filtered first page after an explicit conflict reload while preserving local search", async () => {
+    const user = userEvent.setup();
+    const api = apiWithResponses(
+      jsonResponse(pagePayload([feedbackRow("ent-default", "store-default")], "default-cursor")),
+      jsonResponse(pagePayload([feedbackRow("ent-history", "store-history")], null)),
+      jsonResponse(pagePayload([feedbackRow("ent-stale", "store-stale")], "stale-cursor")),
+      jsonResponse(pagePayload([{ feedback: feedbackRow("ent-target", "store-target"), metadata: {
+        customerAlias: "Pilot", providerNote: "Before reload", version: 2, updatedAt: "2026-08-13T02:00:00.000Z"
+      } }], "target-cursor")),
+      new Response(null, { status: 409 }),
+      jsonResponse(pagePayload([{ feedback: feedbackRow("ent-target", "store-target"), metadata: {
+        customerAlias: "Pilot Latest", providerNote: "Latest note", version: 3, updatedAt: "2026-08-13T03:00:00.000Z"
+      } }], null))
+    );
+    render(<FeedbackWorkbench api={api} canEditMetadata />);
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+    await screen.findByText("ent-history");
+    await user.selectOptions(screen.getByLabelText("Activity"), "stale");
+    await screen.findByText("ent-stale");
+    await user.selectOptions(screen.getByLabelText("Readiness"), "incomplete");
+    await screen.findByText("Pilot");
+    await user.type(screen.getByLabelText("Current page search"), "pilot");
+    await user.click(screen.getByRole("button", { name: "Edit customer details" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("button", { name: "Reload" });
+
+    expect(api.fetch).toHaveBeenCalledTimes(5);
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+
+    expect(await screen.findByText("Pilot Latest")).toBeVisible();
+    expect(screen.getByLabelText("Current page search")).toHaveValue("pilot");
+    expect(api.fetch).toHaveBeenLastCalledWith("/v1/provider-customers?limit=50&activityState=stale&readinessState=incomplete");
+    expect(api.fetch.mock.calls.at(-1)?.[0]).not.toContain("cursor=");
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
   it("loads the default page and renders aggregate identifiers, times, states, and count maps", async () => {
     const api = apiWithResponses(jsonResponse(pagePayload([feedbackRow("ent-alpha", "store-1")])));
 

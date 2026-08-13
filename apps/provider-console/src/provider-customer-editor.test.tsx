@@ -112,7 +112,7 @@ describe("ProviderCustomerEditor", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument());
     expect(onAuthenticationRequired).not.toHaveBeenCalled();
 
-    rerender(<ProviderCustomerEditor key="new-editor" api={apiWith(new Response(null, { status: 401 }))} item={item} onAuthenticationRequired={onAuthenticationRequired} onReloadRequested={vi.fn()} onSaved={vi.fn()} />);
+    rerender(<ProviderCustomerEditor key="new-editor" api={apiWith(new Response(null, { status: 401 }))} item={item} onAuthenticationRequired={onAuthenticationRequired} onEditingForbidden={vi.fn()} onReloadRequested={vi.fn()} onSaved={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onAuthenticationRequired).toHaveBeenCalledTimes(1));
   });
@@ -124,6 +124,7 @@ function renderEditor(overrides: Partial<React.ComponentProps<typeof ProviderCus
     api: apiWith(jsonResponse({ metadata: item.metadata })),
     onSaved: vi.fn(),
     onAuthenticationRequired: vi.fn(),
+    onEditingForbidden: vi.fn(),
     onReloadRequested: vi.fn(),
     ...overrides
   };

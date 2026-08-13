@@ -28,6 +28,7 @@ export function FeedbackWorkbench({ api, onAuthenticationRequired = noAuthentica
   const [search, setSearch] = useState("");
   const [requestVersion, setRequestVersion] = useState(0);
   const [editingItem, setEditingItem] = useState<ProviderCustomerItem | null>(null);
+  const [editingAvailable, setEditingAvailable] = useState(canEditMetadata);
   const pageGeneration = useRef(0);
 
   useEffect(() => {
@@ -118,13 +119,13 @@ export function FeedbackWorkbench({ api, onAuthenticationRequired = noAuthentica
       {loadState === "denied" && <div className="feedback-message">Feedback access is not available for this account.</div>}
       {loadState === "ready" && page.items.length === 0 && <div className="feedback-message">No customer feedback is available.</div>}
       {loadState === "ready" && page.items.length > 0 && visibleItems.length === 0 && <div className="feedback-message">No identifiers on this loaded page match your search.</div>}
-      {loadState === "ready" && visibleItems.length > 0 && <FeedbackTable canEditMetadata={canEditMetadata} items={visibleItems} onEdit={setEditingItem} />}
+      {loadState === "ready" && visibleItems.length > 0 && <FeedbackTable canEditMetadata={editingAvailable} items={visibleItems} onEdit={setEditingItem} />}
       {loadState === "ready" && page.nextCursor && (
         <button disabled={loadingMore} onClick={() => void loadMore()} type="button">
           {loadingMore ? "Loading more" : "Load more"}
         </button>
       )}
-      {editingItem && canEditMetadata && (
+      {editingItem && editingAvailable && (
         <ProviderCustomerEditor
           api={api}
           item={editingItem}
@@ -133,6 +134,10 @@ export function FeedbackWorkbench({ api, onAuthenticationRequired = noAuthentica
           onReloadRequested={() => {
             setEditingItem(null);
             setRequestVersion((version) => version + 1);
+          }}
+          onEditingForbidden={() => {
+            setEditingItem(null);
+            setEditingAvailable(false);
           }}
           onSaved={(metadata) => {
             replaceMetadata(editingItem, metadata);

@@ -12,6 +12,7 @@ export interface ProviderCustomerEditorProps {
   onSaved(metadata: ProviderCustomerMetadata | null): void;
   onAuthenticationRequired(): void;
   onReloadRequested(): void;
+  onEditingForbidden(): void;
   onClosed?(): void;
 }
 
@@ -23,6 +24,7 @@ export function ProviderCustomerEditor({
   onSaved,
   onAuthenticationRequired,
   onReloadRequested,
+  onEditingForbidden,
   onClosed
 }: ProviderCustomerEditorProps) {
   const [customerAlias, setCustomerAlias] = useState(item.metadata?.customerAlias ?? "");
@@ -47,6 +49,7 @@ export function ProviderCustomerEditor({
       }
       if (status === 403) {
         setState("forbidden");
+        onEditingForbidden();
         onClosed?.();
         return;
       }
