@@ -46,10 +46,9 @@ export class ProviderCustomerMetadataRepository {
 
     const values = scopes.flatMap((scope) => [scope.enterpriseId, scope.storeId]);
     const placeholders = scopes.map((_, index) => `($${index * 2 + 1}, $${index * 2 + 2})`).join(", ");
-    const result = await this.database.query<MetadataRow>(`SELECT metadata.enterprise_id, metadata.store_id, metadata.customer_alias, metadata.provider_note, metadata.version, metadata.updated_at
-      FROM provider_customer_metadata AS metadata
-      JOIN (VALUES ${placeholders}) AS requested(enterprise_id, store_id)
-        ON metadata.enterprise_id = requested.enterprise_id AND metadata.store_id = requested.store_id`, values);
+    const result = await this.database.query<MetadataRow>(`SELECT enterprise_id, store_id, customer_alias, provider_note, version, updated_at
+      FROM provider_customer_metadata
+      WHERE (enterprise_id, store_id) IN (VALUES ${placeholders})`, values);
     return new Map(result.rows.map((row) => [
       providerCustomerScopeKey({ enterpriseId: row.enterprise_id, storeId: row.store_id }),
       toMetadata(row)

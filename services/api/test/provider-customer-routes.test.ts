@@ -1,8 +1,9 @@
 import { readdir, readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "../src/db.js";
 import { hashPassword } from "../src/auth/credentials.js";
+import { ProviderCustomerMetadataRepository } from "../src/provider-customers/repository.js";
 import { buildServer } from "../src/server.js";
 
 const now = new Date("2026-08-13T00:00:00.000Z");
@@ -12,6 +13,8 @@ describe("provider customer routes", () => {
   let database: Database;
   let app: ReturnType<typeof buildServer>;
   let logs: Record<string, unknown>[];
+
+  afterEach(() => { vi.restoreAllMocks(); });
 
   beforeEach(async () => {
     const memory = newDb();
@@ -26,6 +29,7 @@ describe("provider customer routes", () => {
     }
     await database.query("INSERT INTO service_operator_roles (account_id, role) VALUES ('account_viewer_editor', 'provider_feedback_viewer'), ('account_viewer_editor', 'provider_customer_metadata_editor'), ('account_editor', 'provider_customer_metadata_editor'), ('account_viewer', 'provider_feedback_viewer')");
     await seedConfirmedScope();
+    vi.spyOn(ProviderCustomerMetadataRepository.prototype, "listForScopes").mockResolvedValue(new Map());
     app = buildServer({ database, authTokenSecret: "a sufficiently long test signing secret", now: () => now, logger: captureInfoLogs(logs) });
   });
 

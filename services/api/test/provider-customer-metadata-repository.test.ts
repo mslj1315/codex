@@ -134,7 +134,7 @@ describe("provider customer metadata repository", () => {
     const items = await observedRepository.listForScopes([first, second]);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].text).toContain("JOIN (VALUES ($1, $2), ($3, $4)) AS requested(enterprise_id, store_id)");
+    expect(calls[0].text).toContain("IN (VALUES ($1, $2), ($3, $4))");
     expect(calls[0].values).toEqual(["a|b", "c", "a", "b|c"]);
     expect(items.get(providerCustomerScopeKey(first))).toMatchObject({ customerAlias: "First" });
     expect(items.get(providerCustomerScopeKey(second))).toMatchObject({ customerAlias: "Second" });
