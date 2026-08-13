@@ -73,4 +73,9 @@ describe("content planning store profile", () => {
     const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload: { storeName: "本租户", industryCode: "fast_food", categoryCode: "rice", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" } });
     expect(created.json().version).toBe(1);
   });
+
+  it("returns forbidden for a trusted request targeting another store", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_other/content-profile" });
+    expect(response.statusCode).toBe(403);
+  });
 });

@@ -34,6 +34,8 @@ export class ProfileRepository {
     const client = await database.connect();
     try {
       await client.query("BEGIN");
+      await client.query("INSERT INTO store_content_profile_version_locks (enterprise_id, store_id) VALUES ($1, $2) ON CONFLICT (enterprise_id, store_id) DO NOTHING", [scope.enterpriseId, scope.storeId]);
+      await client.query("SELECT enterprise_id FROM store_content_profile_version_locks WHERE enterprise_id = $1 AND store_id = $2 FOR UPDATE", [scope.enterpriseId, scope.storeId]);
       const latest = await client.query<Row>(`SELECT COALESCE(MAX(version), 0) AS version FROM store_content_profile_versions WHERE enterprise_id = $1 AND store_id = $2`, [scope.enterpriseId, scope.storeId]);
       const version = Number(latest.rows[0].version) + 1;
       const result = await client.query<Row>(`INSERT INTO store_content_profile_versions (id, enterprise_id, store_id, version, store_name, industry_code, category_code, category_custom_name, province_code, city_code, district_code, detailed_address, business_district_type, business_district_note, operating_mode, created_by_actor_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`, [randomUUID(), scope.enterpriseId, scope.storeId, version, input.storeName.trim(), input.industryCode.trim(), input.categoryCode.trim(), nullableTrim(input.categoryCustomName), input.provinceCode.trim(), input.cityCode.trim(), input.districtCode.trim(), input.detailedAddress.trim(), input.businessDistrictType.trim(), nullableTrim(input.businessDistrictNote), input.operatingMode.trim(), scope.actorId]);

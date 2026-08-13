@@ -20,6 +20,12 @@ CREATE TABLE store_content_profile_versions (
   UNIQUE (id, enterprise_id, store_id)
 );
 
+CREATE TABLE store_content_profile_version_locks (
+  enterprise_id TEXT NOT NULL,
+  store_id TEXT NOT NULL,
+  PRIMARY KEY (enterprise_id, store_id)
+);
+
 CREATE TABLE store_operating_stages (
   id TEXT PRIMARY KEY,
   enterprise_id TEXT NOT NULL,
