@@ -16,7 +16,7 @@ CREATE TABLE store_content_profile_versions (
   operating_mode TEXT NOT NULL,
   created_by_actor_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (store_id, version),
+  UNIQUE (enterprise_id, store_id, version),
   UNIQUE (id, enterprise_id, store_id)
 );
 
@@ -39,3 +39,21 @@ CREATE INDEX store_content_profile_current_idx
   ON store_content_profile_versions (enterprise_id, store_id, version DESC);
 CREATE INDEX store_operating_stages_store_idx
   ON store_operating_stages (enterprise_id, store_id, effective_date DESC);
+
+-- Content profile and operating stage history is append-only. Corrections create a new version/stage.
+CREATE OR REPLACE FUNCTION reject_content_profile_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'content planning history is append-only';
+END;
+$$;
+
+CREATE TRIGGER store_content_profile_versions_append_only
+BEFORE UPDATE OR DELETE ON store_content_profile_versions
+FOR EACH ROW EXECUTE FUNCTION reject_content_profile_mutation();
+
+CREATE TRIGGER store_operating_stages_append_only
+BEFORE UPDATE OR DELETE ON store_operating_stages
+FOR EACH ROW EXECUTE FUNCTION reject_content_profile_mutation();

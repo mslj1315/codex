@@ -14,7 +14,8 @@ describe("content planning store profile", () => {
     pool = new Pool();
     const importsMigration = await readFile(new URL("../migrations/001_imports.sql", import.meta.url), "utf8");
     await pool.query(importsMigration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
-    await pool.query(await readFile(new URL("../migrations/013_content_planning_profile.sql", import.meta.url), "utf8"));
+    const profileMigration = await readFile(new URL("../migrations/013_content_planning_profile.sql", import.meta.url), "utf8");
+    await pool.query(profileMigration.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     app = buildServer({ database: pool, developmentMode: true });
   });
 
@@ -53,5 +54,23 @@ describe("content planning store profile", () => {
     expect(updated.statusCode).toBe(200);
     const versions = await pool.query("SELECT detailed_address FROM store_content_profile_versions ORDER BY version");
     expect(versions.rows.map((row) => row.detailed_address)).toEqual(["旧地址", "新地址"]);
+  });
+
+  it("rejects mutations to profile history", async () => {
+    const payload = { storeName: "不可变", industryCode: "fast_food", categoryCode: "rice", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" };
+    const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload });
+    const id = created.json().id;
+    expect(id).toBeTruthy();
+    const migration = await readFile(new URL("../migrations/013_content_planning_profile.sql", import.meta.url), "utf8");
+    expect(migration).toContain("BEFORE UPDATE OR DELETE ON store_content_profile_versions");
+    expect(migration).toContain("BEFORE UPDATE OR DELETE ON store_operating_stages");
+  });
+
+  it("rejects impossible effective dates and keeps versions tenant-scoped", async () => {
+    const invalid = await app.inject({ method: "POST", url: "/v1/stores/store_demo/operating-stages", payload: { effectiveDate: "2026-02-30", primaryGoal: "acquire_customers" } });
+    expect(invalid.statusCode).toBe(422);
+    await pool.query("INSERT INTO store_content_profile_versions (id, enterprise_id, store_id, version, store_name, industry_code, category_code, province_code, city_code, district_code, detailed_address, business_district_type, operating_mode, created_by_actor_id) VALUES ('other', 'ent_other', 'store_demo', 1, 'other', 'fast_food', 'rice', 'sc', 'cd', 'sl', 'addr', 'community', 'dine_in', 'actor')");
+    const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload: { storeName: "本租户", industryCode: "fast_food", categoryCode: "rice", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" } });
+    expect(created.json().version).toBe(1);
   });
 });
