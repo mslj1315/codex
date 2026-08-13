@@ -12,8 +12,8 @@ export async function registerProfileRoutes(app: FastifyInstance, database: Data
     request.trustedContext = context;
   });
   app.get("/v1/stores/:storeId/content-profile", async (request) => repository.getCurrentProfile(scope(request)));
-  app.post("/v1/stores/:storeId/content-profile", async (request, reply) => reply.code(201).send(await repository.saveProfile(scope(request), request.body as ContentProfileInput)));
-  app.put("/v1/stores/:storeId/content-profile", async (request) => repository.saveProfile(scope(request), request.body as ContentProfileInput));
+  app.post("/v1/stores/:storeId/content-profile", async (request, reply) => reply.code(201).send(await repository.saveProfile(scope(request), contentProfileBody(request.body))));
+  app.put("/v1/stores/:storeId/content-profile", async (request) => repository.saveProfile(scope(request), contentProfileBody(request.body)));
   app.get("/v1/stores/:storeId/operating-stages", async (request) => repository.listStages(scope(request)));
   app.post("/v1/stores/:storeId/operating-stages", async (request, reply) => reply.code(201).send(await repository.createStage(scope(request), request.body as OperatingStageInput)));
   app.setErrorHandler((error, _request, reply) => {
@@ -30,4 +30,9 @@ function scope(request: FastifyRequest): TrustedContext {
   const context = request.trustedContext;
   if (!context || context.storeId !== storeId) throw new ForbiddenError("Store is outside trusted request context");
   return context;
+}
+
+function contentProfileBody(value: unknown): ContentProfileInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ProfileValidationError("Request body must be an object");
+  return value as ContentProfileInput;
 }

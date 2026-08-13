@@ -17,14 +17,14 @@ class ContentProfileViewModel(private val repository: ContentProfileRepository) 
         state = state.copy(loading = true, error = null)
         runCatching { repository.getProfile(storeId) to repository.listOperatingStages(storeId) }
             .onSuccess { (profile, stages) -> state = ContentProfileState(profile, stages, loaded = true) }
-            .onFailure { state = state.copy(loading = false, loaded = true, error = it.message) }
+            .onFailure { state = state.copy(loading = false, loaded = true, error = (it as? ContentProfileHttpException)?.neutralMessage ?: "暂时无法加载门店档案" ) }
     }
 
     fun submit(storeId: String, profile: StoreContentProfile, existing: Boolean) = viewModelScope.launch {
         if (profile.missingRequiredFields().isNotEmpty()) { state = state.copy(error = "required profile fields missing"); return@launch }
         runCatching { if (existing) repository.updateProfile(storeId, profile) else repository.createProfile(storeId, profile) }
             .onSuccess { state = state.copy(profile = it, error = null) }
-            .onFailure { state = state.copy(error = it.message) }
+            .onFailure { state = state.copy(error = (it as? ContentProfileHttpException)?.neutralMessage ?: "暂时无法保存门店档案" ) }
     }
 
     fun addStage(storeId: String, stage: OperatingStage) = viewModelScope.launch {

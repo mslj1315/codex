@@ -8,7 +8,8 @@ export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export type TrustedContextResolver = (request: FastifyRequest) => Promise<TrustedContext | undefined>;
 export const developmentContextResolver: TrustedContextResolver = async (request) => {
   const marker = request.headers["x-development-context"];
-  if (isLoopback(request.ip) || marker === "ent_demo:store_demo:actor_demo") {
+  if (!isLoopback(request.ip)) return undefined;
+  if (marker === undefined || marker === "ent_demo:store_demo:actor_demo") {
     return { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" };
   }
   return undefined;

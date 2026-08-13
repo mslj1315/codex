@@ -34,6 +34,25 @@ describe("content planning store profile", () => {
     expect(response.statusCode).toBe(422);
   });
 
+  it.each([null, [], "text", 42])("rejects non-object profile body: %j", async (payload) => {
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", headers: { "content-type": "application/json" }, payload: JSON.stringify(payload) });
+    expect(response.statusCode).toBe(422);
+  });
+
+  it.each(["categoryCustomName", "businessDistrictNote"])("rejects non-string optional field %s", async (field) => {
+    const payload: Record<string, unknown> = { storeName: "店", industryCode: "fast_food", categoryCode: "rice_noodle", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" };
+    payload[field] = { bad: true };
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload });
+    expect(response.statusCode).toBe(422);
+  });
+
+  it("rejects non-string required fields with 422", async () => {
+    const payload: Record<string, unknown> = { storeName: "店", industryCode: "fast_food", categoryCode: "rice_noodle", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" };
+    payload.storeName = 1;
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload });
+    expect(response.statusCode).toBe(422);
+  });
+
   it("stores one primary goal and optional secondary goal per effective date", async () => {
     const first = await app.inject({ method: "POST", url: "/v1/stores/store_demo/operating-stages", payload: {
       effectiveDate: "2026-08-14", primaryGoal: "acquire_customers", secondaryGoal: "promote_product", note: "开业期"

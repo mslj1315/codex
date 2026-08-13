@@ -67,12 +67,15 @@ export class ProfileRepository {
 }
 
 function validateProfile(input: ContentProfileInput): void {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) throw new ProfileValidationError("Request body must be an object");
   const fields: [keyof ContentProfileInput, string][] = [["storeName", "storeName"],["industryCode", "industryCode"],["categoryCode", "categoryCode"],["provinceCode", "provinceCode"],["cityCode", "cityCode"],["districtCode", "districtCode"],["detailedAddress", "detailedAddress"],["businessDistrictType", "businessDistrictType"],["operatingMode", "operatingMode"]];
   for (const [field, name] of fields) if (typeof input[field] !== "string" || !(input[field] as string).trim()) throw new ProfileValidationError(`${name} is required`);
   assertCode(input.industryCode, CONTENT_PROFILE_CODES.industries, "industryCode");
   assertCode(input.categoryCode, CONTENT_PROFILE_CODES.categories, "categoryCode");
   assertCode(input.businessDistrictType, CONTENT_PROFILE_CODES.businessDistricts, "businessDistrictType");
   assertCode(input.operatingMode, CONTENT_PROFILE_CODES.operatingModes, "operatingMode");
+  optionalString(input.categoryCustomName, "categoryCustomName");
+  optionalString(input.businessDistrictNote, "businessDistrictNote");
 }
 function validateStage(input: OperatingStageInput): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveDate)) throw new ProfileValidationError("effectiveDate is required");
@@ -86,6 +89,7 @@ function validateStage(input: OperatingStageInput): void {
 }
 function assertCode(value: string, allowed: readonly string[], name: string): void { if (!allowed.includes(value as never)) throw new ProfileValidationError(`${name} is invalid`); }
 function nullableTrim(value: string | null | undefined): string | null { return value?.trim() || null; }
+function optionalString(value: unknown, name: string): void { if (value !== undefined && value !== null && typeof value !== "string") throw new ProfileValidationError(`${name} must be a string`); }
 function toProfile(row: Row): ContentProfile { const fields = ["store_name","industry_code","category_code","province_code","city_code","district_code","detailed_address","business_district_type","operating_mode"]; const missing = fields.filter((field) => !String(row[field] ?? "").trim()); return { id: String(row.id), enterpriseId: String(row.enterprise_id), storeId: String(row.store_id), version: Number(row.version), storeName: String(row.store_name), industryCode: String(row.industry_code), categoryCode: String(row.category_code), categoryCustomName: nullable(row.category_custom_name), provinceCode: String(row.province_code), cityCode: String(row.city_code), districtCode: String(row.district_code), detailedAddress: String(row.detailed_address), businessDistrictType: String(row.business_district_type), businessDistrictNote: nullable(row.business_district_note), operatingMode: String(row.operating_mode), createdByActorId: String(row.created_by_actor_id), createdAt: new Date(String(row.created_at)), completeness: { required: missing.length === 0, missing } }; }
 function toStage(row: Row): OperatingStage { return { id: String(row.id), enterpriseId: String(row.enterprise_id), storeId: String(row.store_id), effectiveDate: String(row.effective_date), primaryGoal: String(row.primary_goal), secondaryGoal: nullable(row.secondary_goal), note: nullable(row.note), createdByActorId: String(row.created_by_actor_id), createdAt: new Date(String(row.created_at)) }; }
 function nullable(value: unknown): string | null { return value == null ? null : String(value); }

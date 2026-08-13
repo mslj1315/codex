@@ -43,6 +43,7 @@ import com.restaurantops.content.ContentProfileViewModel
 import com.restaurantops.content.ContentProfileGate
 import com.restaurantops.content.StoreContentProfile
 import com.restaurantops.content.contentProfileGate
+import com.restaurantops.content.contentProfileEndpointConfigured
 import com.restaurantops.content.RootScreen
 
 class MainActivity : ComponentActivity() {
@@ -63,8 +64,8 @@ class MainActivity : ComponentActivity() {
                     RootScreen.WORKSPACE -> if (contentProfileGate(profileViewModel.state) == ContentProfileGate.Ready) {
                         WorkspaceRoot(viewModel = workspaceViewModel, onReturnToOnboarding = { rootScreen.value = RootScreen.ONBOARDING })
                     } else ContentProfileScreen(viewModel = profileViewModel, onReady = { rootScreen.value = RootScreen.WORKSPACE }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
-                    RootScreen.PROFILE -> ContentProfileScreen(viewModel = profileViewModel, onReady = { rootScreen.value = RootScreen.WORKSPACE }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
-                    RootScreen.ONBOARDING -> StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { rootScreen.value = RootScreen.PROFILE; profileViewModel.load("store_demo") })
+                    RootScreen.PROFILE -> ContentProfileScreen(viewModel = profileViewModel, endpointConfigured = contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL), onReady = { rootScreen.value = RootScreen.WORKSPACE }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
+                    RootScreen.ONBOARDING -> StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { if (contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL)) { rootScreen.value = RootScreen.PROFILE; profileViewModel.load("store_demo") } })
                 }
             }
         }
@@ -72,19 +73,34 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun ContentProfileScreen(viewModel: ContentProfileViewModel, onReady: () -> Unit, onBack: () -> Unit) {
+private fun ContentProfileScreen(viewModel: ContentProfileViewModel, endpointConfigured: Boolean, onReady: () -> Unit, onBack: () -> Unit) {
     val current = viewModel.state.profile
     val address = rememberSaveable(current?.detailedAddress) { androidx.compose.runtime.mutableStateOf(current?.detailedAddress ?: "") }
     val storeName = rememberSaveable(current?.storeName) { androidx.compose.runtime.mutableStateOf(current?.storeName ?: "") }
+    val industry = rememberSaveable(current?.industryCode) { androidx.compose.runtime.mutableStateOf(current?.industryCode ?: "") }
+    val category = rememberSaveable(current?.categoryCode) { androidx.compose.runtime.mutableStateOf(current?.categoryCode ?: "") }
+    val province = rememberSaveable(current?.provinceCode) { androidx.compose.runtime.mutableStateOf(current?.provinceCode ?: "") }
+    val city = rememberSaveable(current?.cityCode) { androidx.compose.runtime.mutableStateOf(current?.cityCode ?: "") }
+    val district = rememberSaveable(current?.districtCode) { androidx.compose.runtime.mutableStateOf(current?.districtCode ?: "") }
+    val businessDistrict = rememberSaveable(current?.businessDistrictType) { androidx.compose.runtime.mutableStateOf(current?.businessDistrictType ?: "") }
+    val operatingMode = rememberSaveable(current?.operatingMode) { androidx.compose.runtime.mutableStateOf(current?.operatingMode ?: "") }
     Scaffold(topBar = { TopAppBar(title = { Text("门店内容档案") }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("完成门店档案后才能进入内容工作台", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(storeName.value, { storeName.value = it }, label = { Text("门店名称") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(address.value, { address.value = it }, label = { Text("详细地址") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(industry.value, { industry.value = it }, label = { Text("Industry") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(category.value, { category.value = it }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(province.value, { province.value = it }, label = { Text("Province") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(city.value, { city.value = it }, label = { Text("City") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(district.value, { district.value = it }, label = { Text("District") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(businessDistrict.value, { businessDistrict.value = it }, label = { Text("Business district") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(operatingMode.value, { operatingMode.value = it }, label = { Text("Operating mode") }, modifier = Modifier.fillMaxWidth())
             if (viewModel.state.error != null) Text(viewModel.state.error!!, color = MaterialTheme.colorScheme.error)
+            if (!endpointConfigured) Text("内容服务暂未配置，暂不能提交门店档案", color = MaterialTheme.colorScheme.error)
             Button(onClick = {
-                viewModel.submit("store_demo", StoreContentProfile("store_demo", storeName.value, "fast_food", "rice_noodle", provinceCode = "sc", cityCode = "cd", districtCode = "sl", detailedAddress = address.value, businessDistrictType = "community", operatingMode = "dine_in"), current != null)
-            }, enabled = storeName.value.isNotBlank() && address.value.isNotBlank()) { Text("提交档案") }
+                viewModel.submit("store_demo", StoreContentProfile("store_demo", storeName.value, industry.value, category.value, provinceCode = province.value, cityCode = city.value, districtCode = district.value, detailedAddress = address.value, businessDistrictType = businessDistrict.value, operatingMode = operatingMode.value), current != null)
+            }, enabled = endpointConfigured && listOf(storeName.value, industry.value, category.value, province.value, city.value, district.value, address.value, businessDistrict.value, operatingMode.value).all { it.isNotBlank() }) { Text("提交档案") }
             if (contentProfileGate(viewModel.state) == ContentProfileGate.Ready) Button(onClick = onReady) { Text("进入内容工作台") }
             TextButton(onClick = onBack) { Text("返回") }
         }

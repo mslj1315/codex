@@ -32,15 +32,22 @@ class ContentProfileHttpClient(private val baseUrl: String, private val auth: Co
             auth.headers().forEach { (key, value) -> setRequestProperty(key, value) }
             if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json"); outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) } }
         }
-        val code = connection.responseCode
-        val response = (if (code in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-        connection.disconnect()
-        if (code !in 200..299) throw IllegalStateException("Request failed ($code)")
-        return response
+        try {
+            val code = connection.responseCode
+            val response = (if (code in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw ContentProfileHttpException("Request failed ($code)")
+            return response
+        } catch (error: ContentProfileHttpException) { throw error }
+        catch (_: Exception) { throw ContentProfileHttpException("network failure") }
+        finally { connection.disconnect() }
     }
 
     private fun profilePath(storeId: String) = "/v1/stores/${storeId.encodePath()}/content-profile"
     private fun stagesPath(storeId: String) = "/v1/stores/${storeId.encodePath()}/operating-stages"
+}
+
+class ContentProfileHttpException(message: String) : RuntimeException(message) {
+    val neutralMessage: String get() = "暂时无法连接内容服务，请稍后重试"
 }
 
 private fun StoreContentProfile.toRequest() = ContentProfileRequest(storeName, industryCode, categoryCode, categoryCustomName, provinceCode, cityCode, districtCode, detailedAddress, businessDistrictType, businessDistrictNote, operatingMode)
