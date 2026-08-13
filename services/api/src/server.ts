@@ -11,6 +11,7 @@ import { registerProviderBrowserAuthRoutes } from "./auth/provider-browser-route
 import { AuthService } from "./auth/service.js";
 import { authenticatedContextResolver } from "./imports/routes.js";
 import { registerProviderFeedbackRoutes } from "./provider-feedback/routes.js";
+import { registerProviderConsoleStatic } from "./provider-console-static.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -18,6 +19,7 @@ export interface ServerOptions {
   authTokenSecret?: string;
   developmentMode?: boolean;
   providerBrowserDevelopmentMode?: boolean;
+  providerConsoleDistDir?: string;
   localContainerDevelopmentMode?: boolean;
   trustedContextResolver?: TrustedContextResolver;
   objectStorage?: ObjectStorage;
@@ -29,6 +31,10 @@ export function buildServer(options: ServerOptions = {}) {
   const app = Fastify({ bodyLimit: 5 * 1024 * 1024, logger: options.logger ?? false });
 
   app.get("/health", async () => ({ status: "ok" }));
+  const providerConsoleDistDir = options.providerConsoleDistDir;
+  if (providerConsoleDistDir) {
+    app.register((instance) => registerProviderConsoleStatic(instance, providerConsoleDistDir));
+  }
   const database = options.database ?? (options.databaseUrl ? createDatabase(options.databaseUrl) : undefined);
   const explicitContextResolver = options.trustedContextResolver ?? (
     options.localContainerDevelopmentMode
@@ -70,6 +76,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     authTokenSecret: process.env.AUTH_TOKEN_SECRET,
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
     providerBrowserDevelopmentMode: process.env.PROVIDER_BROWSER_DEVELOPMENT_MODE === "true",
+    providerConsoleDistDir: process.env.PROVIDER_CONSOLE_DIST_DIR
+      ?? fileURLToPath(new URL("../provider-console-dist", import.meta.url)),
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
     objectStorage: createMinioObjectStorageFromEnv(process.env),
     logger: true
