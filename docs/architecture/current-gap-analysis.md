@@ -39,6 +39,12 @@ The current branch provides a reliable import and local-workspace foundation:
   support follow-up: activity, readiness summary, diagnostic availability, and
   action/verification counts. It does not expose imports, facts, files,
   evidence, or action content.
+- An authenticated provider web console for the bounded feedback projection.
+  It can display an independent customer alias and internal provider note only
+  to feedback viewers; editing requires both `provider_feedback_viewer` and
+  `provider_customer_metadata_editor`. Metadata does not create scope
+  visibility, and the console/API do not expose raw customer data, imports,
+  facts, files, evidence, account attribution, or action content.
 - API/Android tests, Compose validation, CI workflow, and health checks.
 
 This is the framework's data-entry and reliability substrate, not yet the full
@@ -52,7 +58,7 @@ AI operations product.
 | --- | --- | --- |
 | Import batches and traceability | Covered for manual/file imports | No external source-system adapters or mapping-version registry yet |
 | Data quality and confirmation | Covered for parser confidence, unresolved candidates, catalog validation, and readiness | Custom header-to-metric mapping and source-report mapping versions are not implemented |
-| Metric semantics | Covered by a versioned published catalog and provider publish CLI | No authenticated web console; adding a metric does not automatically alter an existing diagnostic rule |
+| Metric semantics | Covered by a versioned published catalog and provider publish CLI | Catalog Web editing is not implemented; adding a metric does not automatically alter an existing diagnostic rule |
 | Android operating workspace | Authenticated sessions, encrypted refresh-token storage, store selection, trusted API calls, and latest-confirmed Home data are covered | Real-device/provider instrumentation and broader daily-operation workflows remain to be expanded |
 | Video workflow | Six-stage local demo covered | No real project, asset, render, publish, or performance entities |
 | Single-store P0 isolation | Covered by trusted context and composite tenant/store keys | Authentication and account/entitlement service are not implemented |
@@ -61,9 +67,9 @@ AI operations product.
 ### Not implemented yet
 
 1. **Service-provider administration**
-   - An authenticated provider web console which invokes the existing catalog
-     lifecycle only after verifying `metric_catalog_operator`, and can view the
-     existing bounded provider-feedback projection for permitted support work.
+   - The authenticated provider web console covers bounded feedback reading and
+     independent alias/internal-note metadata. Catalog lifecycle Web controls
+     after verifying `metric_catalog_operator` are still not implemented.
 
 2. **Metric mapping and broader normalized snapshots**
    - Mapping versions and source report types for custom headers and future
@@ -94,19 +100,20 @@ AI operations product.
 7. **Operations web console**
    - Authenticated mapping, rule, template, compliance, customer-support, and
      multi-store administration. It must use the same versioned catalog
-     lifecycle as the provider CLI.
+     lifecycle as the provider CLI. Contacts and follow-up workflow are not
+     implemented.
 
 ## Recommended Next Sequence
 
-The next implementation unit should be the **authenticated provider web
-console**, after the Android reliable-data states and existing provider feedback
-projection, before model integration or real video rendering:
+The next implementation unit should be **catalog lifecycle Web controls**, after
+the Android reliable-data states and implemented provider feedback console,
+before model integration or real video rendering:
 
-1. Build an authenticated provider-only web shell that derives authorization
+1. Retain the authenticated provider-only shell, which derives authorization
    from server-issued roles and does not infer tenant scope in the browser.
-2. Surface only the bounded provider-feedback view to feedback viewers; retain
-   the server's prohibition on raw imports, facts, files, evidence, and action
-   content.
+2. Retain the bounded feedback and independent alias/internal-note view; keep
+   the server's prohibition on raw imports, facts, files, evidence, action
+   content, contacts, and follow-up data.
 3. Add catalog lifecycle controls only for `metric_catalog_operator`, reusing
    the existing versioned publish contract.
 4. Keep the explicit Android local-demo path separate and ensure remote Home

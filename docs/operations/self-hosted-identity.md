@@ -34,10 +34,31 @@ only the account ID and grant booleans. It never prints the password, password
 hash, access token, refresh token, or signing secret.
 
 To grant one independent service-provider capability during the same controlled
-operation, set `PROVISION_SERVICE_OPERATOR_ROLE` to either
-`metric_catalog_operator` or `provider_feedback_viewer`. This does not grant
-the account access to any store route. Do not add this variable for ordinary
-store users.
+operation, set `PROVISION_SERVICE_OPERATOR_ROLE` to
+`metric_catalog_operator`, `provider_feedback_viewer`, or
+`provider_customer_metadata_editor`. This does not grant the account access to
+any store route. Do not add this variable for ordinary store users.
+
+## Grant An Existing Provider Account A Role
+
+Use `grant:service-role` for an existing account. It grants one exact
+service-provider role without changing credentials, store memberships, or
+sessions. Metadata writes require both the feedback-viewer and metadata-editor
+roles; grant each role explicitly:
+
+```powershell
+$env:DATABASE_URL='postgresql://...'
+$env:GRANT_ACCOUNT_ID='account_example'
+$env:GRANT_SERVICE_OPERATOR_ROLE='provider_feedback_viewer'
+npm run grant:service-role
+
+$env:GRANT_SERVICE_OPERATOR_ROLE='provider_customer_metadata_editor'
+npm run grant:service-role
+```
+
+The command does not grant store access and must not be used as a shortcut for
+store membership. A metadata-editor role on its own has no provider-feedback
+visibility.
 
 ## Token Lifecycle
 
