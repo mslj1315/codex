@@ -34,7 +34,6 @@ describe("provider customer metadata repository", () => {
       status: "saved",
       metadata: { customerAlias: "Pilot", providerNote: "Call next week", version: 1, updatedAt: now }
     });
-
     const replaced = await repository.replace({
       ...scope, customerAlias: "Pilot North", providerNote: null,
       expectedVersion: 1, accountId: "account_editor", now: later
@@ -68,13 +67,50 @@ describe("provider customer metadata repository", () => {
     await expect(repository.scopeExists({ enterpriseId: "ent_metadata", storeId: "store_metadata" })).resolves.toBe(false);
   });
 
+  it("classifies a duplicate initial creation as a conflict", async () => {
+    let calls = 0;
+    const repository = new ProviderCustomerMetadataRepository({
+      async query() {
+        calls += 1;
+        return calls === 1
+          ? { rows: [{ customer_alias: "Pilot", provider_note: null, version: 1, updated_at: now }], rowCount: 1, command: "INSERT", oid: 0, fields: [] } as never
+          : { rows: [], rowCount: 0, command: "INSERT", oid: 0, fields: [] } as never;
+      },
+      async connect() { throw new Error("not used"); }
+    });
+    const input = { enterpriseId: "ent_duplicate", storeId: "store_duplicate", customerAlias: "Pilot", providerNote: null, expectedVersion: null, accountId: "account_editor", now };
+
+    await expect(repository.replace(input)).resolves.toMatchObject({ status: "saved" });
+    await expect(repository.replace(input)).resolves.toEqual({ status: "conflict" });
+  });
+
+  it("queries every feedback scope source when checking existence", async () => {
+    const queries: string[] = [];
+    const repository = new ProviderCustomerMetadataRepository({
+      async query(text: string) {
+        queries.push(text);
+        return { rows: [{ exists: true }], rowCount: 1, command: "SELECT", oid: 0, fields: [] } as never;
+      },
+      async connect() { throw new Error("not used"); }
+    });
+
+    await expect(repository.scopeExists({ enterpriseId: "ent", storeId: "store" })).resolves.toBe(true);
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).toContain("FROM import_batches");
+    expect(queries[0]).toContain("FROM fact_versions");
+    expect(queries[0]).toContain("FROM diagnostic_runs");
+    expect(queries[0]).toContain("FROM action_cards");
+    expect(queries[0]).not.toContain("provider_customer_metadata");
+  });
+
   it("batch loads metadata in one query with collision-safe keys", async () => {
     const first = { enterpriseId: "a|b", storeId: "c" };
     const second = { enterpriseId: "a", storeId: "b|c" };
-    const calls: string[] = [];
+    const calls: Array<{ text: string; values: readonly unknown[] | undefined }> = [];
     const observed: Database = {
-      async query(text) {
-        calls.push(text);
+      async query(text, values) {
+        calls.push({ text, values });
         return {
           rows: [
             { enterprise_id: first.enterpriseId, store_id: first.storeId, customer_alias: "First", provider_note: null, version: 1, updated_at: now },
@@ -89,7 +125,8 @@ describe("provider customer metadata repository", () => {
     const items = await observedRepository.listForScopes([first, second]);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toContain("IN (VALUES ($1, $2), ($3, $4))");
+    expect(calls[0].text).toContain("IN (VALUES ($1, $2), ($3, $4))");
+    expect(calls[0].values).toEqual(["a|b", "c", "a", "b|c"]);
     expect(items.get(providerCustomerScopeKey(first))).toMatchObject({ customerAlias: "First" });
     expect(items.get(providerCustomerScopeKey(second))).toMatchObject({ customerAlias: "Second" });
     expect(providerCustomerScopeKey(first)).not.toBe(providerCustomerScopeKey(second));
