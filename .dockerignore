@@ -1,0 +1,33 @@
+# Dependency and generated output
+**/node_modules/
+**/build/
+**/dist/
+**/coverage/
+.gradle/
+**/.gradle/
+.kotlin/
+**/.kotlin/
+
+# Local workspaces and tool output
+**/.worktrees/
+.superpowers/
+work/
+outputs/
+
+# Source-control and editor metadata
+.git/
+.github/
+**/.idea/
+**/.vscode/
+**/.DS_Store
+
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+**/*.jks
+**/*.keystore
+
+# Local logs
+**/*.log
+npm-debug.log*
