@@ -6,6 +6,15 @@ import {
   ProviderCustomerMetadataRepository,
   providerCustomerScopeKey
 } from "../src/provider-customers/repository.js";
+import {
+  parseMetadataReplacement,
+  parseProviderCustomerScope,
+  ProviderCustomerMetadataConflictError,
+  ProviderCustomerNotFoundError,
+  ProviderCustomerService
+} from "../src/provider-customers/service.js";
+import type { ProviderFeedbackQuery } from "../src/provider-feedback/service.js";
+import type { ProviderFeedbackRow } from "../src/provider-feedback/repository.js";
 
 describe("provider customer metadata repository", () => {
   let database: Database;
@@ -180,6 +189,132 @@ describe("provider customer metadata repository", () => {
   }
 });
 
+describe("provider customer metadata service", () => {
+  const now = new Date("2026-08-13T00:00:00.000Z");
+
+  it("requires the exact metadata replacement body and normalizes valid text", () => {
+    expect(parseMetadataReplacement({
+      customerAlias: "  Pilot \r\n North  ",
+      providerNote: "\tCall next week\r\n",
+      expectedVersion: null
+    })).toEqual({
+      customerAlias: "Pilot \n North",
+      providerNote: "Call next week",
+      expectedVersion: null
+    });
+    expect(parseMetadataReplacement({
+      customerAlias: " \t\r\n ", providerNote: "  ", expectedVersion: 1
+    })).toEqual({ customerAlias: null, providerNote: null, expectedVersion: 1 });
+
+    for (const value of [
+      {},
+      { customerAlias: null, providerNote: null },
+      { customerAlias: null, providerNote: null, expectedVersion: null, extra: true },
+      { customerAlias: 1, providerNote: null, expectedVersion: null },
+      { customerAlias: null, providerNote: null, expectedVersion: 0 },
+      { customerAlias: null, providerNote: null, expectedVersion: Number.MAX_SAFE_INTEGER + 1 }
+    ]) expect(() => parseMetadataReplacement(value)).toThrow();
+  });
+
+  it("validates Unicode code point limits and disallowed controls", () => {
+    expect(parseMetadataReplacement({
+      customerAlias: "😀".repeat(120), providerNote: "😀".repeat(2000), expectedVersion: null
+    })).toMatchObject({ customerAlias: "😀".repeat(120), providerNote: "😀".repeat(2000) });
+    expect(() => parseMetadataReplacement({
+      customerAlias: "x".repeat(121), providerNote: null, expectedVersion: null
+    })).toThrow("customerAlias is invalid");
+    expect(() => parseMetadataReplacement({
+      customerAlias: "Pilot\u0000", providerNote: null, expectedVersion: null
+    })).toThrow("customerAlias is invalid");
+    expect(() => parseMetadataReplacement({
+      customerAlias: null, providerNote: "\u000Bnot allowed", expectedVersion: null
+    })).toThrow("providerNote is invalid");
+  });
+
+  it("validates both provider customer route identifiers", () => {
+    expect(parseProviderCustomerScope({ enterpriseId: "ent.demo-1", storeId: "store_1" })).toEqual({
+      enterpriseId: "ent.demo-1", storeId: "store_1"
+    });
+    for (const value of [
+      { enterpriseId: "", storeId: "store" },
+      { enterpriseId: "ent/slash", storeId: "store" },
+      { enterpriseId: "ent", storeId: "store/extra" },
+      { enterpriseId: "ent", storeId: "x".repeat(129) }
+    ]) expect(() => parseProviderCustomerScope(value)).toThrow();
+  });
+
+  it("composes one feedback page with batched metadata while preserving its order and cursor", async () => {
+    const first = feedbackRow("ent_first", "store_first");
+    const second = feedbackRow("ent_second", "store_second");
+    const query: ProviderFeedbackQuery = { limit: 2, activityState: "active" };
+    const feedbackCalls: ProviderFeedbackQuery[] = [];
+    const metadataCalls: Array<readonly { enterpriseId: string; storeId: string }[]> = [];
+    const metadata = { customerAlias: "Pilot", providerNote: "Call next week", version: 2, updatedAt: now };
+    const service = new ProviderCustomerService({
+      async list(input) {
+        feedbackCalls.push(input);
+        return { items: [first, second], nextCursor: "opaque-next-cursor" };
+      }
+    }, {
+      async listForScopes(scopes) {
+        metadataCalls.push(scopes);
+        return new Map([[providerCustomerScopeKey(first), metadata]]);
+      },
+      async scopeExists() { return true; },
+      async replace() { throw new Error("not used"); }
+    }, () => now);
+
+    await expect(service.list(query)).resolves.toEqual({
+      items: [{ feedback: first, metadata }, { feedback: second, metadata: null }],
+      nextCursor: "opaque-next-cursor"
+    });
+    expect(feedbackCalls).toEqual([query]);
+    expect(metadataCalls).toEqual([[{ enterpriseId: "ent_first", storeId: "store_first" }, { enterpriseId: "ent_second", storeId: "store_second" }]]);
+  });
+
+  it("checks feedback scope before replacement and maps conflict and public results", async () => {
+    const scope = { enterpriseId: "ent_demo", storeId: "store_demo" };
+    const replacement = { customerAlias: "Pilot", providerNote: null, expectedVersion: null };
+    let replaceCalls = 0;
+    const unavailable = new ProviderCustomerService(unusedFeedback(), {
+      async listForScopes() { return new Map(); },
+      async scopeExists() { return false; },
+      async replace() { replaceCalls += 1; throw new Error("not used"); }
+    }, () => now);
+    await expect(unavailable.replace(scope, replacement, "account_editor")).rejects.toBeInstanceOf(ProviderCustomerNotFoundError);
+    expect(replaceCalls).toBe(0);
+
+    const conflict = new ProviderCustomerService(unusedFeedback(), {
+      async listForScopes() { return new Map(); },
+      async scopeExists() { return true; },
+      async replace() { return { status: "conflict" as const }; }
+    }, () => now);
+    await expect(conflict.replace(scope, replacement, "account_editor")).rejects.toBeInstanceOf(ProviderCustomerMetadataConflictError);
+
+    const savedMetadata = { customerAlias: "Pilot", providerNote: null, version: 1, updatedAt: now };
+    const saved = new ProviderCustomerService(unusedFeedback(), {
+      async listForScopes() { return new Map(); },
+      async scopeExists() { return true; },
+      async replace(input) {
+        expect(input).toEqual({ ...scope, ...replacement, accountId: "account_editor", now });
+        return { status: "saved" as const, metadata: savedMetadata };
+      }
+    }, () => now);
+    await expect(saved.replace(scope, replacement, "account_editor")).resolves.toEqual({ metadata: savedMetadata });
+
+    const cleared = new ProviderCustomerService(unusedFeedback(), {
+      async listForScopes() { return new Map(); },
+      async scopeExists() { return true; },
+      async replace() { return { status: "cleared" as const }; }
+    }, () => now);
+    await expect(cleared.replace(scope, { customerAlias: null, providerNote: null, expectedVersion: 1 }, "account_editor")).resolves.toEqual({ metadata: null });
+  });
+
+  function unusedFeedback() {
+    return { async list() { throw new Error("not used"); } };
+  }
+});
+
 async function applyTestMigrations(database: Database): Promise<void> {
   const migrationsUrl = new URL("../migrations/", import.meta.url);
   const files = (await readdir(migrationsUrl)).filter((file) => /^\d+.*\.sql$/.test(file)).sort();
@@ -187,4 +322,12 @@ async function applyTestMigrations(database: Database): Promise<void> {
     const sql = await readFile(new URL(file, migrationsUrl), "utf8");
     await database.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
   }
+}
+
+function feedbackRow(enterpriseId: string, storeId: string): ProviderFeedbackRow {
+  return {
+    enterpriseId, storeId, lastSuccessfulImportAt: null, lastConfirmedAt: null,
+    activityState: "active", readinessState: "ready", missingMetricCount: 0,
+    diagnosticCounts: {}, actionCardStatusCounts: {}, verificationOutcomeCounts: {}, lastCoverageAt: null
+  };
 }
