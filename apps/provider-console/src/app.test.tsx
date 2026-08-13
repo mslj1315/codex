@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import type { ProviderApiClient } from "./api";
 import { App } from "./app";
 import { createSessionClient, type ProviderSession } from "./session";
 
@@ -54,12 +55,14 @@ describe("provider console application shell", () => {
   it("keeps an authenticated account without provider roles on a no-access page", async () => {
     const noRoleSession = sessionWithCapabilities(false, false);
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(noRoleSession));
+    const feedbackApi = feedbackApiResponse(jsonResponse(feedbackPage()));
 
-    render(<App session={createSessionClient(fetcher)} />);
+    render(<App session={createSessionClient(fetcher)} feedbackApi={feedbackApi} />);
 
     expect(await screen.findByRole("heading", { name: "No provider access" })).toBeVisible();
-    expect(screen.queryByText("Feedback workbench ready")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Customer Feedback" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
+    expect(feedbackApi.fetch).not.toHaveBeenCalled();
   });
 
   it("clears memory and returns to login after logout", async () => {
@@ -97,25 +100,59 @@ describe("provider console application shell", () => {
     expect(session.snapshot()).toBeNull();
   });
 
-  it("shows only a stub workbench for a feedback viewer", async () => {
+  it("shows the feedback workbench for a feedback viewer", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(viewerSession));
+    const feedbackApi = feedbackApiResponse(jsonResponse(feedbackPage()));
 
-    render(<App session={createSessionClient(fetcher)} />);
+    render(<App session={createSessionClient(fetcher)} feedbackApi={feedbackApi} />);
 
     expect(await screen.findByRole("heading", { name: "Customer Feedback" })).toBeVisible();
-    expect(screen.getByText("Feedback workbench ready")).toBeVisible();
+    expect(await screen.findByText("ent-console")).toBeVisible();
     expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(feedbackApi.fetch).toHaveBeenCalledWith("/v1/provider-feedback/stores?limit=50");
+  });
+
+  it("returns to login after a terminal feedback 401", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(viewerSession));
+    const session = createSessionClient(fetcher);
+
+    render(<App session={session} feedbackApi={feedbackApiResponse(new Response(null, { status: 401 }))} />);
+
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
+    expect(session.snapshot()).toBeNull();
+  });
+
+  it("keeps the authenticated shell on feedback 403", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(viewerSession));
+
+    render(<App session={createSessionClient(fetcher)} feedbackApi={feedbackApiResponse(new Response(null, { status: 403 }))} />);
+
+    expect(await screen.findByText("Feedback access is not available for this account.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
   });
 
   it("shows catalog guidance without pretending it is an editor", async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValue(jsonResponse(sessionWithCapabilities(false, true)));
+    const feedbackApi = feedbackApiResponse(jsonResponse(feedbackPage()));
 
-    render(<App session={createSessionClient(fetcher)} />);
+    render(<App session={createSessionClient(fetcher)} feedbackApi={feedbackApi} />);
 
     expect(await screen.findByRole("heading", { name: "Metric catalog" })).toBeVisible();
     expect(screen.getByText(/controlled CLI/i)).toBeVisible();
-    expect(screen.queryByText("Feedback workbench ready")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Customer Feedback" })).not.toBeInTheDocument();
+    expect(feedbackApi.fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows feedback and catalog information for an account with both capabilities", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(sessionWithCapabilities(true, true)));
+
+    render(<App session={createSessionClient(fetcher)} feedbackApi={feedbackApiResponse(jsonResponse(feedbackPage()))} />);
+
+    expect(await screen.findByText("ent-console")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Metric catalog" })).toBeVisible();
   });
 });
 
@@ -134,4 +171,27 @@ function jsonResponse(value: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" }
   });
+}
+
+function feedbackApiResponse(response: Response): ProviderApiClient & { fetch: ReturnType<typeof vi.fn> } {
+  return { fetch: vi.fn().mockResolvedValue(response) };
+}
+
+function feedbackPage() {
+  return {
+    items: [{
+      enterpriseId: "ent-console",
+      storeId: "store-console",
+      lastSuccessfulImportAt: null,
+      lastConfirmedAt: null,
+      lastCoverageAt: null,
+      activityState: "inactive",
+      readinessState: "unavailable",
+      missingMetricCount: 2,
+      diagnosticCounts: {},
+      actionCardStatusCounts: {},
+      verificationOutcomeCounts: {}
+    }],
+    nextCursor: null
+  };
 }

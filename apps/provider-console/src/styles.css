@@ -9,6 +9,7 @@
 
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input { font: inherit; }
+select { font: inherit; }
 
 button {
   min-height: 40px;
@@ -57,7 +58,18 @@ button:focus-visible, input:focus-visible { outline: 3px solid #e9ac34; outline-
 .workspace h1 { margin: 4px 0 20px; font-size: 26px; letter-spacing: 0; }
 .empty-workspace { padding-top: 72px; }
 .section-heading { display: flex; justify-content: space-between; align-items: end; }
-.workbench-stub { min-height: 280px; border: 1px solid #d8dfda; border-radius: 6px; padding: 28px; color: #64716a; background: white; }
+.feedback-controls { display: grid; grid-template-columns: minmax(140px, 180px) minmax(140px, 180px) minmax(220px, 1fr); gap: 14px; margin-bottom: 18px; }
+.feedback-controls label { display: grid; gap: 6px; color: #536159; font-size: 13px; font-weight: 700; }
+.feedback-controls select, .feedback-controls input { min-height: 40px; border: 1px solid #a9b5ae; border-radius: 5px; padding: 7px 9px; color: #17211d; background: white; }
+.feedback-loading, .feedback-message { min-height: 280px; border: 1px solid #d8dfda; border-radius: 6px; padding: 28px; color: #64716a; background: white; }
+.feedback-message p { margin-top: 0; }
+.feedback-table-wrap { margin-bottom: 18px; overflow-x: auto; border: 1px solid #d8dfda; border-radius: 6px; background: white; }
+.feedback-table { width: 100%; min-width: 1020px; border-collapse: collapse; font-size: 13px; }
+.feedback-table th { padding: 12px 14px; border-bottom: 1px solid #cbd5ce; color: #536159; background: #eef2ef; text-align: left; }
+.feedback-table td { padding: 14px; border-bottom: 1px solid #e3e8e4; vertical-align: top; }
+.feedback-table tr:last-child td { border-bottom: 0; }
+.feedback-table td span, .feedback-table td strong { display: block; margin-bottom: 5px; }
+.feedback-table td span:last-child { margin-bottom: 0; }
 .catalog-panel { margin-top: 28px; border-left: 4px solid #e9ac34; padding: 18px 22px; background: #fffdf7; }
 .catalog-panel h2 { margin: 0 0 8px; font-size: 18px; }
 .catalog-panel p { margin: 0; color: #536159; }
@@ -68,6 +80,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #e9ac34; outline-
   .login-panel { padding: 26px 22px; }
   .topbar { align-items: flex-start; gap: 16px; }
   .workspace { width: min(100% - 24px, 1180px); padding-top: 24px; }
+  .feedback-controls { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

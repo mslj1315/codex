@@ -1,4 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { providerApiClient, type ProviderApiClient } from "./api";
+import { FeedbackWorkbench } from "./feedback-workbench";
 import { sessionClient, type ProviderSession, type SessionClient } from "./session";
 
 type AppState =
@@ -8,9 +10,10 @@ type AppState =
 
 export interface AppProps {
   session?: SessionClient;
+  feedbackApi?: ProviderApiClient;
 }
 
-export function App({ session = sessionClient }: AppProps) {
+export function App({ session = sessionClient, feedbackApi = providerApiClient }: AppProps) {
   const [state, setState] = useState<AppState>({ status: "restoring" });
 
   useEffect(() => {
@@ -33,7 +36,12 @@ export function App({ session = sessionClient }: AppProps) {
 
   return (
     <AuthenticatedShell
+      feedbackApi={feedbackApi}
       providerSession={state.session}
+      onAuthenticationRequired={() => {
+        session.clear();
+        setState({ status: "anonymous" });
+      }}
       onLogout={async () => {
         await session.logout();
         setState({ status: "anonymous" });
@@ -118,10 +126,14 @@ function LoginView({
 }
 
 function AuthenticatedShell({
+  feedbackApi,
   providerSession,
+  onAuthenticationRequired,
   onLogout
 }: {
+  feedbackApi: ProviderApiClient;
   providerSession: ProviderSession;
+  onAuthenticationRequired(): void;
   onLogout(): Promise<void>;
 }) {
   const { account, capabilities } = providerSession;
@@ -143,25 +155,13 @@ function AuthenticatedShell({
         </main>
       ) : (
         <main className="workspace">
-          {capabilities.providerFeedbackViewer && <FeedbackWorkbenchStub />}
+          {capabilities.providerFeedbackViewer && (
+            <FeedbackWorkbench api={feedbackApi} onAuthenticationRequired={onAuthenticationRequired} />
+          )}
           {capabilities.metricCatalogOperator && <CatalogInformation />}
         </main>
       )}
     </div>
-  );
-}
-
-function FeedbackWorkbenchStub() {
-  return (
-    <section aria-labelledby="customer-feedback-title">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Read-only aggregate view</p>
-          <h1 id="customer-feedback-title">Customer Feedback</h1>
-        </div>
-      </div>
-      <div className="workbench-stub" role="status">Feedback workbench ready</div>
-    </section>
   );
 }
 
