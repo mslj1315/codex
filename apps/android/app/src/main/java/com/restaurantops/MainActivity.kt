@@ -43,6 +43,7 @@ import com.restaurantops.content.ContentProfileViewModel
 import com.restaurantops.content.ContentProfileGate
 import com.restaurantops.content.StoreContentProfile
 import com.restaurantops.content.contentProfileGate
+import com.restaurantops.content.RootScreen
 
 class MainActivity : ComponentActivity() {
     private val onboardingViewModel: StoreOnboardingViewModel by viewModels()
@@ -52,27 +53,18 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                var isInWorkspace = rememberSaveable { false }
+                val rootScreen = rememberSaveable { androidx.compose.runtime.mutableStateOf(RootScreen.ONBOARDING) }
                 val profileViewModel = remember {
-                    ContentProfileViewModel(ContentProfileHttpClient(BuildConfig.CONTENT_PROFILE_API_BASE_URL) { emptyMap() })
+                    ContentProfileViewModel(ContentProfileHttpClient(BuildConfig.CONTENT_PROFILE_API_BASE_URL) {
+                        if (BuildConfig.DEBUG) mapOf("X-Development-Context" to "ent_demo:store_demo:actor_demo") else emptyMap()
+                    })
                 }
-                if (isInWorkspace && contentProfileGate(profileViewModel.state) == ContentProfileGate.Ready) {
-                    WorkspaceRoot(
-                        viewModel = workspaceViewModel,
-                        onReturnToOnboarding = { isInWorkspace = false }
-                    )
-                } else {
-                    StoreOnboardingScreen(
-                        viewModel = onboardingViewModel,
-                        onEnterWorkspace = { profileViewModel.load("store_demo") }
-                    )
-                }
-                if (!isInWorkspace && (profileViewModel.state.loaded || profileViewModel.state.loading)) {
-                    ContentProfileScreen(
-                        viewModel = profileViewModel,
-                        onReady = { isInWorkspace = true },
-                        onBack = { }
-                    )
+                when (rootScreen.value) {
+                    RootScreen.WORKSPACE -> if (contentProfileGate(profileViewModel.state) == ContentProfileGate.Ready) {
+                        WorkspaceRoot(viewModel = workspaceViewModel, onReturnToOnboarding = { rootScreen.value = RootScreen.ONBOARDING })
+                    } else ContentProfileScreen(viewModel = profileViewModel, onReady = { rootScreen.value = RootScreen.WORKSPACE }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
+                    RootScreen.PROFILE -> ContentProfileScreen(viewModel = profileViewModel, onReady = { rootScreen.value = RootScreen.WORKSPACE }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
+                    RootScreen.ONBOARDING -> StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { rootScreen.value = RootScreen.PROFILE; profileViewModel.load("store_demo") })
                 }
             }
         }

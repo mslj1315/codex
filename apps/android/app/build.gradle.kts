@@ -14,7 +14,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        buildConfigField("String", "CONTENT_PROFILE_API_BASE_URL", "\"http://10.0.2.2:3000\"")
+        buildConfigField("String", "CONTENT_PROFILE_API_BASE_URL", "\"\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -22,6 +22,11 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    buildTypes {
+        debug { buildConfigField("String", "CONTENT_PROFILE_API_BASE_URL", "\"http://10.0.2.2:3000\"") }
+        release { buildConfigField("String", "CONTENT_PROFILE_API_BASE_URL", "\"\"") }
     }
 
     compileOptions {

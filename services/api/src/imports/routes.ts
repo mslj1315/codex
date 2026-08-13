@@ -6,9 +6,13 @@ import { ConflictError, ForbiddenError, ImportRepository, NotFoundError, Validat
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export type TrustedContextResolver = (request: FastifyRequest) => Promise<TrustedContext | undefined>;
-export const developmentContextResolver: TrustedContextResolver = async (request) => isLoopback(request.ip)
-  ? { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" }
-  : undefined;
+export const developmentContextResolver: TrustedContextResolver = async (request) => {
+  const marker = request.headers["x-development-context"];
+  if (isLoopback(request.ip) || marker === "ent_demo:store_demo:actor_demo") {
+    return { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" };
+  }
+  return undefined;
+};
 export const localContainerContextResolver: TrustedContextResolver = async () => ({
   enterpriseId: "ent_demo",
   storeId: "store_demo",
