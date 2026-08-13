@@ -54,7 +54,7 @@ function hasProviderMarker(request: FastifyRequest): boolean { return request.he
 function forbidden(reply: { code(statusCode: number): { send(value: unknown): unknown } }) { return reply.code(403).send({ error: "Forbidden" }); }
 function authenticationFailure(error: unknown, reply: { code(statusCode: number): { send(value: unknown): unknown } }) {
   if (error instanceof AuthenticationError) return reply.code(401).send({ error: "Authentication required" });
-  throw error;
+  return reply.code(500).send({ error: "Provider authentication is unavailable" });
 }
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new AuthenticationError("Authentication required");

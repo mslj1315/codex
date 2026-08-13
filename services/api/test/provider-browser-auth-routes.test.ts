@@ -3,6 +3,7 @@ import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
 import { hashPassword } from "../src/auth/credentials.js";
+import { issueAccessToken } from "../src/auth/tokens.js";
 import { buildServer } from "../src/server.js";
 
 const marker = { "x-provider-console-request": "1" };
@@ -92,6 +93,35 @@ describe("provider browser authentication routes", () => {
       expect(response.headers["set-cookie"]).toBeUndefined();
     }
   });
+
+  it("redacts unexpected provider authentication failures while retaining cookie clearing", async () => {
+    const unavailable = buildServer({
+      database: {
+        async query() { throw new Error("database unavailable secret-dsn-marker"); },
+        async connect() { throw new Error("database unavailable secret-dsn-marker"); }
+      } as never,
+      authTokenSecret: "a sufficiently long test signing secret"
+    });
+    const accessToken = issueAccessToken(
+      { accountId: "account_viewer", sessionId: "session_unavailable" },
+      "a sufficiently long test signing secret",
+      new Date()
+    );
+    const responses = [
+      await unavailable.inject({ method: "POST", url: "/v1/provider-auth/login", headers: marker, payload: { loginName: "viewer", password: "passphrase" } }),
+      await unavailable.inject({ method: "POST", url: "/v1/provider-auth/refresh", headers: { ...marker, cookie: "provider_refresh=token" } }),
+      await unavailable.inject({ method: "POST", url: "/v1/provider-auth/logout", headers: { ...marker, authorization: `Bearer ${accessToken}` } })
+    ];
+
+    for (const response of responses) {
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toEqual({ error: "Provider authentication is unavailable" });
+      expect(response.body).not.toContain("secret-dsn-marker");
+    }
+    expect(responseCookie(responses[0]!)).toBeUndefined();
+    expect(cookie(responses[1]!)).toContain("Max-Age=0");
+    expect(cookie(responses[2]!)).toContain("Max-Age=0");
+  });
 });
 
 function providerLogin(app: ReturnType<typeof buildServer>) {
@@ -99,9 +129,11 @@ function providerLogin(app: ReturnType<typeof buildServer>) {
 }
 
 function cookie(response: { headers: Record<string, unknown> }): string {
-  const value = response.headers["set-cookie"];
+  const value = responseCookie(response);
   return Array.isArray(value) ? String(value[0]) : String(value);
 }
+
+function responseCookie(response: { headers: Record<string, unknown> }): unknown { return response.headers["set-cookie"]; }
 
 function cookieValue(response: { headers: Record<string, unknown> }): string {
   return cookie(response).split(";", 1)[0]!;
