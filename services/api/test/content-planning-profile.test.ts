@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+﻿import { readFile } from "node:fs/promises";
 import { newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
@@ -57,7 +57,7 @@ describe("content planning store profile", () => {
   });
 
   it("rejects mutations to profile history", async () => {
-    const payload = { storeName: "不可变", industryCode: "fast_food", categoryCode: "rice", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" };
+    const payload = { storeName: "不可变", industryCode: "fast_food", categoryCode: "rice_noodle", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" };
     const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload });
     const id = created.json().id;
     expect(id).toBeTruthy();
@@ -70,7 +70,7 @@ describe("content planning store profile", () => {
     const invalid = await app.inject({ method: "POST", url: "/v1/stores/store_demo/operating-stages", payload: { effectiveDate: "2026-02-30", primaryGoal: "acquire_customers" } });
     expect(invalid.statusCode).toBe(422);
     await pool.query("INSERT INTO store_content_profile_versions (id, enterprise_id, store_id, version, store_name, industry_code, category_code, province_code, city_code, district_code, detailed_address, business_district_type, operating_mode, created_by_actor_id) VALUES ('other', 'ent_other', 'store_demo', 1, 'other', 'fast_food', 'rice', 'sc', 'cd', 'sl', 'addr', 'community', 'dine_in', 'actor')");
-    const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload: { storeName: "本租户", industryCode: "fast_food", categoryCode: "rice", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" } });
+    const created = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload: { storeName: "本租户", industryCode: "fast_food", categoryCode: "rice_noodle", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "地址", businessDistrictType: "community", operatingMode: "dine_in" } });
     expect(created.json().version).toBe(1);
   });
 
