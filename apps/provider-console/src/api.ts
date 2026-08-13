@@ -24,14 +24,15 @@ export function createProviderApiClient(
   }
 
   async function send(path: string, init: RequestInit, token: string | null, isMutation: boolean): Promise<Response> {
+    const headers = new Headers(init.headers);
+    headers.delete("Authorization");
+    headers.delete("X-Provider-Console-Request");
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (isMutation) headers.set("X-Provider-Console-Request", "1");
     return fetcher(path, {
       ...init,
       credentials: "same-origin",
-      headers: {
-        ...Object.fromEntries(new Headers(init.headers)),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(isMutation ? { "X-Provider-Console-Request": "1" } : {})
-      }
+      headers
     });
   }
 

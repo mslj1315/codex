@@ -178,9 +178,31 @@ describe("provider console session", () => {
     await api.fetch("/v1/provider-customers?limit=50");
 
     expect(fetcher).toHaveBeenCalledWith("/v1/provider-customers?limit=50", expect.objectContaining({
-      credentials: "same-origin",
-      headers: { Authorization: "Bearer access-token" }
+      credentials: "same-origin"
     }));
+    const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer access-token");
+    expect(headers.get("X-Provider-Console-Request")).toBeNull();
+  });
+
+  it("does not allow callers to inject controlled headers on a list request", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    const client = createSessionClient(fetcher);
+    client.set(session);
+    const api = createProviderApiClient(client, fetcher);
+
+    await api.fetch("/v1/provider-customers?limit=50", {
+      headers: {
+        Authorization: "Bearer caller-token",
+        "X-Provider-Console-Request": "0",
+        "X-Trace-Id": "trace-1"
+      }
+    });
+
+    const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer access-token");
+    expect(headers.get("X-Provider-Console-Request")).toBeNull();
+    expect(headers.get("X-Trace-Id")).toBe("trace-1");
   });
 
   it("sends the browser marker only for a metadata PUT", async () => {
@@ -201,6 +223,27 @@ describe("provider console session", () => {
     const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
     expect(headers.get("Authorization")).toBe("Bearer access-token");
     expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-Provider-Console-Request")).toBe("1");
+  });
+
+  it("uses the session token when a metadata PUT supplies a caller token", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    const client = createSessionClient(fetcher);
+    client.set(session);
+    const api = createProviderApiClient(client, fetcher);
+
+    await api.fetch("/v1/provider-customers/ent_demo/store_demo/metadata", {
+      method: "PUT",
+      headers: {
+        Authorization: "Bearer caller-token",
+        "X-Provider-Console-Request": "0",
+        "Content-Type": "application/json"
+      },
+      body: "{}"
+    });
+
+    const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer access-token");
     expect(headers.get("X-Provider-Console-Request")).toBe("1");
   });
 
