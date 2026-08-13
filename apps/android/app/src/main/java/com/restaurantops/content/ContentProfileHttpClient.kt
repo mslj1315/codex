@@ -27,6 +27,7 @@ class ContentProfileHttpClient(private val baseUrl: String, private val auth: Co
     }
 
     private fun request(method: String, path: String, body: String?): String {
+        if (baseUrl.isBlank()) throw ContentProfileHttpException("endpoint unavailable")
         val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method; connectTimeout = 10_000; readTimeout = 10_000
             auth.headers().forEach { (key, value) -> setRequestProperty(key, value) }
