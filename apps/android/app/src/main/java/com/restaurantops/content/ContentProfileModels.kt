@@ -14,7 +14,9 @@ data class StoreContentProfile(
     val businessDistrictNote: String? = null,
     val operatingMode: String,
     val enterpriseId: String? = null,
-    val version: Int? = null
+    val version: Int? = null,
+    val requiredComplete: Boolean? = null,
+    val serverMissingFields: List<String> = emptyList()
 ) {
     fun missingRequiredFields(): List<String> = buildList {
         if (storeName.isBlank()) add("storeName")
@@ -28,6 +30,9 @@ data class StoreContentProfile(
         if (operatingMode.isBlank()) add("operatingMode")
     }
 }
+
+fun StoreContentProfile.isContentPlanningReady(): Boolean =
+    requiredComplete == true && missingRequiredFields().isEmpty()
 
 data class ContentProfileRequest(
     val storeName: String, val industryCode: String, val categoryCode: String,

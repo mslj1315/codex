@@ -14,12 +14,14 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "CONTENT_PROFILE_API_BASE_URL", "\"http://10.0.2.2:3000\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {

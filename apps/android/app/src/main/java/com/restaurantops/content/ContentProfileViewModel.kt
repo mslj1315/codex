@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 
-data class ContentProfileState(val profile: StoreContentProfile? = null, val stages: List<OperatingStage> = emptyList(), val loading: Boolean = false, val error: String? = null)
+data class ContentProfileState(val profile: StoreContentProfile? = null, val stages: List<OperatingStage> = emptyList(), val loading: Boolean = false, val loaded: Boolean = false, val error: String? = null)
 
 class ContentProfileViewModel(private val repository: ContentProfileRepository) : ViewModel() {
     var state by mutableStateOf(ContentProfileState())
@@ -16,8 +16,8 @@ class ContentProfileViewModel(private val repository: ContentProfileRepository) 
     fun load(storeId: String) = viewModelScope.launch {
         state = state.copy(loading = true, error = null)
         runCatching { repository.getProfile(storeId) to repository.listOperatingStages(storeId) }
-            .onSuccess { (profile, stages) -> state = ContentProfileState(profile, stages) }
-            .onFailure { state = state.copy(loading = false, error = it.message) }
+            .onSuccess { (profile, stages) -> state = ContentProfileState(profile, stages, loaded = true) }
+            .onFailure { state = state.copy(loading = false, loaded = true, error = it.message) }
     }
 
     fun submit(storeId: String, profile: StoreContentProfile, existing: Boolean) = viewModelScope.launch {

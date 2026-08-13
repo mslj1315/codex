@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -37,6 +38,11 @@ import com.restaurantops.onboarding.StoreFactDraft
 import com.restaurantops.onboarding.StoreOnboardingViewModel
 import com.restaurantops.workspace.WorkspaceRoot
 import com.restaurantops.workspace.WorkspaceViewModel
+import com.restaurantops.content.ContentProfileHttpClient
+import com.restaurantops.content.ContentProfileViewModel
+import com.restaurantops.content.ContentProfileGate
+import com.restaurantops.content.StoreContentProfile
+import com.restaurantops.content.contentProfileGate
 
 class MainActivity : ComponentActivity() {
     private val onboardingViewModel: StoreOnboardingViewModel by viewModels()
@@ -47,7 +53,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 var isInWorkspace = rememberSaveable { false }
-                if (isInWorkspace) {
+                val profileViewModel = remember {
+                    ContentProfileViewModel(ContentProfileHttpClient(BuildConfig.CONTENT_PROFILE_API_BASE_URL) { emptyMap() })
+                }
+                if (isInWorkspace && contentProfileGate(profileViewModel.state) == ContentProfileGate.Ready) {
                     WorkspaceRoot(
                         viewModel = workspaceViewModel,
                         onReturnToOnboarding = { isInWorkspace = false }
@@ -55,10 +64,37 @@ class MainActivity : ComponentActivity() {
                 } else {
                     StoreOnboardingScreen(
                         viewModel = onboardingViewModel,
-                        onEnterWorkspace = { isInWorkspace = true }
+                        onEnterWorkspace = { profileViewModel.load("store_demo") }
+                    )
+                }
+                if (!isInWorkspace && (profileViewModel.state.loaded || profileViewModel.state.loading)) {
+                    ContentProfileScreen(
+                        viewModel = profileViewModel,
+                        onReady = { isInWorkspace = true },
+                        onBack = { }
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ContentProfileScreen(viewModel: ContentProfileViewModel, onReady: () -> Unit, onBack: () -> Unit) {
+    val current = viewModel.state.profile
+    val address = rememberSaveable(current?.detailedAddress) { androidx.compose.runtime.mutableStateOf(current?.detailedAddress ?: "") }
+    val storeName = rememberSaveable(current?.storeName) { androidx.compose.runtime.mutableStateOf(current?.storeName ?: "") }
+    Scaffold(topBar = { TopAppBar(title = { Text("门店内容档案") }) }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("完成门店档案后才能进入内容工作台", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(storeName.value, { storeName.value = it }, label = { Text("门店名称") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(address.value, { address.value = it }, label = { Text("详细地址") }, modifier = Modifier.fillMaxWidth())
+            if (viewModel.state.error != null) Text(viewModel.state.error!!, color = MaterialTheme.colorScheme.error)
+            Button(onClick = {
+                viewModel.submit("store_demo", StoreContentProfile("store_demo", storeName.value, "fast_food", "rice_noodle", provinceCode = "sc", cityCode = "cd", districtCode = "sl", detailedAddress = address.value, businessDistrictType = "community", operatingMode = "dine_in"), current != null)
+            }, enabled = storeName.value.isNotBlank() && address.value.isNotBlank()) { Text("提交档案") }
+            if (contentProfileGate(viewModel.state) == ContentProfileGate.Ready) Button(onClick = onReady) { Text("进入内容工作台") }
+            TextButton(onClick = onBack) { Text("返回") }
         }
     }
 }

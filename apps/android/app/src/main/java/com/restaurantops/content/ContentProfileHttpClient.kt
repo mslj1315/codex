@@ -49,7 +49,8 @@ private fun OperatingStage.toJson() = JSONObject().apply { put("effectiveDate", 
 private fun JSONObject.toProfileResponse(): ContentProfileResponse {
     val completeness = optJSONObject("completeness")
     val missing = completeness?.optJSONArray("missing")?.let { array -> List(array.length()) { index -> array.getString(index) } }.orEmpty()
-    return ContentProfileResponse(StoreContentProfile(getString("storeId"), getString("storeName"), getString("industryCode"), getString("categoryCode"), optString("categoryCustomName").takeUnless { it.isBlank() }, getString("provinceCode"), getString("cityCode"), getString("districtCode"), getString("detailedAddress"), getString("businessDistrictType"), optString("businessDistrictNote").takeUnless { it.isBlank() }, getString("operatingMode"), optString("enterpriseId").takeUnless { it.isBlank() }, optInt("version").takeIf { it > 0 }), completeness?.optBoolean("required") ?: false, missing)
+    val required = completeness?.optBoolean("required") ?: false
+    return ContentProfileResponse(StoreContentProfile(getString("storeId"), getString("storeName"), getString("industryCode"), getString("categoryCode"), optString("categoryCustomName").takeUnless { it.isBlank() }, getString("provinceCode"), getString("cityCode"), getString("districtCode"), getString("detailedAddress"), getString("businessDistrictType"), optString("businessDistrictNote").takeUnless { it.isBlank() }, getString("operatingMode"), optString("enterpriseId").takeUnless { it.isBlank() }, optInt("version").takeIf { it > 0 }, required, missing), required, missing)
 }
 private fun JSONObject.toStage() = OperatingStage(getString("effectiveDate"), getString("primaryGoal"), optString("secondaryGoal").takeUnless { it.isBlank() }, optString("note").takeUnless { it.isBlank() })
 private fun String.encodePath() = URLEncoder.encode(this, Charsets.UTF_8.name()).replace("+", "%20")
