@@ -31,12 +31,12 @@ import androidx.compose.ui.unit.dp
 fun OperationsScreen(
     viewModel: OperationsViewModel,
     storeId: String,
-    rangeStart: String,
-    rangeEnd: String,
+    rangeStart: String?,
+    rangeEnd: String?,
     modifier: Modifier = Modifier
 ) {
     LaunchedEffect(storeId, rangeStart, rangeEnd) {
-        viewModel.load(storeId, rangeStart, rangeEnd)
+        if (rangeStart != null && rangeEnd != null) viewModel.load(storeId, rangeStart, rangeEnd)
     }
 
     Column(
@@ -53,8 +53,8 @@ fun OperationsScreen(
         ) {
             Text("运营工作台", style = MaterialTheme.typography.titleLarge)
             IconButton(
-                onClick = { viewModel.load(storeId, rangeStart, rangeEnd) },
-                enabled = !viewModel.isLoading
+                onClick = { if (rangeStart != null && rangeEnd != null) viewModel.load(storeId, rangeStart, rangeEnd) },
+                enabled = !viewModel.isLoading && rangeStart != null && rangeEnd != null
             ) {
                 Icon(
                     imageVector = Icons.Filled.Refresh,
@@ -64,6 +64,7 @@ fun OperationsScreen(
         }
 
         when {
+            rangeStart == null || rangeEnd == null -> Text("请先在今日经营中选择已确认的数据周期。")
             viewModel.isServiceUnavailable -> UnavailableContent()
             else -> OperationsContent(viewModel, storeId)
         }

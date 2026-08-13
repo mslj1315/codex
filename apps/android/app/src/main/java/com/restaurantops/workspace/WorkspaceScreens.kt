@@ -40,6 +40,8 @@ import com.restaurantops.imports.network.LocalImportApiRuntime
 import com.restaurantops.operations.OperationsRuntime
 import com.restaurantops.operations.OperationsScreen
 import com.restaurantops.operations.OperationsViewModel
+import com.restaurantops.home.OperationsHomeScreen
+import com.restaurantops.home.OperationsHomeViewModel
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -74,6 +76,12 @@ fun WorkspaceRoot(
     }
     val operationsViewModel = remember(storeId, operationsRepository, operationsMetricCatalogRepository) {
         OperationsViewModel(operationsRepository, metricCatalogRepository = operationsMetricCatalogRepository)
+    }
+    val operationsHomeRepository = remember(authenticatedApiClient, storeId) {
+        authenticatedApiClient?.let { OperationsRuntime.homeRepository(BuildConfig.LOCAL_API_BASE_URL, it) }
+    }
+    val operationsHomeViewModel = remember(storeId, operationsHomeRepository, operationsRepository) {
+        operationsHomeRepository?.let { OperationsHomeViewModel(it, operationsRepository) }
     }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
@@ -115,7 +123,15 @@ fun WorkspaceRoot(
             }
         ) { contentPadding ->
             when (viewModel.selectedTab) {
-                WorkspaceTab.HOME -> HomeScreen(
+                WorkspaceTab.HOME -> operationsHomeViewModel?.let { homeViewModel ->
+                    OperationsHomeScreen(
+                        viewModel = homeViewModel,
+                        storeId = storeId,
+                        onOpenImport = viewModel::openImport,
+                        onOpenOperations = { period -> viewModel.openOperations(period.rangeStart, period.rangeEnd) },
+                        modifier = Modifier.padding(contentPadding)
+                    )
+                } ?: HomeScreen(
                     pendingTaskCount = viewModel.tasks.size,
                     onOpenDiagnosis = viewModel::openDiagnosis,
                     onCreateTask = {
@@ -130,8 +146,8 @@ fun WorkspaceRoot(
                 WorkspaceTab.OPERATIONS -> OperationsScreen(
                     viewModel = operationsViewModel,
                     storeId = storeId,
-                    rangeStart = "2026-08-01",
-                    rangeEnd = "2026-08-07",
+                    rangeStart = viewModel.selectedOperationsPeriod?.rangeStart,
+                    rangeEnd = viewModel.selectedOperationsPeriod?.rangeEnd,
                     modifier = Modifier.padding(contentPadding)
                 )
                 WorkspaceTab.TASKS -> TasksScreen(

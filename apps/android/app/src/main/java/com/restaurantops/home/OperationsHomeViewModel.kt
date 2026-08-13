@@ -45,14 +45,18 @@ class OperationsHomeViewModel(
     var state by mutableStateOf<OperationsHomeState>(OperationsHomeState.Loading)
         private set
 
+    private var loadGeneration = 0L
+
     private val operationScope: CoroutineScope
         get() = scope ?: viewModelScope
 
     fun load(storeId: String) {
+        val generation = ++loadGeneration
         state = OperationsHomeState.Loading
         operationScope.launch {
             try {
                 val period = periodRepository.loadLatestConfirmedPeriod(storeId)
+                if (generation != loadGeneration) return@launch
                 if (period == null) {
                     state = OperationsHomeState.MissingData
                     return@launch
@@ -68,9 +72,13 @@ class OperationsHomeViewModel(
                     OperationsHomeSnapshot(
                         readiness.await(),
                         diagnostic.await(),
-                        cards.await().filter { it.status == ActionCardStatus.PROPOSED || it.status == ActionCardStatus.IN_PROGRESS }
+                        cards.await().filter { card ->
+                            (card.status == ActionCardStatus.PROPOSED || card.status == ActionCardStatus.IN_PROGRESS) &&
+                                card.rangeStart == period.rangeStart && card.rangeEnd == period.rangeEnd
+                        }
                     )
                 }
+                if (generation != loadGeneration) return@launch
                 state = if (Duration.between(Instant.parse(period.confirmedAt), now()).toDays() > STALE_AFTER_DAYS) {
                     OperationsHomeState.Stale(period, snapshot.readiness, snapshot.diagnostic, snapshot.actionCards)
                 } else {
@@ -79,9 +87,9 @@ class OperationsHomeViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: OperationsHomeRequestException) {
-                state = OperationsHomeState.Failure(LOAD_FAILURE_MESSAGE)
+                if (generation == loadGeneration) state = OperationsHomeState.Failure(LOAD_FAILURE_MESSAGE)
             } catch (_: Throwable) {
-                state = OperationsHomeState.Failure(LOAD_FAILURE_MESSAGE)
+                if (generation == loadGeneration) state = OperationsHomeState.Failure(LOAD_FAILURE_MESSAGE)
             }
         }
     }

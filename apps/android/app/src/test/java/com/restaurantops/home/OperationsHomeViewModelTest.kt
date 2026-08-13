@@ -10,7 +10,9 @@ import com.restaurantops.operations.OperationsRepository
 import com.restaurantops.operations.ActionCardUpdate
 import com.restaurantops.operations.ActionVerificationSummary
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,6 +38,7 @@ class OperationsHomeViewModelTest {
         assertEquals(listOf("2026-08-01|2026-08-07"), operations.readinessRanges)
         assertEquals(listOf("2026-08-01|2026-08-07"), operations.diagnosticRanges)
         assertEquals(listOf("proposed", "in_progress"), state.actionCards.map { it.status.name.lowercase() })
+        assertEquals(listOf("2026-08-01", "2026-08-01"), state.actionCards.map { it.rangeStart })
     }
 
     @Test
@@ -80,6 +83,26 @@ class OperationsHomeViewModelTest {
         assertTrue(state.retryable)
         assertFalse(state.message.contains("private"))
     }
+
+    @Test
+    fun `late response from a previous store cannot replace the active home state`() = runTest {
+        val first = CompletableDeferred<ConfirmedOperationsPeriod?>()
+        val latest = ConfirmedOperationsPeriod("2026-08-08", "2026-08-14", "2026-08-20T00:00:00.000Z")
+        val viewModel = OperationsHomeViewModel(
+            DelayedPeriodRepository(first, latest),
+            FakeHomeOperationsRepository(),
+            this
+        ) { Instant.parse("2026-08-21T00:00:00.000Z") }
+
+        viewModel.load("store_first")
+        runCurrent()
+        viewModel.load("store_second")
+        advanceUntilIdle()
+        first.complete(ConfirmedOperationsPeriod("2026-08-01", "2026-08-07", "2026-08-10T00:00:00.000Z"))
+        advanceUntilIdle()
+
+        assertEquals(latest, (viewModel.state as OperationsHomeState.Current).period)
+    }
 }
 
 private class FakeHomePeriodRepository(
@@ -90,6 +113,16 @@ private class FakeHomePeriodRepository(
         failure?.let { throw it }
         return period
     }
+}
+
+private class DelayedPeriodRepository(
+    private val first: CompletableDeferred<ConfirmedOperationsPeriod?>,
+    private val second: ConfirmedOperationsPeriod
+) : OperationsHomeRepository {
+    private var requests = 0
+
+    override suspend fun loadLatestConfirmedPeriod(storeId: String): ConfirmedOperationsPeriod? =
+        if (requests++ == 0) first.await() else second
 }
 
 private class FakeHomeOperationsRepository : OperationsRepository {
@@ -107,9 +140,10 @@ private class FakeHomeOperationsRepository : OperationsRepository {
     override suspend fun loadActionCards(storeId: String, status: String?): List<ActionCard> {
         cardsRequests += 1
         return listOf(
-            ActionCard("proposed", ActionCardStatus.PROPOSED, "Proposed"),
-            ActionCard("in_progress", ActionCardStatus.IN_PROGRESS, "In progress"),
-            ActionCard("completed", ActionCardStatus.COMPLETED, "Completed")
+            ActionCard("proposed", ActionCardStatus.PROPOSED, "Proposed", rangeStart = "2026-08-01", rangeEnd = "2026-08-07"),
+            ActionCard("in_progress", ActionCardStatus.IN_PROGRESS, "In progress", rangeStart = "2026-08-01", rangeEnd = "2026-08-07"),
+            ActionCard("completed", ActionCardStatus.COMPLETED, "Completed", rangeStart = "2026-08-01", rangeEnd = "2026-08-07"),
+            ActionCard("other_period", ActionCardStatus.PROPOSED, "Other period", rangeStart = "2026-07-25", rangeEnd = "2026-07-31")
         )
     }
     override suspend fun loadDiagnosticRun(storeId: String, diagnosticRunId: String): DiagnosticRunDetail = error("unused")
