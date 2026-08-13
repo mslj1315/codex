@@ -66,6 +66,17 @@ describe("provider console application shell", () => {
     expect(feedbackApi.fetch).not.toHaveBeenCalled();
   });
 
+  it("keeps a metadata-editor-only account on no provider access without requesting customers", async () => {
+    const editorOnlySession = sessionWithCapabilities(false, false, true);
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(editorOnlySession));
+    const feedbackApi = feedbackApiResponse(jsonResponse(feedbackPage()));
+
+    render(<App session={createSessionClient(fetcher)} feedbackApi={feedbackApi} />);
+
+    expect(await screen.findByRole("heading", { name: "No provider access" })).toBeVisible();
+    expect(feedbackApi.fetch).not.toHaveBeenCalled();
+  });
+
   it("clears memory and returns to login after logout", async () => {
     const user = userEvent.setup();
     const fetcher = vi.fn<typeof fetch>()
@@ -175,15 +186,25 @@ describe("provider console application shell", () => {
     expect(await screen.findByText("ent-console")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Metric catalog" })).toBeVisible();
   });
+
+  it("offers customer metadata editing only to accounts with both relevant roles", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse(sessionWithCapabilities(true, false, true)));
+
+    render(<App session={createSessionClient(fetcher)} feedbackApi={feedbackApiResponse(jsonResponse(feedbackPage()))} />);
+
+    expect(await screen.findByRole("button", { name: "Edit customer details" })).toBeVisible();
+  });
 });
 
 function sessionWithCapabilities(
   providerFeedbackViewer: boolean,
-  metricCatalogOperator: boolean
+  metricCatalogOperator: boolean,
+  providerCustomerMetadataEditor = false
 ): ProviderSession {
   return {
     ...viewerSession,
-    capabilities: { providerFeedbackViewer, providerCustomerMetadataEditor: false, metricCatalogOperator }
+    capabilities: { providerFeedbackViewer, providerCustomerMetadataEditor, metricCatalogOperator }
   };
 }
 

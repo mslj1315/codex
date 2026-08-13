@@ -4,18 +4,22 @@ import {
   listFeedback,
   type ActivityState,
   type FeedbackPage,
-  type ProviderFeedbackRow,
+  type ProviderCustomerItem,
+  type ProviderCustomerMetadata,
   type ReadinessState
 } from "./feedback";
+import { ProviderCustomerEditor } from "./provider-customer-editor";
 
 type LoadState = "loading" | "ready" | "error" | "denied";
+const noAuthenticationRequired = () => {};
 
 export interface FeedbackWorkbenchProps {
   api: ProviderApiClient;
   onAuthenticationRequired?: () => void;
+  canEditMetadata?: boolean;
 }
 
-export function FeedbackWorkbench({ api, onAuthenticationRequired }: FeedbackWorkbenchProps) {
+export function FeedbackWorkbench({ api, onAuthenticationRequired = noAuthenticationRequired, canEditMetadata = false }: FeedbackWorkbenchProps) {
   const [activityState, setActivityState] = useState<ActivityState | "">("");
   const [readinessState, setReadinessState] = useState<ReadinessState | "">("");
   const [page, setPage] = useState<FeedbackPage>({ items: [], nextCursor: null });
@@ -23,6 +27,7 @@ export function FeedbackWorkbench({ api, onAuthenticationRequired }: FeedbackWor
   const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState("");
   const [requestVersion, setRequestVersion] = useState(0);
+  const [editingItem, setEditingItem] = useState<ProviderCustomerItem | null>(null);
   const pageGeneration = useRef(0);
 
   useEffect(() => {
@@ -53,10 +58,11 @@ export function FeedbackWorkbench({ api, onAuthenticationRequired }: FeedbackWor
   const visibleItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return page.items;
-    return page.items.filter((item) =>
-      item.feedback.enterpriseId.toLowerCase().includes(query)
-      || item.feedback.storeId.toLowerCase().includes(query)
-    );
+    return page.items.filter((item) => [
+      item.metadata?.customerAlias,
+      item.feedback.enterpriseId,
+      item.feedback.storeId
+    ].filter(Boolean).join("\n").toLowerCase().includes(query));
   }, [page.items, search]);
 
   async function loadMore() {
@@ -112,40 +118,80 @@ export function FeedbackWorkbench({ api, onAuthenticationRequired }: FeedbackWor
       {loadState === "denied" && <div className="feedback-message">Feedback access is not available for this account.</div>}
       {loadState === "ready" && page.items.length === 0 && <div className="feedback-message">No customer feedback is available.</div>}
       {loadState === "ready" && page.items.length > 0 && visibleItems.length === 0 && <div className="feedback-message">No identifiers on this loaded page match your search.</div>}
-      {loadState === "ready" && visibleItems.length > 0 && <FeedbackTable items={visibleItems} />}
+      {loadState === "ready" && visibleItems.length > 0 && <FeedbackTable canEditMetadata={canEditMetadata} items={visibleItems} onEdit={setEditingItem} />}
       {loadState === "ready" && page.nextCursor && (
         <button disabled={loadingMore} onClick={() => void loadMore()} type="button">
           {loadingMore ? "Loading more" : "Load more"}
         </button>
       )}
+      {editingItem && canEditMetadata && (
+        <ProviderCustomerEditor
+          api={api}
+          item={editingItem}
+          onAuthenticationRequired={onAuthenticationRequired}
+          onClosed={() => setEditingItem(null)}
+          onReloadRequested={() => {
+            setEditingItem(null);
+            setRequestVersion((version) => version + 1);
+          }}
+          onSaved={(metadata) => {
+            replaceMetadata(editingItem, metadata);
+            setEditingItem(null);
+          }}
+        />
+      )}
     </section>
   );
+
+  function replaceMetadata(item: ProviderCustomerItem, metadata: ProviderCustomerMetadata | null) {
+    setPage((current) => ({
+      ...current,
+      items: current.items.map((currentItem) => currentItem.feedback.enterpriseId === item.feedback.enterpriseId
+        && currentItem.feedback.storeId === item.feedback.storeId
+        ? { ...currentItem, metadata }
+        : currentItem)
+    }));
+  }
 }
 
 function FeedbackError({ onRetry }: { onRetry(): void }) {
   return <div className="feedback-message" role="alert"><p>Customer feedback could not be loaded.</p><button onClick={onRetry} type="button">Retry</button></div>;
 }
 
-function FeedbackTable({ items }: { items: Array<{ feedback: ProviderFeedbackRow }> }) {
+function FeedbackTable({
+  items,
+  canEditMetadata,
+  onEdit
+}: {
+  items: ProviderCustomerItem[];
+  canEditMetadata: boolean;
+  onEdit(item: ProviderCustomerItem): void;
+}) {
   return (
     <div className="feedback-table-wrap">
       <table className="feedback-table">
-        <thead><tr><th>Enterprise / store</th><th>Latest activity</th><th>State</th><th>Diagnostics</th><th>Actions</th><th>Verification</th></tr></thead>
-        <tbody>{items.map((item) => <FeedbackRow key={`${item.feedback.enterpriseId}\0${item.feedback.storeId}`} item={item.feedback} />)}</tbody>
+        <thead><tr><th>Customer</th><th>Latest activity</th><th>State</th><th>Diagnostics</th><th>Actions</th><th>Verification</th></tr></thead>
+        <tbody>{items.map((item) => <FeedbackRow canEditMetadata={canEditMetadata} item={item} key={`${item.feedback.enterpriseId}\0${item.feedback.storeId}`} onEdit={onEdit} />)}</tbody>
       </table>
     </div>
   );
 }
 
-function FeedbackRow({ item }: { item: ProviderFeedbackRow }) {
+function FeedbackRow({ item, canEditMetadata, onEdit }: { item: ProviderCustomerItem; canEditMetadata: boolean; onEdit(item: ProviderCustomerItem): void }) {
+  const feedback = item.feedback;
   return (
     <tr>
-      <td><strong>{item.enterpriseId}</strong><span>{item.storeId}</span></td>
-      <td><span>Import {dateLabel(item.lastSuccessfulImportAt)}</span><span>Confirmed {dateLabel(item.lastConfirmedAt)}</span><span>Coverage {dateLabel(item.lastCoverageAt)}</span></td>
-      <td><span>{title(item.activityState)}</span><span>{title(item.readinessState)}</span><span>Missing {item.missingMetricCount}</span></td>
-      <td>{counts(item.diagnosticCounts, { revenue_decline: "Revenue decline" })}</td>
-      <td>{counts(item.actionCardStatusCounts, { proposed: "Proposed", in_progress: "In progress", completed: "Completed", verified: "Verified", cancelled: "Cancelled" })}</td>
-      <td>{counts(item.verificationOutcomeCounts, { effective: "Effective", ineffective: "Ineffective", not_executed: "Not executed", data_insufficient: "Data insufficient" })}</td>
+      <td>
+        <strong>{item.metadata?.customerAlias ?? feedback.enterpriseId}</strong>
+        {item.metadata?.customerAlias && <span>{feedback.enterpriseId}</span>}<span>{feedback.storeId}</span>
+        {item.metadata?.providerNote && <p className="provider-note">{item.metadata.providerNote}</p>}
+        {canEditMetadata && <button aria-label="Edit customer details" className="edit-customer-button" onClick={() => onEdit(item)} type="button"><span aria-hidden="true" className="edit-icon" />Edit</button>}
+      </td>
+      <td><span>Import {dateLabel(feedback.lastSuccessfulImportAt)}</span><span>Confirmed {dateLabel(feedback.lastConfirmedAt)}</span><span>Coverage {dateLabel(feedback.lastCoverageAt)}</span></td>
+      <td><span>{title(feedback.activityState)}</span><span>{title(feedback.readinessState)}</span><span>Missing {feedback.missingMetricCount}</span></td>
+      <td>{counts(feedback.diagnosticCounts, { revenue_decline: "Revenue decline" })}</td>
+      <td>{counts(feedback.actionCardStatusCounts, { proposed: "Proposed", in_progress: "In progress", completed: "Completed", verified: "Verified", cancelled: "Cancelled" })}</td>
+      <td>{counts(feedback.verificationOutcomeCounts, { effective: "Effective", ineffective: "Ineffective", not_executed: "Not executed", data_insufficient: "Data insufficient" })}</td>
     </tr>
   );
 }

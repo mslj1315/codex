@@ -78,6 +78,64 @@ describe("feedback response mapping", () => {
 });
 
 describe("read-only feedback workbench", () => {
+  it("uses the customer alias as the primary label while retaining both identifiers", async () => {
+    const api = apiWithResponses(jsonResponse(pagePayload([feedbackRow("ent-alpha", "store-1")], null)));
+
+    render(<FeedbackWorkbench api={api} />);
+
+    const row = await screen.findByRole("row", { name: /pilot ent-alpha store-1/i });
+    expect(row.querySelector("strong")).toHaveTextContent("Pilot");
+    expect(row).toHaveTextContent("ent-alpha");
+    expect(row).toHaveTextContent("store-1");
+  });
+
+  it("searches the loaded page by alias or identifiers without searching notes or fetching", async () => {
+    const user = userEvent.setup();
+    const api = apiWithResponses(jsonResponse(pagePayload([{ feedback: feedbackRow("ent-alpha", "store-1"), metadata: {
+      customerAlias: "Client North", providerNote: "needle only in a private note", version: 2, updatedAt: "2026-08-13T02:00:00.000Z"
+    } }], null)));
+    render(<FeedbackWorkbench api={api} />);
+    await screen.findByText("Client North");
+
+    await user.type(screen.getByLabelText("Current page search"), "client north");
+    expect(screen.getByText("Client North")).toBeVisible();
+    await user.clear(screen.getByLabelText("Current page search"));
+    await user.type(screen.getByLabelText("Current page search"), "needle only in a private note");
+    expect(screen.getByText("No identifiers on this loaded page match your search.")).toBeVisible();
+    expect(api.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders metadata as text with no edit command for a viewer-only account", async () => {
+    const api = apiWithResponses(jsonResponse(pagePayload([{ feedback: feedbackRow("ent-alpha", "store-1"), metadata: {
+      customerAlias: "<img src=x onerror=sentinel>", providerNote: "<img src=x onerror=sentinel>", version: 2, updatedAt: "2026-08-13T02:00:00.000Z"
+    } }], null)));
+    render(<FeedbackWorkbench api={api} />);
+
+    expect((await screen.findAllByText("<img src=x onerror=sentinel>")).length).toBe(2);
+    expect(document.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit customer details" })).not.toBeInTheDocument();
+  });
+
+  it("renders an icon-plus-text edit command only when metadata editing is allowed", async () => {
+    const api = apiWithResponses(jsonResponse(pagePayload([feedbackRow("ent-alpha", "store-1")], null)));
+    render(<FeedbackWorkbench api={api} canEditMetadata />);
+
+    expect(await screen.findByRole("button", { name: "Edit customer details" })).toBeVisible();
+  });
+
+  it("replaces the displayed metadata with the normalized save result", async () => {
+    const user = userEvent.setup();
+    const api = apiWithResponses(
+      jsonResponse(pagePayload([feedbackRow("ent-alpha", "store-1")], null)),
+      jsonResponse({ metadata: { customerAlias: "Normalized", providerNote: null, version: 3, updatedAt: "2026-08-13T03:00:00.000Z" } })
+    );
+    render(<FeedbackWorkbench api={api} canEditMetadata />);
+    await user.click(await screen.findByRole("button", { name: "Edit customer details" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Normalized")).toBeVisible();
+    expect(screen.queryByText("Internal note")).not.toBeInTheDocument();
+  });
   it("loads the default page and renders aggregate identifiers, times, states, and count maps", async () => {
     const api = apiWithResponses(jsonResponse(pagePayload([feedbackRow("ent-alpha", "store-1")])));
 

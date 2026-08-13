@@ -156,7 +156,11 @@ function AuthenticatedShell({
       ) : (
         <main className="workspace">
           {capabilities.providerFeedbackViewer && (
-            <FeedbackWorkbench api={feedbackApi} onAuthenticationRequired={onAuthenticationRequired} />
+            <FeedbackWorkbench
+              api={feedbackApi}
+              canEditMetadata={capabilities.providerFeedbackViewer && capabilities.providerCustomerMetadataEditor}
+              onAuthenticationRequired={onAuthenticationRequired}
+            />
           )}
           {capabilities.metricCatalogOperator && <CatalogInformation />}
         </main>
