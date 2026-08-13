@@ -63,6 +63,19 @@ describe("provider customer routes", () => {
     expect(JSON.stringify(auditLogs(logs))).not.toMatch(/sentinel-alias|sentinel-private-note|ent_customer|store_customer|ent_unknown|store_unknown/i);
   });
 
+  it("rejects a viewer-only metadata write with the neutral required-role response", async () => {
+    const viewer = await login("viewer");
+    const response = await app.inject({
+      method: "PUT", url: "/v1/provider-customers/ent_customer/store_customer/metadata",
+      headers: { ...marker, ...bearer(viewer) },
+      payload: { customerAlias: "sentinel-alias", providerNote: "sentinel-private-note", expectedVersion: null }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "Provider customer metadata access is required" });
+    expect(JSON.stringify(auditLogs(logs))).not.toMatch(/sentinel-alias|sentinel-private-note|ent_customer|store_customer/i);
+  });
+
   it("creates, replaces, clears, validates and protects metadata versions without leaking note content", async () => {
     const accessToken = await login("viewer_editor");
     const headers = { ...marker, ...bearer(accessToken) };
@@ -88,6 +101,45 @@ describe("provider customer routes", () => {
     expect(logs.filter((entry) => entry.event === "provider_customer_metadata_write").at(0)).toEqual(expect.objectContaining({
       accountId: "account_viewer_editor", enterpriseId: "ent_customer", storeId: "store_customer", operation: "create", outcome: "success", expectedVersion: null, resultingVersion: 1
     }));
+  });
+
+  it("replaces existing metadata at its current version and returns the incremented public value", async () => {
+    const accessToken = await login("viewer_editor");
+    await database.query(`INSERT INTO provider_customer_metadata
+      (enterprise_id, store_id, customer_alias, provider_note, version, updated_by_account_id, updated_at)
+      VALUES ('ent_customer', 'store_customer', 'Previous', 'Previous note', 1, 'account_viewer_editor', $1)`, [now]);
+
+    const response = await app.inject({
+      method: "PUT", url: "/v1/provider-customers/ent_customer/store_customer/metadata",
+      headers: { ...marker, ...bearer(accessToken) },
+      payload: { customerAlias: "Updated", providerNote: "Updated note", expectedVersion: 1 }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ metadata: {
+      customerAlias: "Updated", providerNote: "Updated note", version: 2, updatedAt: now.toISOString()
+    } });
+    expect(logs.filter((entry) => entry.event === "provider_customer_metadata_write").at(0)).toEqual(expect.objectContaining({
+      operation: "replace", expectedVersion: 1, resultingVersion: 2, outcome: "success"
+    }));
+  });
+
+  it("redacts an injected metadata infrastructure failure behind the neutral 500 response", async () => {
+    const accessToken = await login("viewer_editor");
+    vi.spyOn(ProviderCustomerMetadataRepository.prototype, "scopeExists").mockRejectedValue(
+      new Error("database unavailable sentinel-alias sentinel-private-note")
+    );
+
+    const response = await app.inject({
+      method: "PUT", url: "/v1/provider-customers/ent_customer/store_customer/metadata",
+      headers: { ...marker, ...bearer(accessToken) },
+      payload: { customerAlias: "sentinel-alias", providerNote: "sentinel-private-note", expectedVersion: null }
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: "Provider customer metadata is unavailable" });
+    expect(response.body).not.toMatch(/sentinel-alias|sentinel-private-note|database unavailable/i);
+    expect(JSON.stringify(auditLogs(logs))).not.toMatch(/sentinel-alias|sentinel-private-note|database unavailable/i);
   });
 
   it("does not register provider customer routes in explicit development context", async () => {
