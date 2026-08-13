@@ -12,7 +12,9 @@ data class StoreContentProfile(
     val detailedAddress: String,
     val businessDistrictType: String,
     val businessDistrictNote: String? = null,
-    val operatingMode: String
+    val operatingMode: String,
+    val enterpriseId: String? = null,
+    val version: Int? = null
 ) {
     fun missingRequiredFields(): List<String> = buildList {
         if (storeName.isBlank()) add("storeName")
@@ -26,6 +28,19 @@ data class StoreContentProfile(
         if (operatingMode.isBlank()) add("operatingMode")
     }
 }
+
+data class ContentProfileRequest(
+    val storeName: String, val industryCode: String, val categoryCode: String,
+    val categoryCustomName: String? = null, val provinceCode: String, val cityCode: String,
+    val districtCode: String, val detailedAddress: String, val businessDistrictType: String,
+    val businessDistrictNote: String? = null, val operatingMode: String
+)
+
+data class ContentProfileResponse(
+    val profile: StoreContentProfile,
+    val completenessRequired: Boolean,
+    val missing: List<String>
+)
 
 data class OperatingStage(
     val effectiveDate: String,

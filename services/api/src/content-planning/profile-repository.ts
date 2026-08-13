@@ -19,6 +19,14 @@ export interface OperatingStageInput { effectiveDate: string; primaryGoal: strin
 export interface OperatingStage extends OperatingStageInput { id: string; enterpriseId: string; storeId: string; createdByActorId: string; createdAt: Date; }
 type Row = Record<string, unknown>;
 
+export const CONTENT_PROFILE_CODES = {
+  industries: ["fast_food", "full_service", "hotpot_skewers", "barbecue_night", "beverages_desserts", "bakery", "snacks_local", "other"],
+  categories: ["rice_noodle", "chinese_dining", "sichuan", "hotpot", "skewers", "barbecue", "night_market", "tea_coffee", "dessert", "bakery", "snacks", "local_specialty", "other"],
+  businessDistricts: ["office", "community", "mall", "school", "scenic", "transport", "industrial_park", "mixed", "food_street", "other"],
+  operatingModes: ["dine_in", "takeaway", "dine_in_takeaway", "group_buy", "multi_mode"],
+  goals: ["acquire_customers", "increase_visits", "promote_product", "promote_set", "raise_ticket", "increase_repeat", "increase_takeaway", "increase_group_buy", "brand_awareness", "undecided"]
+} as const;
+
 export class ProfileRepository {
   constructor(private readonly database: Queryable) {}
 
@@ -61,6 +69,10 @@ export class ProfileRepository {
 function validateProfile(input: ContentProfileInput): void {
   const fields: [keyof ContentProfileInput, string][] = [["storeName", "storeName"],["industryCode", "industryCode"],["categoryCode", "categoryCode"],["provinceCode", "provinceCode"],["cityCode", "cityCode"],["districtCode", "districtCode"],["detailedAddress", "detailedAddress"],["businessDistrictType", "businessDistrictType"],["operatingMode", "operatingMode"]];
   for (const [field, name] of fields) if (typeof input[field] !== "string" || !(input[field] as string).trim()) throw new ProfileValidationError(`${name} is required`);
+  assertCode(input.industryCode, CONTENT_PROFILE_CODES.industries, "industryCode");
+  assertCode(input.categoryCode, CONTENT_PROFILE_CODES.categories, "categoryCode");
+  assertCode(input.businessDistrictType, CONTENT_PROFILE_CODES.businessDistricts, "businessDistrictType");
+  assertCode(input.operatingMode, CONTENT_PROFILE_CODES.operatingModes, "operatingMode");
 }
 function validateStage(input: OperatingStageInput): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveDate)) throw new ProfileValidationError("effectiveDate is required");
@@ -68,8 +80,11 @@ function validateStage(input: OperatingStageInput): void {
   const date = new Date(Date.UTC(year, month - 1, day));
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) throw new ProfileValidationError("effectiveDate must be a real calendar date");
   if (!input.primaryGoal?.trim()) throw new ProfileValidationError("primaryGoal is required");
+  assertCode(input.primaryGoal, CONTENT_PROFILE_CODES.goals, "primaryGoal");
+  if (input.secondaryGoal) assertCode(input.secondaryGoal, CONTENT_PROFILE_CODES.goals, "secondaryGoal");
   if (input.secondaryGoal?.trim() === input.primaryGoal.trim()) throw new ProfileValidationError("secondaryGoal must differ from primaryGoal");
 }
+function assertCode(value: string, allowed: readonly string[], name: string): void { if (!allowed.includes(value as never)) throw new ProfileValidationError(`${name} is invalid`); }
 function nullableTrim(value: string | null | undefined): string | null { return value?.trim() || null; }
 function toProfile(row: Row): ContentProfile { const fields = ["store_name","industry_code","category_code","province_code","city_code","district_code","detailed_address","business_district_type","operating_mode"]; const missing = fields.filter((field) => !String(row[field] ?? "").trim()); return { id: String(row.id), enterpriseId: String(row.enterprise_id), storeId: String(row.store_id), version: Number(row.version), storeName: String(row.store_name), industryCode: String(row.industry_code), categoryCode: String(row.category_code), categoryCustomName: nullable(row.category_custom_name), provinceCode: String(row.province_code), cityCode: String(row.city_code), districtCode: String(row.district_code), detailedAddress: String(row.detailed_address), businessDistrictType: String(row.business_district_type), businessDistrictNote: nullable(row.business_district_note), operatingMode: String(row.operating_mode), createdByActorId: String(row.created_by_actor_id), createdAt: new Date(String(row.created_at)), completeness: { required: missing.length === 0, missing } }; }
 function toStage(row: Row): OperatingStage { return { id: String(row.id), enterpriseId: String(row.enterprise_id), storeId: String(row.store_id), effectiveDate: String(row.effective_date), primaryGoal: String(row.primary_goal), secondaryGoal: nullable(row.secondary_goal), note: nullable(row.note), createdByActorId: String(row.created_by_actor_id), createdAt: new Date(String(row.created_at)) }; }
