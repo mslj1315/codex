@@ -219,6 +219,12 @@ export interface FactVersionScope {
   storeId: string;
 }
 
+export interface LatestConfirmedPeriod {
+  rangeStart: string;
+  rangeEnd: string;
+  confirmedAt: Date;
+}
+
 export interface FactValue {
   id: string;
   factVersionId: string;
@@ -807,6 +813,31 @@ export class ImportRepository {
     );
     if (result.rowCount !== 1) throw new NotFoundError("No confirmed fact version for enterprise and store");
     return this.getFactVersion({ id: string(result.rows[0].id), ...scope });
+  }
+
+  async getLatestConfirmedPeriod(scope: Omit<FactVersionScope, "id">): Promise<LatestConfirmedPeriod | null> {
+    const result = await this.database.query<Row>(
+      `SELECT batch.range_start, batch.range_end, version.confirmed_at
+       FROM fact_versions version
+       JOIN import_batches batch ON batch.id = version.source_batch_id
+       WHERE version.enterprise_id = $1
+         AND version.store_id = $2
+         AND version.confirmation_status = 'confirmed'
+         AND batch.enterprise_id = $1
+         AND batch.store_id = $2
+         AND batch.status = 'confirmed'
+         AND batch.range_start IS NOT NULL
+         AND batch.range_end IS NOT NULL
+       ORDER BY version.confirmed_at DESC, version.created_at DESC, version.id DESC
+       LIMIT 1`,
+      [scope.enterpriseId, scope.storeId]
+    );
+    if (result.rowCount !== 1) return null;
+    return {
+      rangeStart: dateOnly(result.rows[0].range_start),
+      rangeEnd: dateOnly(result.rows[0].range_end),
+      confirmedAt: date(result.rows[0].confirmed_at)
+    };
   }
 
   async getPublishedMetricCatalog() {

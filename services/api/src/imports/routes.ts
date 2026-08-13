@@ -106,6 +106,9 @@ export async function registerImportRoutes(app: FastifyInstance, options: Import
   });
   app.get("/v1/stores/:storeId/facts/latest", async (request) => service.getLatest(scopedContext(request)));
   app.get("/v1/stores/:storeId/metric-catalog", async () => service.getPublishedMetricCatalog());
+  app.get("/v1/stores/:storeId/operations/latest-confirmed-period", async (request) => ({
+    period: await service.getLatestConfirmedPeriod(scopedContext(request))
+  }));
   app.get("/v1/stores/:storeId/readiness", async (request) => {
     const query = request.query as Record<string, unknown>;
     return service.getDataReadiness(scopedContext(request), stringField(query, "rangeStart"), stringField(query, "rangeEnd"));

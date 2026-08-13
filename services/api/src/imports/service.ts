@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ParserInputError, parseCsvBytes, parseXlsx } from "./parser.js";
-import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness, DeterministicDiagnostic, ActionCard, ActionCardStatus, ActionCardVerificationOutcome, ActionCardVerificationSummary } from "./repository.js";
+import type { ImportCandidate, ImportBatchDetails, ImportSourceType, CreateCandidateInput, CreateImportObjectReconciliationJob, DataReadiness, DeterministicDiagnostic, ActionCard, ActionCardStatus, ActionCardVerificationOutcome, ActionCardVerificationSummary, LatestConfirmedPeriod } from "./repository.js";
 import { DuplicateImportFileError, ImportRepository, ValidationError } from "./repository.js";
 import {
   ObjectStorageError,
@@ -157,6 +157,10 @@ export class ImportService {
 
   async getDataReadiness(context: TrustedContext, rangeStart: string, rangeEnd: string): Promise<DataReadiness> {
     return this.imports.getDataReadiness({ ...context, rangeStart, rangeEnd });
+  }
+
+  getLatestConfirmedPeriod(context: TrustedContext): Promise<LatestConfirmedPeriod | null> {
+    return this.imports.getLatestConfirmedPeriod(context);
   }
 
   async getDeterministicDiagnostic(context: TrustedContext, rangeStart: string, rangeEnd: string): Promise<DeterministicDiagnostic | null> {

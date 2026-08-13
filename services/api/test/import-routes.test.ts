@@ -244,6 +244,47 @@ describe("import API routes", () => {
     expect(other.statusCode).toBe(403);
   });
 
+  it("returns only the latest confirmed operations period for the trusted store", async () => {
+    const empty = await app.inject({ method: "GET", url: "/v1/stores/store_demo/operations/latest-confirmed-period" });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({ period: null });
+
+    const createAndConfirm = async (rangeStart: string, rangeEnd: string) => {
+      const created = await app.inject({
+        method: "POST", url: "/v1/stores/store_demo/imports/manual",
+        payload: {
+          rangeStart, rangeEnd,
+          candidates: [{ metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready" }]
+        }
+      });
+      expect(created.statusCode).toBe(201);
+      const batch = created.json();
+      const confirmed = await app.inject({
+        method: "POST", url: `/v1/stores/store_demo/imports/${batch.id}/confirm`,
+        payload: { candidateIds: [batch.candidates[0].id] }
+      });
+      expect(confirmed.statusCode).toBe(201);
+      return batch.id as string;
+    };
+
+    const earlierBatchId = await createAndConfirm("2026-07-25", "2026-07-31");
+    const laterBatchId = await createAndConfirm("2026-08-01", "2026-08-07");
+    await pool.query("UPDATE fact_versions SET confirmed_at = $1 WHERE source_batch_id = $2", ["2026-08-08T01:00:00.000Z", earlierBatchId]);
+    await pool.query("UPDATE fact_versions SET confirmed_at = $1 WHERE source_batch_id = $2", ["2026-08-10T01:00:00.000Z", laterBatchId]);
+
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/operations/latest-confirmed-period" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      period: { rangeStart: "2026-08-01", rangeEnd: "2026-08-07", confirmedAt: "2026-08-10T01:00:00.000Z" }
+    });
+    expect(Object.keys(response.json())).toEqual(["period"]);
+    expect(Object.keys(response.json().period)).toEqual(["rangeStart", "rangeEnd", "confirmedAt"]);
+    expect(response.body).not.toMatch(/batch|fact|candidate|object|value|source/i);
+
+    const outside = await app.inject({ method: "GET", url: "/v1/stores/store_other/operations/latest-confirmed-period" });
+    expect(outside.statusCode).toBe(403);
+  });
+
   it("parses a bounded raw CSV upload into source-backed candidates", async () => {
     const bytes = Buffer.from("订单数\n12\n");
     const response = await app.inject({
