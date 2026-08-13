@@ -1,0 +1,134 @@
+import { DataType, newDb } from "pg-mem";
+import { beforeEach, describe, expect, it } from "vitest";
+import { ImportRepository, ConflictError, ValidationError } from "../src/imports/repository.js";
+
+describe("action cards", () => {
+  let database: any;
+  let imports: ImportRepository;
+
+  beforeEach(async () => {
+    const memory = newDb();
+    memory.public.registerFunction({ name: "length", args: [DataType.text], returns: DataType.integer, implementation: (value: string) => value.length });
+    const { Pool } = memory.adapters.createPg();
+    database = new Pool();
+    await database.query(`CREATE TABLE diagnostic_runs (
+      id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL,
+      UNIQUE (id, enterprise_id, store_id)
+    )`);
+    await database.query(`CREATE TABLE metric_catalog_versions (
+      id TEXT PRIMARY KEY, state TEXT NOT NULL
+    );
+    CREATE TABLE metric_definitions (
+      metric_catalog_version_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL, usable_for_verification BOOLEAN NOT NULL
+    );
+    INSERT INTO metric_catalog_versions (id, state) VALUES ('metric_catalog_v1', 'published');
+    INSERT INTO metric_definitions (metric_catalog_version_id, metric_key, enabled, usable_for_verification) VALUES
+      ('metric_catalog_v1', 'revenue', true, true),
+      ('metric_catalog_v1', 'orders', true, true);`);
+    await database.query(`CREATE TABLE action_cards (
+      id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, created_by_actor_id TEXT NOT NULL,
+      diagnostic_kind TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL, title TEXT NOT NULL,
+      action TEXT NOT NULL, verification_metric TEXT NOT NULL, status TEXT NOT NULL, due_date DATE,
+      verification_metric_keys TEXT NOT NULL DEFAULT '["revenue","orders"]',
+      diagnostic_run_id TEXT,
+      execution_note TEXT, verification_outcome TEXT, completed_at TIMESTAMPTZ, verified_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (diagnostic_run_id, enterprise_id, store_id) REFERENCES diagnostic_runs (id, enterprise_id, store_id)
+    )`);
+    imports = new ImportRepository(database);
+  });
+
+  it("creates a proposed store-scoped card and advances only through valid states", async () => {
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查午市套餐", action: "检查订单量与客单价", verificationMetric: "下一周期营业额与订单数", dueDate: "2026-08-14" });
+    expect(card).toMatchObject({ status: "proposed", storeId: "store_demo", title: "检查午市套餐" });
+    await expect(imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "verified", now: new Date() })).rejects.toBeInstanceOf(ConflictError);
+    const started = await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    expect(started.status).toBe("in_progress");
+  });
+
+  it("preserves a nullable diagnostic run reference and rejects another store's run", async () => {
+    await database.query("INSERT INTO diagnostic_runs (id, enterprise_id, store_id) VALUES ('run_demo', 'ent_demo', 'store_demo')");
+    const linked = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Linked", action: "Review", verificationMetric: "Revenue", diagnosticRunId: "run_demo" });
+    const manual = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Manual", action: "Review", verificationMetric: "Revenue" });
+
+    expect(linked.diagnosticRunId).toBe("run_demo");
+    expect(manual.diagnosticRunId).toBeNull();
+    await expect(imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_other", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Cross scope", action: "Review", verificationMetric: "Revenue", diagnosticRunId: "run_demo" })).rejects.toThrow();
+  });
+
+  it("isolates cards and validates date/status input", async () => {
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查", action: "执行", verificationMetric: "营业额" });
+    await expect(imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_other", status: "in_progress", now: new Date() })).rejects.toBeInstanceOf(ValidationError);
+    await expect(imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-08", rangeEnd: "2026-08-01", title: "", action: "执行", verificationMetric: "营业额" })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("lists cards newest first and supports a validated status filter", async () => {
+    await imports.createActionCard({ id: "action_001", enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "旧", action: "执行", verificationMetric: "营业额" });
+    const newest = await imports.createActionCard({ id: "action_002", enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "新", action: "执行", verificationMetric: "营业额" });
+    await imports.updateActionCardStatus({ id: newest.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    const cards = await imports.listActionCards({ enterpriseId: "ent_demo", storeId: "store_demo" });
+    expect(cards.map((card) => card.title)).toEqual(["新", "旧"]);
+    await expect(imports.listActionCards({ enterpriseId: "ent_demo", storeId: "store_demo", status: "invalid" as never })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("records bounded execution evidence on completion and a fixed review outcome on verification", async () => {
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查", action: "执行", verificationMetric: "营业额" });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    const completed = await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "completed", now: new Date(), executionNote: "已检查午市套餐展示与核销流程" });
+    expect(completed).toMatchObject({ status: "completed", executionNote: "已检查午市套餐展示与核销流程" });
+    const verified = await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "verified", now: new Date(), verificationOutcome: "data_insufficient" });
+    expect(verified).toMatchObject({ status: "verified", verificationOutcome: "data_insufficient" });
+  });
+
+  it("returns a next-period verification summary only when confirmed metrics exist", async () => {
+    await database.query(`CREATE TABLE fact_values (
+      id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+      value BIGINT NOT NULL, unit TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL
+    )`);
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "revenue_decline", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "检查", action: "执行", verificationMetric: "下一周期营业额与订单数" });
+    await database.query(`INSERT INTO fact_values VALUES
+      ('base-r','ent_demo','store_demo','revenue',3826000,'cents','2026-08-01','2026-08-07'),
+      ('base-o','ent_demo','store_demo','orders',120,'count','2026-08-01','2026-08-07'),
+      ('next-r','ent_demo','store_demo','revenue',4200000,'cents','2026-08-08','2026-08-14'),
+      ('next-o','ent_demo','store_demo','orders',130,'count','2026-08-08','2026-08-14')`);
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toBeNull();
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "completed", now: new Date(), executionNote: "已执行" });
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toEqual({
+      baselineRangeStart: "2026-08-01", baselineRangeEnd: "2026-08-07", comparisonRangeStart: "2026-08-08", comparisonRangeEnd: "2026-08-14",
+      metrics: [
+        { metricKey: "orders", baselineValue: 120, comparisonValue: 130, changePercent: 8.33 },
+        { metricKey: "revenue", baselineValue: 3826000, comparisonValue: 4200000, changePercent: 9.78 }
+      ]
+    });
+    await database.query("DELETE FROM fact_values WHERE id = 'next-o'");
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toBeNull();
+  });
+
+  it("limits verification summaries to enabled verification metrics in the published catalog", async () => {
+    await database.query(`CREATE TABLE fact_values (
+      id TEXT PRIMARY KEY, enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, metric_key TEXT NOT NULL,
+      value BIGINT NOT NULL, unit TEXT NOT NULL, range_start DATE NOT NULL, range_end DATE NOT NULL
+    )`);
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Review", action: "Review", verificationMetric: "Revenue and orders" });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "in_progress", now: new Date() });
+    await imports.updateActionCardStatus({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo", status: "completed", now: new Date(), executionNote: "Completed" });
+    await database.query(`INSERT INTO fact_values VALUES
+      ('base-r','ent_demo','store_demo','revenue',100,'cents','2026-08-01','2026-08-07'),
+      ('next-r','ent_demo','store_demo','revenue',110,'cents','2026-08-08','2026-08-14'),
+      ('base-o','ent_demo','store_demo','orders',10,'count','2026-08-01','2026-08-07'),
+      ('next-o','ent_demo','store_demo','orders',12,'count','2026-08-08','2026-08-14')`);
+    await database.query("UPDATE metric_definitions SET usable_for_verification = false WHERE metric_key = 'orders'");
+
+    await expect(imports.getActionCardVerificationSummary({ id: card.id, enterpriseId: "ent_demo", storeId: "store_demo" })).resolves.toMatchObject({
+      metrics: [{ metricKey: "revenue", baselineValue: 100, comparisonValue: 110, changePercent: 10 }]
+    });
+  });
+
+  it("persists explicit verification metric keys only when the published catalog permits them", async () => {
+    const card = await imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Review", action: "Review", verificationMetric: "Lunch orders", verificationMetricKeys: ["revenue"] });
+    expect(card.verificationMetricKeys).toEqual(["revenue"]);
+    await expect(imports.createActionCard({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo", diagnosticKind: "manual", rangeStart: "2026-08-01", rangeEnd: "2026-08-07", title: "Review", action: "Review", verificationMetric: "Invalid", verificationMetricKeys: ["package_sales"] })).rejects.toBeInstanceOf(ValidationError);
+  });
+});
