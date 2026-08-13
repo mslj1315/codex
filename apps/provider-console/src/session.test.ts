@@ -8,6 +8,7 @@ const session: ProviderSession = {
   account: { id: "account-viewer", displayName: "Viewer" },
   capabilities: {
     providerFeedbackViewer: true,
+    providerCustomerMetadataEditor: false,
     metricCatalogOperator: false
   }
 };
@@ -93,8 +94,8 @@ describe("provider console session", () => {
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
-    const first = api.fetch("/v1/provider-feedback/stores?limit=50");
-    const second = api.fetch("/v1/provider-feedback/stores?limit=25");
+    const first = api.fetch("/v1/provider-customers?limit=50");
+    const second = api.fetch("/v1/provider-customers?limit=25");
     await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
     resolveRefresh(jsonResponse({ ...session, accessToken: "replacement-token" }));
 
@@ -133,8 +134,8 @@ describe("provider console session", () => {
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
-    const first = api.fetch("/v1/provider-feedback/stores?limit=50");
-    const second = api.fetch("/v1/provider-feedback/stores?limit=25");
+    const first = api.fetch("/v1/provider-customers?limit=50");
+    const second = api.fetch("/v1/provider-customers?limit=25");
     await expect(first).resolves.toMatchObject({ status: 200 });
     releaseLateUnauthorized();
     await expect(second).resolves.toMatchObject({ status: 200 });
@@ -150,7 +151,7 @@ describe("provider console session", () => {
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
-    await expect(api.fetch("/v1/provider-feedback/stores?limit=50"))
+    await expect(api.fetch("/v1/provider-customers?limit=50"))
       .resolves.toMatchObject({ status: 401 });
     expect(client.snapshot()).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -162,44 +163,97 @@ describe("provider console session", () => {
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
-    await expect(api.fetch("/v1/provider-feedback/stores?limit=50"))
+    await expect(api.fetch("/v1/provider-customers?limit=50"))
       .resolves.toMatchObject({ status: 403 });
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(client.snapshot()).toEqual(session);
   });
 
-  it("refuses to send a bearer token outside the provider feedback boundary", async () => {
+  it("sends bearer but no browser marker for the provider-customer list route", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    const client = createSessionClient(fetcher);
+    client.set(session);
+    const api = createProviderApiClient(client, fetcher);
+
+    await api.fetch("/v1/provider-customers?limit=50");
+
+    expect(fetcher).toHaveBeenCalledWith("/v1/provider-customers?limit=50", expect.objectContaining({
+      credentials: "same-origin",
+      headers: { Authorization: "Bearer access-token" }
+    }));
+  });
+
+  it("sends the browser marker only for a metadata PUT", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    const client = createSessionClient(fetcher);
+    client.set(session);
+    const api = createProviderApiClient(client, fetcher);
+
+    await api.fetch("/v1/provider-customers/ent_demo/store_demo/metadata", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerAlias: "Pilot", providerNote: null, expectedVersion: null })
+    });
+
+    expect(fetcher).toHaveBeenCalledWith("/v1/provider-customers/ent_demo/store_demo/metadata", expect.objectContaining({
+      credentials: "same-origin"
+    }));
+    const headers = new Headers(fetcher.mock.calls[0][1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer access-token");
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-Provider-Console-Request")).toBe("1");
+  });
+
+  it.each([
+    ["https://provider-console.invalid/v1/provider-customers", { method: "GET" }],
+    ["/v1/provider-customers#fragment", { method: "GET" }],
+    ["/v1/provider-customers/ent%2Fbad/store/metadata", { method: "PUT" }],
+    ["/v1/provider-customers/ent/store/metadata", { method: "GET" }],
+    ["/v1/provider-customers?limit=50", { method: "PUT" }],
+    ["/v1/provider-customers/ent/store/metadata?unexpected=1", { method: "PUT" }],
+    ["/v1/other", { method: "GET" }]
+  ])("rejects unsupported customer API target %s before fetch", async (path, init) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const client = createSessionClient(fetcher);
+    client.set(session);
+    const api = createProviderApiClient(client, fetcher);
+
+    await expect(api.fetch(path, init)).rejects.toThrow("Provider API client only supports customer routes");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("refuses to send a bearer token outside the provider-customer boundary", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createSessionClient(fetcher);
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
     await expect(api.fetch("/v1/provider-auth/logout")).rejects.toThrow(
-      "Provider API client only supports feedback routes"
+      "Provider API client only supports customer routes"
     );
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("rejects a feedback-looking path that normalizes outside the feedback route", async () => {
+  it("rejects a customer-looking path that normalizes outside the allowed route", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createSessionClient(fetcher);
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
-    await expect(api.fetch("/v1/provider-feedback/../provider-auth/logout")).rejects.toThrow(
-      "Provider API client only supports feedback routes"
+    await expect(api.fetch("/v1/provider-customers/../provider-auth/logout")).rejects.toThrow(
+      "Provider API client only supports customer routes"
     );
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("rejects encoded traversal outside the feedback route", async () => {
+  it("rejects encoded traversal outside the customer route", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createSessionClient(fetcher);
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
-    await expect(api.fetch("/v1/provider-feedback/%2e%2e/provider-auth/logout")).rejects.toThrow(
-      "Provider API client only supports feedback routes"
+    await expect(api.fetch("/v1/provider-customers/%2e%2e/provider-auth/logout")).rejects.toThrow(
+      "Provider API client only supports customer routes"
     );
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -210,8 +264,8 @@ describe("provider console session", () => {
     client.set(session);
     const api = createProviderApiClient(client, fetcher);
 
-    await expect(api.fetch("//provider-console.invalid/v1/provider-feedback/stores")).rejects.toThrow(
-      "Provider API client only supports feedback routes"
+    await expect(api.fetch("//provider-console.invalid/v1/provider-customers")).rejects.toThrow(
+      "Provider API client only supports customer routes"
     );
     expect(fetcher).not.toHaveBeenCalled();
   });

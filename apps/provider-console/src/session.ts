@@ -5,6 +5,7 @@ export interface ProviderAccount {
 
 export interface ProviderCapabilities {
   providerFeedbackViewer: boolean;
+  providerCustomerMetadataEditor: boolean;
   metricCatalogOperator: boolean;
 }
 

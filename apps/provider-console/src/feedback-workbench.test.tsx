@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderApiClient } from "./api";
-import { parseFeedbackPage } from "./feedback";
+import { parseFeedbackPage, replaceProviderCustomerMetadata } from "./feedback";
 import { FeedbackWorkbench } from "./feedback-workbench";
 
 const sensitiveSentinels = [
@@ -20,22 +20,30 @@ const sensitiveSentinels = [
 ];
 
 describe("feedback response mapping", () => {
-  it("copies only permitted aggregate fields and discards sensitive response fields", () => {
+  it("copies only permitted aggregate and metadata fields and discards sensitive response fields", () => {
     const page = parseFeedbackPage(pagePayload([feedbackRow("ent-alpha", "store-1")]));
 
     expect(page).toEqual({
       items: [{
-        enterpriseId: "ent-alpha",
-        storeId: "store-1",
-        lastSuccessfulImportAt: "2026-08-12T08:00:00.000Z",
-        lastConfirmedAt: "2026-08-12T09:00:00.000Z",
-        lastCoverageAt: "2026-08-12T09:00:00.000Z",
-        activityState: "active",
-        readinessState: "ready",
-        missingMetricCount: 0,
-        diagnosticCounts: { revenue_decline: 2 },
-        actionCardStatusCounts: { proposed: 1, verified: 3 },
-        verificationOutcomeCounts: { effective: 2, data_insufficient: 1 }
+        feedback: {
+          enterpriseId: "ent-alpha",
+          storeId: "store-1",
+          lastSuccessfulImportAt: "2026-08-12T08:00:00.000Z",
+          lastConfirmedAt: "2026-08-12T09:00:00.000Z",
+          lastCoverageAt: "2026-08-12T09:00:00.000Z",
+          activityState: "active",
+          readinessState: "ready",
+          missingMetricCount: 0,
+          diagnosticCounts: { revenue_decline: 2 },
+          actionCardStatusCounts: { proposed: 1, verified: 3 },
+          verificationOutcomeCounts: { effective: 2, data_insufficient: 1 }
+        },
+        metadata: {
+          customerAlias: "Pilot",
+          providerNote: "Internal note",
+          version: 2,
+          updatedAt: "2026-08-13T02:00:00.000Z"
+        }
       }],
       nextCursor: "opaque+/=cursor"
     });
@@ -43,9 +51,29 @@ describe("feedback response mapping", () => {
   });
 
   it("rejects malformed or unknown aggregate values", () => {
-    expect(() => parseFeedbackPage(pagePayload([{ ...feedbackRow("ent", "store"), activityState: "paused" }]))).toThrow("Invalid feedback response");
-    expect(() => parseFeedbackPage(pagePayload([{ ...feedbackRow("ent", "store"), missingMetricCount: -1 }]))).toThrow("Invalid feedback response");
-    expect(() => parseFeedbackPage(pagePayload([{ ...feedbackRow("ent", "store"), diagnosticCounts: { secret_kind: 2 } }]))).toThrow("Invalid feedback response");
+    expect(() => parseFeedbackPage(pagePayload([{ feedback: { ...feedbackRow("ent", "store"), activityState: "paused" }, metadata: null }]))).toThrow("Invalid feedback response");
+    expect(() => parseFeedbackPage(pagePayload([{ feedback: { ...feedbackRow("ent", "store"), missingMetricCount: -1 }, metadata: null }]))).toThrow("Invalid feedback response");
+    expect(() => parseFeedbackPage(pagePayload([{ feedback: { ...feedbackRow("ent", "store"), diagnosticCounts: { secret_kind: 2 } }, metadata: null }]))).toThrow("Invalid feedback response");
+    expect(() => parseFeedbackPage(pagePayload([{ feedback: feedbackRow("ent", "store"), metadata: { customerAlias: null, providerNote: null, version: 1.5, updatedAt: "2026-08-13T02:00:00.000Z" } }]))).toThrow("Invalid feedback response");
+    expect(() => parseFeedbackPage(pagePayload([{ feedback: feedbackRow("ent", "store"), metadata: { customerAlias: null, providerNote: null, version: 1, updatedAt: "2026-08-13" } }]))).toThrow("Invalid feedback response");
+  });
+
+  it("writes only allowlisted metadata fields to the exact encoded customer route", async () => {
+    const api = apiWithResponses(jsonResponse({ metadata: {
+      customerAlias: "Pilot", providerNote: null, version: 3, updatedAt: "2026-08-13T02:00:00.000Z", accountId: "sentinel-account"
+    } }));
+
+    await expect(replaceProviderCustomerMetadata(api, { enterpriseId: "ent_alpha", storeId: "store.one" }, {
+      customerAlias: "Pilot", providerNote: null, expectedVersion: 2
+    })).resolves.toEqual({
+      customerAlias: "Pilot", providerNote: null, version: 3, updatedAt: "2026-08-13T02:00:00.000Z"
+    });
+
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-customers/ent_alpha/store.one/metadata", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customerAlias: "Pilot", providerNote: null, expectedVersion: 2 })
+    });
   });
 });
 
@@ -68,7 +96,7 @@ describe("read-only feedback workbench", () => {
     expect(row).toHaveTextContent("Verified 3");
     expect(row).toHaveTextContent("Effective 2");
     expect(row).toHaveTextContent("Data insufficient 1");
-    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-feedback/stores?limit=50");
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-customers?limit=50");
     for (const sentinel of sensitiveSentinels) expect(screen.queryByText(sentinel)).not.toBeInTheDocument();
   });
 
@@ -84,12 +112,12 @@ describe("read-only feedback workbench", () => {
     await screen.findByText("ent-first");
     await user.selectOptions(screen.getByLabelText("Activity"), "stale");
     await screen.findByText("ent-stale");
-    expect(api.fetch).toHaveBeenLastCalledWith("/v1/provider-feedback/stores?limit=50&activityState=stale");
+    expect(api.fetch).toHaveBeenLastCalledWith("/v1/provider-customers?limit=50&activityState=stale");
     expect(screen.queryByText("ent-first")).not.toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Readiness"), "incomplete");
     await screen.findByText("ent-filtered");
-    expect(api.fetch).toHaveBeenLastCalledWith("/v1/provider-feedback/stores?limit=50&activityState=stale&readinessState=incomplete");
+    expect(api.fetch).toHaveBeenLastCalledWith("/v1/provider-customers?limit=50&activityState=stale&readinessState=incomplete");
     expect(api.fetch.mock.calls.at(-1)?.[0]).not.toContain("cursor=");
   });
 
@@ -103,7 +131,7 @@ describe("read-only feedback workbench", () => {
 
     render(<FeedbackWorkbench api={api} />);
     await user.click(await screen.findByRole("button", { name: "Load more" }));
-    expect(api.fetch).toHaveBeenLastCalledWith("/v1/provider-feedback/stores?limit=50&cursor=opaque%2B%2F%3Dcursor");
+    expect(api.fetch).toHaveBeenLastCalledWith("/v1/provider-customers?limit=50&cursor=opaque%2B%2F%3Dcursor");
     expect(screen.getByRole("button", { name: "Loading more" })).toBeDisabled();
     expect(screen.getByText("ent-first")).toBeVisible();
 
@@ -232,7 +260,20 @@ function feedbackRow(enterpriseId: string, storeId: string): Record<string, unkn
 }
 
 function pagePayload(items: Record<string, unknown>[], nextCursor: string | null = "opaque+/=cursor") {
-  return { items, nextCursor, serverSecret: "sentinel-page-secret" };
+  return {
+    items: items.map((item) => "feedback" in item ? item : {
+      feedback: item,
+      metadata: {
+        customerAlias: "Pilot",
+        providerNote: "Internal note",
+        version: 2,
+        updatedAt: "2026-08-13T02:00:00.000Z",
+        accountId: "sentinel-account"
+      }
+    }),
+    nextCursor,
+    serverSecret: "sentinel-page-secret"
+  };
 }
 
 function jsonResponse(value: unknown): Response {

@@ -54,8 +54,8 @@ export function FeedbackWorkbench({ api, onAuthenticationRequired }: FeedbackWor
     const query = search.trim().toLowerCase();
     if (!query) return page.items;
     return page.items.filter((item) =>
-      item.enterpriseId.toLowerCase().includes(query)
-      || item.storeId.toLowerCase().includes(query)
+      item.feedback.enterpriseId.toLowerCase().includes(query)
+      || item.feedback.storeId.toLowerCase().includes(query)
     );
   }, [page.items, search]);
 
@@ -126,12 +126,12 @@ function FeedbackError({ onRetry }: { onRetry(): void }) {
   return <div className="feedback-message" role="alert"><p>Customer feedback could not be loaded.</p><button onClick={onRetry} type="button">Retry</button></div>;
 }
 
-function FeedbackTable({ items }: { items: ProviderFeedbackRow[] }) {
+function FeedbackTable({ items }: { items: Array<{ feedback: ProviderFeedbackRow }> }) {
   return (
     <div className="feedback-table-wrap">
       <table className="feedback-table">
         <thead><tr><th>Enterprise / store</th><th>Latest activity</th><th>State</th><th>Diagnostics</th><th>Actions</th><th>Verification</th></tr></thead>
-        <tbody>{items.map((item) => <FeedbackRow key={`${item.enterpriseId}\0${item.storeId}`} item={item} />)}</tbody>
+        <tbody>{items.map((item) => <FeedbackRow key={`${item.feedback.enterpriseId}\0${item.feedback.storeId}`} item={item.feedback} />)}</tbody>
       </table>
     </div>
   );

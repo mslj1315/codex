@@ -19,8 +19,20 @@ export interface ProviderFeedbackRow {
   verificationOutcomeCounts: Partial<Record<VerificationOutcome, number>>;
 }
 
+export interface ProviderCustomerMetadata {
+  customerAlias: string | null;
+  providerNote: string | null;
+  version: number;
+  updatedAt: string;
+}
+
+export interface ProviderCustomerItem {
+  feedback: ProviderFeedbackRow;
+  metadata: ProviderCustomerMetadata | null;
+}
+
 export interface FeedbackPage {
-  items: ProviderFeedbackRow[];
+  items: ProviderCustomerItem[];
   nextCursor: string | null;
 }
 
@@ -40,7 +52,7 @@ export async function listFeedback(api: ProviderApiClient, filter: FeedbackFilte
   if (filter.activityState) query.set("activityState", filter.activityState);
   if (filter.readinessState) query.set("readinessState", filter.readinessState);
   if (filter.cursor) query.set("cursor", filter.cursor);
-  const response = await api.fetch(`/v1/provider-feedback/stores?${query.toString()}`);
+  const response = await api.fetch(`/v1/provider-customers?${query.toString()}`);
   if (!response.ok) throw response;
   return parseFeedbackPage(await response.json());
 }
@@ -49,8 +61,51 @@ export function parseFeedbackPage(value: unknown): FeedbackPage {
   const page = object(value);
   if (!Array.isArray(page.items) || !(typeof page.nextCursor === "string" || page.nextCursor === null)) invalid();
   return {
-    items: page.items.map(parseFeedbackRow),
+    items: page.items.map(parseProviderCustomerItem),
     nextCursor: page.nextCursor as string | null
+  };
+}
+
+export async function replaceProviderCustomerMetadata(
+  api: ProviderApiClient,
+  scope: Pick<ProviderFeedbackRow, "enterpriseId" | "storeId">,
+  input: { customerAlias: string | null; providerNote: string | null; expectedVersion: number | null }
+): Promise<ProviderCustomerMetadata | null> {
+  const response = await api.fetch(
+    `/v1/provider-customers/${encodeURIComponent(scope.enterpriseId)}/${encodeURIComponent(scope.storeId)}/metadata`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        customerAlias: input.customerAlias,
+        providerNote: input.providerNote,
+        expectedVersion: input.expectedVersion
+      })
+    }
+  );
+  if (!response.ok) throw response;
+  const result = object(await response.json());
+  if (!("metadata" in result)) invalid();
+  return result.metadata === null ? null : parseMetadata(result.metadata);
+}
+
+function parseProviderCustomerItem(value: unknown): ProviderCustomerItem {
+  const item = object(value);
+  return {
+    feedback: parseFeedbackRow(item.feedback),
+    metadata: item.metadata === null ? null : parseMetadata(item.metadata)
+  };
+}
+
+function parseMetadata(value: unknown): ProviderCustomerMetadata {
+  const metadata = object(value);
+  const updatedAt = timestamp(metadata.updatedAt);
+  if (updatedAt === null) invalid();
+  return {
+    customerAlias: nullableText(metadata.customerAlias),
+    providerNote: nullableText(metadata.providerNote),
+    version: positiveVersion(metadata.version),
+    updatedAt
   };
 }
 
@@ -81,6 +136,11 @@ function text(value: unknown): string {
   return value;
 }
 
+function nullableText(value: unknown): string | null {
+  if (value === null) return null;
+  return text(value);
+}
+
 function timestamp(value: unknown): string | null {
   if (value === null) return null;
   if (typeof value !== "string") invalid();
@@ -96,6 +156,11 @@ function enumeration<T extends string>(value: unknown, allowed: readonly T[]): T
 
 function count(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0) invalid();
+  return Number(value);
+}
+
+function positiveVersion(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) invalid();
   return Number(value);
 }
 

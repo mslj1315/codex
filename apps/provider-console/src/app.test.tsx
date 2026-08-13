@@ -11,6 +11,7 @@ const viewerSession: ProviderSession = {
   account: { id: "viewer", displayName: "Service Viewer" },
   capabilities: {
     providerFeedbackViewer: true,
+    providerCustomerMetadataEditor: false,
     metricCatalogOperator: false
   }
 };
@@ -129,7 +130,7 @@ describe("provider console application shell", () => {
     expect(await screen.findByRole("heading", { name: "Customer Feedback" })).toBeVisible();
     expect(await screen.findByText("ent-console")).toBeVisible();
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(feedbackApi.fetch).toHaveBeenCalledWith("/v1/provider-feedback/stores?limit=50");
+    expect(feedbackApi.fetch).toHaveBeenCalledWith("/v1/provider-customers?limit=50");
   });
 
   it("returns to login after a terminal feedback 401", async () => {
@@ -182,7 +183,7 @@ function sessionWithCapabilities(
 ): ProviderSession {
   return {
     ...viewerSession,
-    capabilities: { providerFeedbackViewer, metricCatalogOperator }
+    capabilities: { providerFeedbackViewer, providerCustomerMetadataEditor: false, metricCatalogOperator }
   };
 }
 
@@ -200,17 +201,20 @@ function feedbackApiResponse(response: Response): ProviderApiClient & { fetch: R
 function feedbackPage() {
   return {
     items: [{
-      enterpriseId: "ent-console",
-      storeId: "store-console",
-      lastSuccessfulImportAt: null,
-      lastConfirmedAt: null,
-      lastCoverageAt: null,
-      activityState: "inactive",
-      readinessState: "unavailable",
-      missingMetricCount: 2,
-      diagnosticCounts: {},
-      actionCardStatusCounts: {},
-      verificationOutcomeCounts: {}
+      feedback: {
+        enterpriseId: "ent-console",
+        storeId: "store-console",
+        lastSuccessfulImportAt: null,
+        lastConfirmedAt: null,
+        lastCoverageAt: null,
+        activityState: "inactive",
+        readinessState: "unavailable",
+        missingMetricCount: 2,
+        diagnosticCounts: {},
+        actionCardStatusCounts: {},
+        verificationOutcomeCounts: {}
+      },
+      metadata: null
     }],
     nextCursor: null
   };
