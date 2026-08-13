@@ -7,6 +7,7 @@ import { type ObjectStorage, unavailableObjectStorage } from "./storage/object-s
 import { createMinioObjectStorageFromEnv } from "./storage/minio-object-storage.js";
 import { AuthRepository } from "./auth/repository.js";
 import { registerAuthRoutes } from "./auth/routes.js";
+import { registerProviderBrowserAuthRoutes } from "./auth/provider-browser-routes.js";
 import { AuthService } from "./auth/service.js";
 import { authenticatedContextResolver } from "./imports/routes.js";
 import { registerProviderFeedbackRoutes } from "./provider-feedback/routes.js";
@@ -16,6 +17,7 @@ export interface ServerOptions {
   database?: Database;
   authTokenSecret?: string;
   developmentMode?: boolean;
+  providerBrowserDevelopmentMode?: boolean;
   localContainerDevelopmentMode?: boolean;
   trustedContextResolver?: TrustedContextResolver;
   objectStorage?: ObjectStorage;
@@ -43,7 +45,12 @@ export function buildServer(options: ServerOptions = {}) {
     ? new AuthService(new AuthRepository(database), authTokenSecret, options.now ?? (() => new Date()))
     : undefined;
   const contextResolver = explicitContextResolver ?? (auth ? authenticatedContextResolver(auth) : undefined);
-  if (auth) app.register((instance) => registerAuthRoutes(instance, auth));
+  if (auth) {
+    app.register((instance) => registerAuthRoutes(instance, auth));
+    app.register((instance) => registerProviderBrowserAuthRoutes(instance, auth, {
+      developmentMode: options.providerBrowserDevelopmentMode === true
+    }));
+  }
   if (auth && database && !explicitContextResolver) app.register((instance) => registerProviderFeedbackRoutes(instance, { auth, database, now: options.now ?? (() => new Date()) }));
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, {
@@ -62,6 +69,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     databaseUrl: process.env.DATABASE_URL,
     authTokenSecret: process.env.AUTH_TOKEN_SECRET,
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
+    providerBrowserDevelopmentMode: process.env.PROVIDER_BROWSER_DEVELOPMENT_MODE === "true",
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
     objectStorage: createMinioObjectStorageFromEnv(process.env),
     logger: true
