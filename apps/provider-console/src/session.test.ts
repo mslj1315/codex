@@ -24,11 +24,12 @@ describe("provider console session", () => {
 
     await expect(client.restore()).resolves.toEqual(session);
 
-    expect(fetcher).toHaveBeenCalledWith("/v1/provider-auth/refresh", {
+    expect(fetcher).toHaveBeenCalledWith("/v1/provider-auth/refresh", expect.objectContaining({
       method: "POST",
       credentials: "same-origin",
-      headers: { "X-Provider-Console-Request": "1" }
-    });
+      headers: { "X-Provider-Console-Request": "1" },
+      signal: expect.any(AbortSignal)
+    }));
     expect(client.accessToken()).toBe("access-token");
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
@@ -217,6 +218,7 @@ describe("provider console session", () => {
 
   it("makes logout the final operation when a restore is already pending", async () => {
     let resolveRestore!: (response: Response) => void;
+    let restoreSignal: AbortSignal | null = null;
     const fetcher = vi.fn<typeof fetch>((input) => {
       if (String(input) === "/v1/provider-auth/refresh") {
         return new Promise<Response>((resolve) => { resolveRestore = resolve; });
@@ -228,11 +230,41 @@ describe("provider console session", () => {
 
     const restore = client.restore();
     const logout = client.logout();
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    resolveRestore(jsonResponse({ ...session, accessToken: "rotated-token" }));
-
     await expect(restore).rejects.toThrow("Session operation was superseded");
     await expect(logout).resolves.toBeUndefined();
+    restoreSignal = fetcher.mock.calls[0][1]?.signal ?? null;
+    expect(restoreSignal?.aborted).toBe(true);
+    expect(fetcher).toHaveBeenNthCalledWith(2, "/v1/provider-auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        Authorization: "Bearer access-token",
+        "X-Provider-Console-Request": "1"
+      }
+    });
+    expect(client.snapshot()).toBeNull();
+
+    resolveRestore(jsonResponse({ ...session, accessToken: "rotated-token" }));
+    await Promise.resolve();
+    expect(client.snapshot()).toBeNull();
+  });
+
+  it("does not let a stalled restore block logout", async () => {
+    const fetcher = vi.fn<typeof fetch>((input) => {
+      if (String(input) === "/v1/provider-auth/refresh") return new Promise<Response>(() => {});
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    const client = createSessionClient(fetcher);
+    client.set(session);
+
+    const restore = client.restore();
+    const outcome = Promise.race([
+      client.logout().then(() => "logged-out"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("timed-out"), 100))
+    ]);
+
+    await expect(outcome).resolves.toBe("logged-out");
+    await expect(restore).rejects.toThrow("Session operation was superseded");
     expect(fetcher).toHaveBeenNthCalledWith(2, "/v1/provider-auth/logout", {
       method: "POST",
       credentials: "same-origin",

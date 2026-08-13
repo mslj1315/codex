@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./app";
@@ -73,6 +73,27 @@ describe("provider console application shell", () => {
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
 
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
+    expect(session.snapshot()).toBeNull();
+  });
+
+  it("returns to login when logout interrupts a stalled refresh", async () => {
+    const fetcher = vi.fn<typeof fetch>((input) => {
+      if (String(input) === "/v1/provider-auth/refresh" && fetcher.mock.calls.length === 1) {
+        return Promise.resolve(jsonResponse(viewerSession));
+      }
+      if (String(input) === "/v1/provider-auth/refresh") return new Promise<Response>(() => {});
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    const session = createSessionClient(fetcher);
+
+    render(<App session={session} />);
+    const signOut = await screen.findByRole("button", { name: "Sign out" });
+    const stalledRestore = session.restore();
+    fireEvent.click(signOut);
+
+    expect(await screen.findByRole("button", { name: "Sign in" }, { timeout: 250 })).toBeVisible();
+    await expect(stalledRestore).rejects.toThrow("Session operation was superseded");
+    expect(fetcher.mock.calls.some(([input]) => String(input) === "/v1/provider-auth/logout")).toBe(true);
     expect(session.snapshot()).toBeNull();
   });
 
