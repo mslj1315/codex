@@ -13,6 +13,11 @@ export interface AuthTokens {
   account: { id: string; displayName: string };
 }
 
+export interface ProviderCapabilities {
+  providerFeedbackViewer: boolean;
+  metricCatalogOperator: boolean;
+}
+
 export class AuthorizationError extends Error {}
 
 export class AuthService {
@@ -51,6 +56,21 @@ export class AuthService {
     const account = await this.repository.findActiveSession(identity.accountId, identity.sessionId, this.now());
     if (!account) throw new AuthenticationError("Authentication required");
     return { id: account.id, displayName: account.displayName };
+  }
+
+  async providerSession(accessToken: string): Promise<{
+    account: { id: string; displayName: string };
+    capabilities: ProviderCapabilities;
+  }> {
+    const account = await this.authenticateAccessToken(accessToken);
+    const roles = new Set(await this.repository.listEnabledServiceOperatorRoles(account.id));
+    return {
+      account,
+      capabilities: {
+        providerFeedbackViewer: roles.has("provider_feedback_viewer"),
+        metricCatalogOperator: roles.has("metric_catalog_operator")
+      }
+    };
   }
 
   async resolveStoreContext(accessToken: string, storeId: string): Promise<TrustedContext> {

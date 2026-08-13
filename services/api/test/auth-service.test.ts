@@ -77,6 +77,44 @@ describe("auth service", () => {
       .rejects.toBeInstanceOf(AuthorizationError);
   });
 
+  it("returns exact provider capabilities from independent enabled service roles", async () => {
+    const login = await service.login({ loginName: "owner", password: "passphrase" });
+
+    await expect(service.providerSession(login.accessToken)).resolves.toEqual({
+      account: { id: "account_owner", displayName: "Owner" },
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: false }
+    });
+
+    await database.query(
+      "INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'provider_feedback_viewer')"
+    );
+    await expect(service.providerSession(login.accessToken)).resolves.toEqual({
+      account: { id: "account_owner", displayName: "Owner" },
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false }
+    });
+
+    await database.query(
+      "UPDATE service_operator_roles SET enabled = false WHERE account_id = 'account_owner' AND role = 'provider_feedback_viewer'"
+    );
+    await database.query(
+      "INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'metric_catalog_operator')"
+    );
+    await expect(service.providerSession(login.accessToken)).resolves.toEqual({
+      account: { id: "account_owner", displayName: "Owner" },
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: true }
+    });
+
+    await database.query(
+      "UPDATE service_operator_roles SET enabled = true WHERE account_id = 'account_owner' AND role = 'provider_feedback_viewer'"
+    );
+    const providerSession = await service.providerSession(login.accessToken);
+    expect(providerSession).toEqual({
+      account: { id: "account_owner", displayName: "Owner" },
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true }
+    });
+    expect(JSON.stringify(providerSession)).not.toMatch(/loginName|passwordHash|refreshToken|sessionId|store_demo/);
+  });
+
   it("resolves only a bearer token and its URL store into trusted context", async () => {
     const login = await service.login({ loginName: "owner", password: "passphrase" });
     const resolver = authenticatedContextResolver(service);

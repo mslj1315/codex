@@ -94,6 +94,14 @@ export class AuthRepository {
     return result.rowCount === 1;
   }
 
+  async listEnabledServiceOperatorRoles(accountId: string): Promise<ServiceOperatorRole[]> {
+    const result = await this.database.query<Row>(
+      "SELECT role FROM service_operator_roles WHERE account_id = $1 AND enabled = true ORDER BY role",
+      [accountId]
+    );
+    return result.rows.map((row) => row.role as ServiceOperatorRole);
+  }
+
   async provision(input: {
     loginName: string;
     displayName: string;
