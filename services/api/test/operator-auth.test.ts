@@ -95,4 +95,17 @@ describe("operator authentication", () => {
     expect(operatorCookieSecure({ NODE_ENV: "development", OPERATOR_COOKIE_SECURE: "true" })).toBe(true);
     expect(sessionCookie("opaque", new Date("2026-01-01T00:00:00.000Z"), true)).toContain("Secure");
   });
+
+  it("rejects a same-host Origin when its scheme differs from the direct request", async () => {
+    const app = buildServer({ database: pool, trustedContextResolver: async () => ({ enterpriseId: "platform", storeId: "operator", actorId: "legacy-editor", actorRole: "operator_editor" }) });
+    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/operator-content/templates",
+      headers: { cookie: login.headers["set-cookie"]!, host: "localhost", origin: "https://localhost", "x-csrf-token": login.json().csrfToken },
+      payload: { name: "template", content: { hook: "hook", story: "story", value: "value", productAppearance: "product", cta: "cta", shotRhythm: "rhythm", captionVoiceRequirements: "voice" }, constraints: {}, fallbackScope: {} }
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "Forbidden" });
+  });
 });

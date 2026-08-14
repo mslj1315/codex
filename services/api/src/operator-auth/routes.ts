@@ -44,6 +44,9 @@ function isStateChange(method: string): boolean { return !["GET", "HEAD", "OPTIO
 function isSameOrigin(request: FastifyRequest): boolean {
   const origin = request.headers.origin;
   if (typeof origin !== "string") return false;
-  try { return new URL(origin).host === request.headers.host; } catch { return false; }
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === `${request.protocol}:` && parsed.host === request.headers.host;
+  } catch { return false; }
 }
 function sessionTtl(): number { const value = Number(process.env.OPERATOR_SESSION_TTL_SECONDS ?? 8 * 60 * 60); return Number.isSafeInteger(value) && value >= 300 && value <= 86_400 ? value * 1000 : 8 * 60 * 60 * 1000; }

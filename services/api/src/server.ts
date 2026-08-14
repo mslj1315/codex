@@ -16,7 +16,9 @@ export interface ServerOptions {
 }
 
 export function buildServer(options: ServerOptions = {}) {
-  const app = Fastify({ bodyLimit: 5 * 1024 * 1024 });
+  // Operator CSRF origin validation derives its scheme from this direct request.
+  // Do not trust client-controlled forwarded protocol headers here.
+  const app = Fastify({ bodyLimit: 5 * 1024 * 1024, trustProxy: false });
 
   app.get("/health", async () => ({ status: "ok" }));
   const database = options.database ?? (options.databaseUrl ? createDatabase(options.databaseUrl) : undefined);
