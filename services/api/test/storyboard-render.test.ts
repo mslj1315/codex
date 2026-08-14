@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
 import { buildServer } from "../src/server.js";
 import { InMemoryVideoStorage } from "../src/video-editing/storage.js";
+import { StoryboardRenderWorker } from "../src/video-editing/worker.js";
 
 const scope = { enterpriseId: "render-ent", storeId: "render-store", actorId: "render-customer" };
 
@@ -47,6 +48,29 @@ describe("storyboard render queue", () => {
       await privileged.close();
     }
     expect((await database.query("SELECT count(*)::int AS count FROM storyboard_render_jobs")).rows).toEqual([{ count: 0 }]);
+  });
+
+  it("worker completes an immutable final render with three distinct real frame candidates and cleans its workspace", async () => {
+    const events: string[] = [];
+    const repository = {
+      claim: async () => ({ id: "job-1", kind: "final" as const, projectId, projectVersion: 1, durationSeconds: 12, subtitleText: ["only confirmed subtitle"], sourceKeys: ["source-object"] }),
+      succeed: async (_id: string, result: unknown) => { events.push(`succeed:${JSON.stringify(result)}`); },
+      fail: async () => { events.push("fail"); },
+      isCancelled: async () => false
+    };
+    const worker = new StoryboardRenderWorker(repository, {
+      create: async () => "work/job-1",
+      remove: async path => { events.push(`remove:${path}`); }
+    }, {
+      download: async key => { events.push(`download:${key}`); return Buffer.from("source"); },
+      putProtected: async (_key, _bytes, metadata) => { events.push(`output:${metadata.contentType}`); }
+    }, {
+      render: async manifest => { expect(manifest).toMatchObject({ width: 1080, height: 1920, fps: 30, durationSeconds: 12, subtitles: ["only confirmed subtitle"] }); return { output: Buffer.from("mp4"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 12, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("a") }, { positionSeconds: 6, bytes: Buffer.from("b") }, { positionSeconds: 11, bytes: Buffer.from("c") } ] }; }
+    });
+    await worker.runOnce();
+    expect(events).toContain("remove:work/job-1");
+    expect(events.join("\n")).toContain("output:video/mp4");
+    expect(events.find(event => event.startsWith("succeed:"))).toContain('"positionSeconds":1');
   });
 
   function path() { return `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}`; }
