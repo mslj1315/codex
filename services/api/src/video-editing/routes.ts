@@ -3,10 +3,12 @@ import type { Database } from "../db.js";
 import { ForbiddenError } from "../imports/repository.js";
 import type { TrustedContext } from "../imports/service.js";
 import { AssetError, AssetRepository } from "./asset-repository.js";
+import { ProjectError, ProjectRepository } from "./project-repository.js";
 import type { VideoStorage } from "./storage.js";
 
 export async function registerVideoAssetRoutes(app: FastifyInstance, database: Database, resolve: (request: FastifyRequest) => Promise<TrustedContext | undefined>, storage: VideoStorage) {
   const assets = new AssetRepository(database, storage);
+  const projects = new ProjectRepository(database);
   app.addHook("onRequest", async (request, reply) => { const context = await resolve(request); if (!context) return reply.code(403).send({ error: "No trusted request context" }); request.trustedContext = context; });
   const scope = (request: FastifyRequest) => {
     const context = request.trustedContext; const storeId = String((request.params as Record<string, unknown>).storeId ?? "");
@@ -21,9 +23,20 @@ export async function registerVideoAssetRoutes(app: FastifyInstance, database: D
   });
   app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/assets/:assetId/complete", async (request, reply) => reply.code(201).send(await assets.acceptUploadedAsset(scope(request), ids(request))));
   app.delete("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/assets/:assetId", async (request, reply) => { await assets.deleteAsset(scope(request), ids(request)); return reply.code(204).send(); });
+  app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects", async (request, reply) => {
+    const { taskId, shotListId } = ids(request); return reply.code(201).send(await projects.create(scope(request), { taskId, shotListId }));
+  });
+  app.get("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId", async (request) => {
+    const { taskId, shotListId } = ids(request); return projects.get(scope(request), taskId, shotListId, String((request.params as Record<string, unknown>).projectId ?? ""));
+  });
+  app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/versions", async (request, reply) => {
+    const body = record(request.body); const { taskId, shotListId } = ids(request);
+    return reply.code(201).send(await projects.saveVersion(scope(request), { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), slots: body.slots, coverAssetId: body.coverAssetId, coverTitle: body.coverTitle, finalize: body.finalize }));
+  });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ForbiddenError) return reply.code(403).send({ error: error.message });
     if (error instanceof AssetError) return reply.code(error.status).send({ error: error.message });
+    if (error instanceof ProjectError) return reply.code(error.status).send({ error: error.message });
     return reply.code(500).send({ error: "Internal server error" });
   });
 }
