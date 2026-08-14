@@ -21,7 +21,7 @@ describe("storyboard render queue", () => {
     const memory = newDb({ noAstCoverageCheck: true });
     memory.public.registerFunction({ name: "jsonb_typeof", args: [DataType.jsonb], returns: DataType.text, implementation: value => Array.isArray(value) ? "array" : typeof value === "object" && value !== null ? "object" : typeof value });
     const { Pool } = memory.adapters.createPg(); database = new Pool();
-    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql"]) {
+    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql", "024_storyboard_render_artifacts.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
       await database.query(sql.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     }
@@ -96,6 +96,11 @@ describe("storyboard render queue", () => {
     const removed = await app.inject({ method: "DELETE", url: `${path()}/projects/${projectId}/renders/${created.json().id}` }); expect(removed.statusCode, removed.body).toBe(204);
     expect((await database.query("SELECT reason FROM storyboard_render_output_deletions WHERE render_job_id=$1", [created.json().id])).rows).toEqual([{ reason: "customer_deleted" }]);
     expect((await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders` })).json().renders).toEqual([]);
+  });
+
+  it("persists render artifacts separately so cleanup does not derive customer-visible storage identifiers", async () => {
+    const columns = await database.query("SELECT column_name FROM information_schema.columns WHERE table_name='storyboard_render_artifacts'");
+    expect(columns.rows.map(row => row.column_name)).toEqual(expect.arrayContaining(["render_job_id", "object_key", "kind", "deleted_at", "next_cleanup_attempt_at"]));
   });
 
   function path() { return `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}`; }

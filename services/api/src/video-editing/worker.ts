@@ -2,7 +2,7 @@ export type RenderManifest = { width: 1080; height: 1920; fps: 30; durationSecon
 export type RunnerResult = { output: Buffer; metadata: { width: number; height: number; fps: number; durationSeconds: number; contentType: string }; coverFrames: Array<{ positionSeconds: number; bytes: Buffer }> };
 export interface RenderRunner { render(manifest: RenderManifest): Promise<RunnerResult>; }
 export interface ClaimedRender { id: string; kind: "preview" | "final"; projectId: string; projectVersion: number; durationSeconds: number; subtitleText: string[]; sourceKeys: string[]; }
-export interface RenderWorkerRepository { claim(): Promise<ClaimedRender | undefined>; succeed(id: string, result: { outputExpiresAt: Date; coverCandidates: Array<{ positionSeconds: number }> }): Promise<void>; fail(id: string, category: string, retryable: boolean): Promise<void>; isCancelled(id: string): Promise<boolean>; }
+export interface RenderWorkerRepository { claim(): Promise<ClaimedRender | undefined>; succeed(id: string, result: { outputExpiresAt: Date; coverCandidates: Array<{ positionSeconds: number }>; artifacts?: Array<{ objectKey: string; kind: "video" | "cover" }> }): Promise<void>; fail(id: string, category: string, retryable: boolean): Promise<void>; isCancelled(id: string): Promise<boolean>; }
 export interface WorkerStorage { download(key: string): Promise<Buffer>; putProtected(key: string, bytes: Buffer, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void>; }
 export interface TemporaryWorkspace { create(jobId: string): Promise<string>; remove(path: string): Promise<void>; }
 
@@ -19,9 +19,10 @@ export class StoryboardRenderWorker {
       validateResult(result, job.durationSeconds);
       if (await this.repository.isCancelled(job.id)) return true;
       const expiresAt = new Date(this.now().getTime() + (job.kind === "final" ? 180 : 7) * 24 * 60 * 60 * 1000);
-      await this.storage.putProtected(`storyboard-render-output/${job.id}.mp4`, result.output, { contentType: "video/mp4", expiresAt });
-      await Promise.all(result.coverFrames.map((frame, index) => this.storage.putProtected(`storyboard-render-output/${job.id}-cover-${index + 1}.jpg`, frame.bytes, { contentType: "image/jpeg", expiresAt })));
-      await this.repository.succeed(job.id, { outputExpiresAt: expiresAt, coverCandidates: result.coverFrames.map(frame => ({ positionSeconds: frame.positionSeconds })) });
+      const outputKey = `storyboard-render-output/${job.id}.mp4`; const covers = result.coverFrames.map((frame, index) => ({ frame, key: `storyboard-render-output/${job.id}-cover-${index + 1}.jpg` }));
+      await this.storage.putProtected(outputKey, result.output, { contentType: "video/mp4", expiresAt });
+      await Promise.all(covers.map(({ frame, key }) => this.storage.putProtected(key, frame.bytes, { contentType: "image/jpeg", expiresAt })));
+      await this.repository.succeed(job.id, { outputExpiresAt: expiresAt, coverCandidates: result.coverFrames.map(frame => ({ positionSeconds: frame.positionSeconds })), artifacts: [{ objectKey: outputKey, kind: "video" }, ...covers.map(({ key }) => ({ objectKey: key, kind: "cover" as const }))] });
     } catch (error) { await this.repository.fail(job.id, category(error), retryable(error)); }
     finally { await this.workspace.remove(path); }
     return true;
