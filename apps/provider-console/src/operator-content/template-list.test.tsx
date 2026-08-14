@@ -60,10 +60,36 @@ describe('TemplateList', () => {
     expect(await screen.findByRole('heading', { name: 'New template' })).toBeInTheDocument();
     expect(screen.queryByText('v1 · a_late_event')).toBeNull();
   });
+
+  it('keeps B selected when A save completes after the user changes selection', async () => {
+    const a = item('11111111-1111-1111-1111-111111111111', 'A template', 1);
+    const b = item('22222222-2222-2222-2222-222222222222', 'B template', 1);
+    const pending = new Map<string, ReturnType<typeof deferred>>();
+    const request = vi.fn((method: string, path: string) => {
+      if (method === 'GET' && path === '/v1/operator-content/templates') return Promise.resolve([a, b]);
+      const next = deferred<unknown>(); pending.set(`${method} ${path}`, next); return next.promise;
+    });
+    const user = userEvent.setup();
+    render(<TemplateList api={{ request } as never} />);
+    await user.click(await screen.findByRole('button', { name: /A template/ }));
+    resolveSelectionWithMethod(pending, a, [a], []);
+    await screen.findByRole('heading', { name: 'A template v1' });
+    await user.clear(screen.getByLabelText('Template name'));
+    await user.type(screen.getByLabelText('Template name'), 'A unsent update');
+    await user.click(screen.getByRole('button', { name: 'Save draft' }));
+    await user.click(screen.getByRole('button', { name: /B template/ }));
+    resolveSelectionWithMethod(pending, b, [b], [{ version: 1, eventType: 'b_selected' }]);
+    expect(await screen.findByRole('heading', { name: 'B template v1' })).toBeInTheDocument();
+
+    pending.get(`PUT /v1/operator-content/templates/${a.logicalId}/draft`)?.resolve({ ...a, name: 'A unsent update' });
+    await Promise.resolve();
+    expect(screen.getByRole('heading', { name: 'B template v1' })).toBeInTheDocument();
+    expect(screen.getByText('v1 · b_selected')).toBeInTheDocument();
+  });
 });
 
 function item(logicalId: string, name: string, version: number): Template {
-  return { logicalId, version, status: 'draft' as const, name, content: { hook: '', story: '', value: '', productAppearance: '', cta: '', shotRhythm: '', captionVoiceRequirements: '', prohibitedExpressions: [] }, constraints: { industryCode: 'restaurant', categoryCode: 'noodle', persona: 'owner', contentType: 'story', commercialLevel: 0, style: 'warm', priceDiscountEffectRestrictions: [], riskLevel: 'low' }, fallbackScope: { allowCategoryFallback: false, allowIndustryFallback: false } };
+  return { logicalId, version, status: 'draft' as const, name, content: { hook: 'hook', story: 'story', value: 'value', productAppearance: 'product', cta: 'cta', shotRhythm: 'fast', captionVoiceRequirements: 'caption', prohibitedExpressions: ['avoid'] }, constraints: { industryCode: 'restaurant', categoryCode: 'noodle', persona: 'owner', contentType: 'story', commercialLevel: 0, style: 'warm', priceDiscountEffectRestrictions: ['no claim'], riskLevel: 'low' }, fallbackScope: { allowCategoryFallback: false, allowIndustryFallback: false } };
 }
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((next) => { resolve = next; }); return { promise, resolve }; }
@@ -72,4 +98,10 @@ function resolveSelection(pending: Map<string, ReturnType<typeof deferred>>, cur
   pending.get(`/v1/operator-content/templates/${current.logicalId}/versions/${current.version}`)?.resolve(current);
   pending.get(`/v1/operator-content/templates/${current.logicalId}/versions`)?.resolve(versions);
   pending.get(`/v1/operator-content/templates/${current.logicalId}/history`)?.resolve({ events });
+}
+
+function resolveSelectionWithMethod(pending: Map<string, ReturnType<typeof deferred>>, current: Template, versions: Template[], events: Array<{ version: number; eventType: string }>) {
+  pending.get(`GET /v1/operator-content/templates/${current.logicalId}/versions/${current.version}`)?.resolve(current);
+  pending.get(`GET /v1/operator-content/templates/${current.logicalId}/versions`)?.resolve(versions);
+  pending.get(`GET /v1/operator-content/templates/${current.logicalId}/history`)?.resolve({ events });
 }
