@@ -8,6 +8,8 @@ import { registerWorkflowRoutes } from "./content-planning/workflow-routes.js";
 import { registerOperatorContentRoutes } from "./operator-content/routes.js";
 import { registerOperatorAuthRoutes } from "./operator-auth/routes.js";
 import { createConfiguredGenerationService, type ModelGenerationService } from "./model-providers/generation.js";
+import { registerVideoAssetRoutes } from "./video-editing/routes.js";
+import type { VideoStorage } from "./video-editing/storage.js";
 import { developmentContextResolver, localContainerContextResolver, type TrustedContextResolver } from "./imports/routes.js";
 
 export interface ServerOptions {
@@ -18,6 +20,7 @@ export interface ServerOptions {
   trustedContextResolver?: TrustedContextResolver;
   operatorConsoleDistDir?: string;
   modelGenerationService?: ModelGenerationService;
+  videoStorage?: VideoStorage;
 }
 
 export function buildServer(options: ServerOptions = {}) {
@@ -45,6 +48,8 @@ export function buildServer(options: ServerOptions = {}) {
     app.register((instance) => registerImportRoutes(instance, database, contextResolver));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
     if (options.modelGenerationService) app.register((instance) => registerWorkflowRoutes(instance, database, contextResolver, options.modelGenerationService));
+    const videoStorage = options.videoStorage;
+    if (videoStorage) app.register((instance) => registerVideoAssetRoutes(instance, database, contextResolver, videoStorage));
   }
   if (options.operatorConsoleDistDir) {
     app.register(fastifyStatic, { root: options.operatorConsoleDistDir, prefix: "/", wildcard: false });
