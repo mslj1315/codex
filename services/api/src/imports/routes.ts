@@ -110,4 +110,4 @@ function isUploadTooLarge(error: unknown): boolean {
   return code === "FST_REQ_FILE_TOO_LARGE" || code === "FST_ERR_CTP_BODY_TOO_LARGE" || code === "FST_FIELDS_LIMIT" || code === "FST_PARTS_LIMIT" || code === "FST_FIELD_TOO_LARGE";
 }
 function isLoopback(ip: string): boolean { return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1"; }
-function isDevelopmentSource(ip: string): boolean { return isLoopback(ip) || ip === "10.0.2.2" || ip === "10.0.2.16"; }
+function isDevelopmentSource(ip: string): boolean { return isLoopback(ip); }

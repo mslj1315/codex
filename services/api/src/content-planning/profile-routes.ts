@@ -15,7 +15,7 @@ export async function registerProfileRoutes(app: FastifyInstance, database: Data
   app.post("/v1/stores/:storeId/content-profile", async (request, reply) => reply.code(201).send(await repository.saveProfile(scope(request), contentProfileBody(request.body))));
   app.put("/v1/stores/:storeId/content-profile", async (request) => repository.saveProfile(scope(request), contentProfileBody(request.body)));
   app.get("/v1/stores/:storeId/operating-stages", async (request) => repository.listStages(scope(request)));
-  app.post("/v1/stores/:storeId/operating-stages", async (request, reply) => reply.code(201).send(await repository.createStage(scope(request), request.body as OperatingStageInput)));
+  app.post("/v1/stores/:storeId/operating-stages", async (request, reply) => reply.code(201).send(await repository.createStage(scope(request), operatingStageBody(request.body))));
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ProfileNotFoundError) return reply.code(404).send({ error: error.message });
     if (error instanceof ForbiddenError) return reply.code(403).send({ error: error.message });
@@ -35,4 +35,9 @@ function scope(request: FastifyRequest): TrustedContext {
 function contentProfileBody(value: unknown): ContentProfileInput {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ProfileValidationError("Request body must be an object");
   return value as ContentProfileInput;
+}
+
+function operatingStageBody(value: unknown): OperatingStageInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ProfileValidationError("Request body must be an object");
+  return value as OperatingStageInput;
 }

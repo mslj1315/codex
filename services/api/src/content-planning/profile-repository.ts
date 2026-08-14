@@ -78,12 +78,15 @@ function validateProfile(input: ContentProfileInput): void {
   optionalString(input.businessDistrictNote, "businessDistrictNote");
 }
 function validateStage(input: OperatingStageInput): void {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveDate)) throw new ProfileValidationError("effectiveDate is required");
+  if (typeof input !== "object" || input === null || Array.isArray(input)) throw new ProfileValidationError("Request body must be an object");
+  if (typeof input.effectiveDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveDate)) throw new ProfileValidationError("effectiveDate is required");
   const [year, month, day] = input.effectiveDate.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) throw new ProfileValidationError("effectiveDate must be a real calendar date");
-  if (!input.primaryGoal?.trim()) throw new ProfileValidationError("primaryGoal is required");
+  if (typeof input.primaryGoal !== "string" || !input.primaryGoal.trim()) throw new ProfileValidationError("primaryGoal is required");
   assertCode(input.primaryGoal, CONTENT_PROFILE_CODES.goals, "primaryGoal");
+  optionalString(input.secondaryGoal, "secondaryGoal");
+  optionalString(input.note, "note");
   if (input.secondaryGoal) assertCode(input.secondaryGoal, CONTENT_PROFILE_CODES.goals, "secondaryGoal");
   if (input.secondaryGoal?.trim() === input.primaryGoal.trim()) throw new ProfileValidationError("secondaryGoal must differ from primaryGoal");
 }

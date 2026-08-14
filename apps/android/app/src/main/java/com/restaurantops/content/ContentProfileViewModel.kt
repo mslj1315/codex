@@ -30,6 +30,6 @@ class ContentProfileViewModel(private val repository: ContentProfileRepository) 
     fun addStage(storeId: String, stage: OperatingStage) = viewModelScope.launch {
         runCatching { repository.addOperatingStage(storeId, stage) }
             .onSuccess { state = state.copy(stages = listOf(it) + state.stages, error = null) }
-            .onFailure { state = state.copy(error = it.message) }
+            .onFailure { state = state.copy(error = contentProfileErrorMessage(it, "暂时无法保存经营阶段，请稍后重试")) }
     }
 }

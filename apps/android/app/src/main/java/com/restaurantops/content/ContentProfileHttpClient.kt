@@ -27,20 +27,22 @@ class ContentProfileHttpClient(private val baseUrl: String, private val auth: Co
     }
 
     private fun request(method: String, path: String, body: String?): String {
-        if (baseUrl.isBlank()) throw ContentProfileHttpException("endpoint unavailable")
-        val connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method; connectTimeout = 10_000; readTimeout = 10_000
-            auth.headers().forEach { (key, value) -> setRequestProperty(key, value) }
-            if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json"); outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) } }
-        }
+        var connection: HttpURLConnection? = null
         try {
-            val code = connection.responseCode
-            val response = (if (code in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (baseUrl.isBlank()) throw ContentProfileHttpException("endpoint unavailable")
+            connection = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+                requestMethod = method; connectTimeout = 10_000; readTimeout = 10_000
+                auth.headers().forEach { (key, value) -> setRequestProperty(key, value) }
+                if (body != null) { doOutput = true; setRequestProperty("Content-Type", "application/json"); outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) } }
+            }
+            val activeConnection = connection ?: throw ContentProfileHttpException("connection unavailable")
+            val code = activeConnection.responseCode
+            val response = (if (code in 200..299) activeConnection.inputStream else activeConnection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code !in 200..299) throw ContentProfileHttpException("Request failed ($code)")
             return response
         } catch (error: ContentProfileHttpException) { throw error }
         catch (_: Exception) { throw ContentProfileHttpException("network failure") }
-        finally { connection.disconnect() }
+        finally { connection?.disconnect() }
     }
 
     private fun profilePath(storeId: String) = "/v1/stores/${storeId.encodePath()}/content-profile"
@@ -50,6 +52,9 @@ class ContentProfileHttpClient(private val baseUrl: String, private val auth: Co
 class ContentProfileHttpException(message: String) : RuntimeException(message) {
     val neutralMessage: String get() = "暂时无法连接内容服务，请稍后重试"
 }
+
+fun contentProfileErrorMessage(error: Throwable, fallback: String): String =
+    (error as? ContentProfileHttpException)?.neutralMessage ?: fallback
 
 private fun StoreContentProfile.toRequest() = ContentProfileRequest(storeName, industryCode, categoryCode, categoryCustomName, provinceCode, cityCode, districtCode, detailedAddress, businessDistrictType, businessDistrictNote, operatingMode)
 private fun ContentProfileRequest.toJson() = JSONObject().apply { put("storeName", storeName); put("industryCode", industryCode); put("categoryCode", categoryCode); put("categoryCustomName", categoryCustomName); put("provinceCode", provinceCode); put("cityCode", cityCode); put("districtCode", districtCode); put("detailedAddress", detailedAddress); put("businessDistrictType", businessDistrictType); put("businessDistrictNote", businessDistrictNote); put("operatingMode", operatingMode) }.toString()

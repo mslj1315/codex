@@ -89,13 +89,13 @@ private fun ContentProfileScreen(viewModel: ContentProfileViewModel, endpointCon
             Text("完成门店档案后才能进入内容工作台", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(storeName.value, { storeName.value = it }, label = { Text("门店名称") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(address.value, { address.value = it }, label = { Text("详细地址") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(industry.value, { industry.value = it }, label = { Text("Industry") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(category.value, { category.value = it }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(province.value, { province.value = it }, label = { Text("Province") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(city.value, { city.value = it }, label = { Text("City") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(district.value, { district.value = it }, label = { Text("District") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(businessDistrict.value, { businessDistrict.value = it }, label = { Text("Business district") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(operatingMode.value, { operatingMode.value = it }, label = { Text("Operating mode") }, modifier = Modifier.fillMaxWidth())
+            ProfileChoice("Industry", industry.value, listOf("fast_food", "full_service", "hotpot_skewers", "barbecue_night", "beverages_desserts", "bakery", "snacks_local", "other"), { industry.value = it })
+            ProfileChoice("Category", category.value, listOf("rice_noodle", "chinese_dining", "sichuan", "hotpot", "skewers", "barbecue", "night_market", "tea_coffee", "dessert", "bakery", "snacks", "local_specialty", "other"), { category.value = it })
+            ProfileChoice("Province", province.value, listOf("sc"), { province.value = it })
+            ProfileChoice("City", city.value, listOf("cd"), { city.value = it })
+            ProfileChoice("District", district.value, listOf("sl"), { district.value = it })
+            ProfileChoice("Business district", businessDistrict.value, listOf("office", "community", "mall", "school", "scenic", "transport", "industrial_park", "mixed", "food_street", "other"), { businessDistrict.value = it })
+            ProfileChoice("Operating mode", operatingMode.value, listOf("dine_in", "takeaway", "dine_in_takeaway", "group_buy", "multi_mode"), { operatingMode.value = it })
             if (viewModel.state.error != null) Text(viewModel.state.error!!, color = MaterialTheme.colorScheme.error)
             if (!endpointConfigured) Text("内容服务暂未配置，暂不能提交门店档案", color = MaterialTheme.colorScheme.error)
             Button(onClick = {
@@ -103,6 +103,19 @@ private fun ContentProfileScreen(viewModel: ContentProfileViewModel, endpointCon
             }, enabled = endpointConfigured && listOf(storeName.value, industry.value, category.value, province.value, city.value, district.value, address.value, businessDistrict.value, operatingMode.value).all { it.isNotBlank() }) { Text("提交档案") }
             if (contentProfileGate(viewModel.state) == ContentProfileGate.Ready) Button(onClick = onReady) { Text("进入内容工作台") }
             TextButton(onClick = onBack) { Text("返回") }
+        }
+    }
+}
+
+@Composable
+private fun ProfileChoice(label: String, selected: String, options: List<String>, onSelected: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        options.forEach { option ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = selected == option, onClick = { onSelected(option) })
+                Text(option)
+            }
         }
     }
 }

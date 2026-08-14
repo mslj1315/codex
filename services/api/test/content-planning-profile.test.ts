@@ -66,6 +66,23 @@ describe("content planning store profile", () => {
     expect(list.json()).toHaveLength(1);
   });
 
+  it.each([null, [], "text", 42])("rejects non-object operating stage body: %j", async (payload) => {
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/operating-stages", headers: { "content-type": "application/json" }, payload: JSON.stringify(payload) });
+    expect(response.statusCode).toBe(422);
+  });
+
+  it.each(["secondaryGoal", "note"])("rejects non-string optional operating stage field %s", async (field) => {
+    const payload: Record<string, unknown> = { effectiveDate: "2026-08-14", primaryGoal: "acquire_customers" };
+    payload[field] = 1;
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/operating-stages", payload });
+    expect(response.statusCode).toBe(422);
+  });
+
+  it("rejects non-string operating stage required fields", async () => {
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/operating-stages", payload: { effectiveDate: 20260814, primaryGoal: true } });
+    expect(response.statusCode).toBe(422);
+  });
+
   it("keeps previous profile versions and stages immutable", async () => {
     const payload = { storeName: "版本店", industryCode: "full_service", categoryCode: "sichuan", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "旧地址", businessDistrictType: "mixed", operatingMode: "dine_in" };
     await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", payload });

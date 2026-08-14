@@ -14,7 +14,7 @@ describe("import API routes", () => {
     pool = new Pool();
     const migration = await readFile(new URL("../migrations/001_imports.sql", import.meta.url), "utf8");
     await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
-    app = buildServer({ database: pool, developmentMode: true });
+    app = buildServer({ database: pool, trustedContextResolver: async () => ({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" }) });
   });
 
   it("does not expose import routes without an explicit trusted context provider", async () => {
