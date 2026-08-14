@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Database, Queryable } from "../db.js";
+import type { Database } from "../db.js";
 
 export const DOUYIN_CONNECTION_TYPES = ["content_account", "life_service_store"] as const;
 export type DouyinConnectionType = (typeof DOUYIN_CONNECTION_TYPES)[number];
@@ -42,7 +42,7 @@ export interface ConsumedOAuthState { connectionType: DouyinConnectionType; redi
 type Row = Record<string, unknown>;
 
 export class DouyinConnectionRepository {
-  constructor(private readonly database: Queryable) {}
+  constructor(private readonly database: Database, private readonly now: () => Date = () => new Date()) {}
 
   async upsertConnection(input: UpsertDouyinConnection): Promise<DouyinConnection> {
     validateConnection(input);
@@ -73,7 +73,7 @@ export class DouyinConnectionRepository {
   }
 
   async createOAuthState(input: CreateOAuthState): Promise<void> {
-    validateOAuthState(input);
+    validateOAuthState(input, this.now());
     await this.database.query(`INSERT INTO douyin_oauth_states
       (id, state_hash, enterprise_id, store_id, connection_type, redirect_path, nonce, expires_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [randomUUID(), hashState(input.state), input.enterpriseId, input.storeId,
@@ -81,11 +81,10 @@ export class DouyinConnectionRepository {
   }
 
   async consumeOAuthState(input: OAuthStateScope): Promise<ConsumedOAuthState | null> {
-    const database = this.database as Database;
-    const client = await database.connect();
+    const client = await this.database.connect();
     try {
       await client.query("BEGIN");
-      const consumedAt = new Date();
+      const consumedAt = this.now();
       const result = await client.query<Row>(`UPDATE douyin_oauth_states SET consumed_at = $4
         WHERE state_hash = $1 AND enterprise_id = $2 AND store_id = $3
           AND consumed_at IS NULL AND expires_at > $4
@@ -109,10 +108,17 @@ function validateConnection(input: UpsertDouyinConnection): void {
   if (!Array.isArray(input.capabilities) || input.capabilities.some((capability) => typeof capability !== "string" || !capability.trim())) throw new Error("capabilities must be strings");
   if (!(input.expiresAt instanceof Date) || Number.isNaN(input.expiresAt.valueOf())) throw new Error("expiresAt is invalid");
 }
-function validateOAuthState(input: CreateOAuthState): void {
+function validateOAuthState(input: CreateOAuthState, now: Date): void {
   required(input.state, "state"); required(input.enterpriseId, "enterpriseId"); required(input.storeId, "storeId"); required(input.redirectPath, "redirectPath");
   if (!DOUYIN_CONNECTION_TYPES.includes(input.connectionType)) throw new Error("connectionType is invalid");
   if (!(input.expiresAt instanceof Date) || Number.isNaN(input.expiresAt.valueOf())) throw new Error("expiresAt is invalid");
+  const lifetimeMs = input.expiresAt.valueOf() - now.valueOf();
+  if (lifetimeMs <= 0) throw new Error("expiresAt must be in the future");
+  if (lifetimeMs > 10 * 60 * 1000) throw new Error("expiresAt must be within 10 minutes");
+  if (!isInternalRedirectPath(input.redirectPath)) throw new Error("redirectPath must be an internal path");
+}
+function isInternalRedirectPath(value: string): boolean {
+  return /^\/(?!\/)[^\\\x00-\x1F\x7F]*$/.test(value) && !/%(?:2f|5c)/i.test(value);
 }
 function required(value: string, name: string): void { if (!value?.trim()) throw new Error(`${name} is required`); }
 function asConnectionType(value: unknown): DouyinConnectionType { if (!DOUYIN_CONNECTION_TYPES.includes(value as DouyinConnectionType)) throw new Error("invalid stored connection type"); return value as DouyinConnectionType; }
