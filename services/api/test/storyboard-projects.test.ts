@@ -52,9 +52,11 @@ describe("storyboard editing projects", () => {
     ]) expect((await update(invalid)).statusCode).toBe(422);
   });
 
-  it("preserves version history, makes finalized versions immutable, and persists cover state", async () => {
-    const project = (await create()).json(); const body = { slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleText: "subtitle" }], coverAssetId: assetId, coverTitle: "today's signature", finalize: true };
-    const final = await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: body }); expect(final.statusCode).toBe(201); expect(final.json()).toMatchObject({ version: 2, status: "final", coverAssetId: assetId, coverTitle: "today's signature" });
+  it("preserves version history, makes finalized versions immutable, and persists a real source-frame cover selection", async () => {
+    const project = (await create()).json(); const body = { slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleText: "subtitle" }], coverAssetId: assetId, coverFrameOffsetSeconds: 6, coverTitle: "today's signature", finalize: true };
+    expect((await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: { ...body, finalize: false, coverFrameOffsetSeconds: 10 } })).statusCode).toBe(422);
+    expect((await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: { ...body, finalize: false, coverFrameOffsetSeconds: undefined } })).statusCode).toBe(422);
+    const final = await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: body }); expect(final.statusCode).toBe(201); expect(final.json()).toMatchObject({ version: 2, status: "final", coverAssetId: assetId, coverFrameOffsetSeconds: 6, coverTitle: "today's signature" });
     expect((await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: body })).statusCode).toBe(409);
     const history = await app.inject({ method: "GET", url: `${path()}/projects/${project.id}` }); expect(history.statusCode).toBe(200); expect(history.json().versions).toHaveLength(2);
   });

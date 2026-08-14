@@ -17,6 +17,7 @@ CREATE TABLE storyboard_project_versions (
   status TEXT NOT NULL CHECK (status IN ('draft', 'final')),
   slots_json TEXT NOT NULL,
   cover_asset_id TEXT,
+  cover_frame_offset_seconds DOUBLE PRECISION,
   cover_title TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (project_id, version)

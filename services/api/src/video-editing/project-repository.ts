@@ -24,7 +24,7 @@ export class ProjectRepository {
     } catch (error) { await rollback(client); throw error; } finally { client.release(); }
   }
 
-  async saveVersion(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; slots: unknown; coverAssetId?: unknown; coverTitle?: unknown; finalize?: unknown }) {
+  async saveVersion(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; slots: unknown; coverAssetId?: unknown; coverFrameOffsetSeconds?: unknown; coverTitle?: unknown; finalize?: unknown }) {
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");
@@ -35,11 +35,13 @@ export class ProjectRepository {
       if (!latest.rowCount) throw new ProjectError("Storyboard project has no draft", 409);
       if (latest.rows[0].status === "final") throw new ProjectError("Final storyboard versions are immutable", 409);
       const slots = validateSlots(input.slots, source.shots);
-      await assertAssets(client, context, input, slots, stringOrUndefined(input.coverAssetId));
+      const coverAssetId = stringOrUndefined(input.coverAssetId);
+      const assetDurations = await assertAssets(client, context, input, slots, coverAssetId);
+      const coverFrameOffsetSeconds = validateCoverFrame(coverAssetId, input.coverFrameOffsetSeconds, assetDurations);
       const coverTitle = stringOrEmpty(input.coverTitle, "Cover title");
       const status = input.finalize === true ? "final" : "draft";
       const version = Number(latest.rows[0].version) + 1;
-      const inserted = await client.query<Row>("INSERT INTO storyboard_project_versions(id,project_id,version,status,slots_json,cover_asset_id,cover_title) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *", [randomUUID(), input.projectId, version, status, JSON.stringify(slots), stringOrUndefined(input.coverAssetId) ?? null, coverTitle]);
+      const inserted = await client.query<Row>("INSERT INTO storyboard_project_versions(id,project_id,version,status,slots_json,cover_asset_id,cover_frame_offset_seconds,cover_title) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [randomUUID(), input.projectId, version, status, JSON.stringify(slots), coverAssetId ?? null, coverFrameOffsetSeconds ?? null, coverTitle]);
       await client.query("COMMIT"); return versionJson(input.projectId, inserted.rows[0]);
     } catch (error) { await rollback(client); throw error; } finally { client.release(); }
   }
@@ -84,13 +86,21 @@ function validateSlots(value: unknown, shots: unknown[]): ProjectSlot[] {
 async function assertAssets(client: { query: Database["query"] }, context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string }, slots: ProjectSlot[], coverAssetId?: string) {
   const ids = [...new Set([...slots.map(slot => slot.assetId), ...(coverAssetId ? [coverAssetId] : [])])];
   const expectedProject = projectId(context, input.taskId, input.shotListId);
+  const durations = new Map<string, number>();
   for (const id of ids) {
     const asset = await client.query<Row>("SELECT duration_seconds FROM storyboard_media_assets WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND task_id=$4 AND shot_list_id=$5 AND project_id=$6 AND status='accepted' FOR UPDATE", [id, context.enterpriseId, context.storeId, input.taskId, input.shotListId, expectedProject]);
     if (!asset.rowCount) throw new ProjectError("Selected media asset is outside this storyboard project", 422);
-    const slot = slots.find(item => item.assetId === id); if (slot && slot.trimEndSeconds > Number(asset.rows[0].duration_seconds)) throw new ProjectError("Trim range exceeds the source asset duration", 422);
+    const duration = Number(asset.rows[0].duration_seconds); durations.set(id, duration);
+    const slot = slots.find(item => item.assetId === id); if (slot && slot.trimEndSeconds > duration) throw new ProjectError("Trim range exceeds the source asset duration", 422);
   }
+  return durations;
 }
-function versionJson(projectId: string, row: Row) { return { id: projectId, version: Number(row.version), status: row.status, slots: JSON.parse(String(row.slots_json)), coverAssetId: row.cover_asset_id ?? undefined, coverTitle: row.cover_title, createdAt: new Date(String(row.created_at)).toISOString() }; }
+function validateCoverFrame(coverAssetId: string | undefined, value: unknown, durations: ReadonlyMap<string, number>): number | undefined {
+  if (!coverAssetId) { if (value !== undefined) throw new ProjectError("A cover frame requires a selected cover asset", 422); return undefined; }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value >= Number(durations.get(coverAssetId))) throw new ProjectError("Cover frame offset must be inside the selected source video", 422);
+  return value;
+}
+function versionJson(projectId: string, row: Row) { return { id: projectId, version: Number(row.version), status: row.status, slots: JSON.parse(String(row.slots_json)), coverAssetId: row.cover_asset_id ?? undefined, coverFrameOffsetSeconds: row.cover_frame_offset_seconds === null || row.cover_frame_offset_seconds === undefined ? undefined : Number(row.cover_frame_offset_seconds), coverTitle: row.cover_title, createdAt: new Date(String(row.created_at)).toISOString() }; }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProjectError("Storyboard slot must be an object", 422); return value as Record<string, unknown>; }
 function text(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
 function nonempty(value: unknown, label: string): string { const result = text(value); if (!result) throw new ProjectError(`${label} is required`, 422); return result; }

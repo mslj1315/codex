@@ -31,7 +31,7 @@ export async function registerVideoAssetRoutes(app: FastifyInstance, database: D
   });
   app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/versions", async (request, reply) => {
     const body = record(request.body); const { taskId, shotListId } = ids(request);
-    return reply.code(201).send(await projects.saveVersion(scope(request), { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), slots: body.slots, coverAssetId: body.coverAssetId, coverTitle: body.coverTitle, finalize: body.finalize }));
+    return reply.code(201).send(await projects.saveVersion(scope(request), { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), slots: body.slots, coverAssetId: body.coverAssetId, coverFrameOffsetSeconds: body.coverFrameOffsetSeconds, coverTitle: body.coverTitle, finalize: body.finalize }));
   });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ForbiddenError) return reply.code(403).send({ error: error.message });
