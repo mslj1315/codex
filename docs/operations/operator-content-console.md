@@ -2,9 +2,9 @@
 
 ## Deployment
 
-Build the console in `apps/provider-console` with `npm run build`.  Configure
+Build the console in `apps/operator-console` with `npm run build`.  Configure
 the API process with `OPERATOR_CONSOLE_DIST_DIR` set to the absolute path of
-the resulting `apps/provider-console/dist` directory.  The API then serves the
+the resulting `apps/operator-console/dist` directory.  The API then serves the
 console and `/v1` endpoints from one HTTPS origin.
 
 Do not deploy the Vite development server as the production console.  Its
@@ -80,7 +80,7 @@ Set-Location services/api
 npm test
 npm run typecheck
 
-Set-Location ../../apps/provider-console
+Set-Location ../../apps/operator-console
 npm test
 npm run typecheck
 npm run build
