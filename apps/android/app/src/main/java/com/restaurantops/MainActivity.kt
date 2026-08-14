@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -85,7 +87,10 @@ private fun ContentProfileScreen(viewModel: ContentProfileViewModel, endpointCon
     val businessDistrict = rememberSaveable(current?.businessDistrictType) { androidx.compose.runtime.mutableStateOf(current?.businessDistrictType ?: "") }
     val operatingMode = rememberSaveable(current?.operatingMode) { androidx.compose.runtime.mutableStateOf(current?.operatingMode ?: "") }
     Scaffold(topBar = { TopAppBar(title = { Text("门店内容档案") }) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Text("完成门店档案后才能进入内容工作台", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(storeName.value, { storeName.value = it }, label = { Text("门店名称") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(address.value, { address.value = it }, label = { Text("详细地址") }, modifier = Modifier.fillMaxWidth())
