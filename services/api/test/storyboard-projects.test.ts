@@ -38,6 +38,16 @@ describe("storyboard editing projects", () => {
     expect(await database.query("SELECT count(*)::int AS count FROM storyboard_projects")).toEqual(before);
   });
 
+  it("rejects a malformed provider project-version request before parsing it or writing a version", async () => {
+    const project = (await create()).json();
+    const before = await database.query("SELECT count(*)::int AS count FROM storyboard_project_versions WHERE project_id=$1", [project.id]);
+    const provider = buildServer({ database, trustedContextResolver: async () => ({ ...scope, actorRole: "provider" as const }), videoStorage: storage });
+    const response = await provider.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: [] });
+    expect(response.statusCode).toBe(403);
+    expect(await database.query("SELECT count(*)::int AS count FROM storyboard_project_versions WHERE project_id=$1", [project.id])).toEqual(before);
+    await provider.close();
+  });
+
   it("validates selected assets, trims, order, audio, subtitles, supplemental slots, and the 90 second cap", async () => {
     const project = (await create()).json(); const update = (body: object) => app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: body });
     const valid = { slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 1, trimEndSeconds: 5, muted: true, subtitleText: "edited subtitle" }, { slotId: "extra-1", kind: "supplemental", assetId, order: 2, trimStartSeconds: 5, trimEndSeconds: 10, muted: false, subtitleText: "supplemental" }] };
@@ -48,6 +58,7 @@ describe("storyboard editing projects", () => {
       { ...valid, slots: [{ ...valid.slots[0], muted: "no" }] },
       { ...valid, slots: [{ ...valid.slots[0], subtitleText: "" }] },
       { ...valid, slots: [{ ...valid.slots[0], assetId: "outside" }] },
+      { ...valid, slots: [{ ...valid.slots[0], trimEndSeconds: 5 }, { ...valid.slots[1], trimStartSeconds: 5, trimEndSeconds: 11 }] },
       { ...valid, slots: Array.from({ length: 10 }, (_, index) => ({ ...valid.slots[0], slotId: `s-${index}`, kind: "supplemental", shotIndex: undefined, order: index + 1, trimStartSeconds: 0, trimEndSeconds: 10 })) }
     ]) expect((await update(invalid)).statusCode).toBe(422);
   });

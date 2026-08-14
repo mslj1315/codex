@@ -91,8 +91,8 @@ async function assertAssets(client: { query: Database["query"] }, context: Trust
     const asset = await client.query<Row>("SELECT duration_seconds FROM storyboard_media_assets WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND task_id=$4 AND shot_list_id=$5 AND project_id=$6 AND status='accepted' FOR UPDATE", [id, context.enterpriseId, context.storeId, input.taskId, input.shotListId, expectedProject]);
     if (!asset.rowCount) throw new ProjectError("Selected media asset is outside this storyboard project", 422);
     const duration = Number(asset.rows[0].duration_seconds); durations.set(id, duration);
-    const slot = slots.find(item => item.assetId === id); if (slot && slot.trimEndSeconds > duration) throw new ProjectError("Trim range exceeds the source asset duration", 422);
   }
+  for (const slot of slots) if (slot.trimEndSeconds > Number(durations.get(slot.assetId))) throw new ProjectError("Trim range exceeds the source asset duration", 422);
   return durations;
 }
 function validateCoverFrame(coverAssetId: string | undefined, value: unknown, durations: ReadonlyMap<string, number>): number | undefined {
