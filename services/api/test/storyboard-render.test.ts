@@ -21,7 +21,7 @@ describe("storyboard render queue", () => {
     const memory = newDb({ noAstCoverageCheck: true });
     memory.public.registerFunction({ name: "jsonb_typeof", args: [DataType.jsonb], returns: DataType.text, implementation: value => Array.isArray(value) ? "array" : typeof value === "object" && value !== null ? "object" : typeof value });
     const { Pool } = memory.adapters.createPg(); database = new Pool();
-    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql"]) {
+    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
       await database.query(sql.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     }
@@ -71,6 +71,17 @@ describe("storyboard render queue", () => {
     expect(events).toContain("remove:work/job-1");
     expect(events.join("\n")).toContain("output:video/mp4");
     expect(events.find(event => event.startsWith("succeed:"))).toContain('"positionSeconds":1');
+  });
+
+  it("lets its customer list and cancel a queued render without exposing output storage", async () => {
+    const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "preview" } });
+    const listed = await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders` });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toMatchObject({ renders: [{ id: created.json().id, state: "queued" }] });
+    const cancelled = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders/${created.json().id}/cancel`, payload: {} });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json()).toMatchObject({ id: created.json().id, state: "cancelled" });
+    expect(JSON.stringify(cancelled.json())).not.toMatch(/objectKey|storage|https?:\/\//i);
   });
 
   function path() { return `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}`; }

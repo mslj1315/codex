@@ -40,6 +40,12 @@ export async function registerVideoAssetRoutes(app: FastifyInstance, database: D
     const context = scope(request); const body = record(request.body); const { taskId, shotListId } = ids(request);
     return reply.code(201).send(await renders.enqueue(context, { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), kind: body.kind }));
   });
+  app.get("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders", async request => {
+    const context = scope(request); const { taskId, shotListId } = ids(request); return renders.list(context, { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? "") });
+  });
+  app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders/:renderId/cancel", async request => {
+    const context = scope(request); const { taskId, shotListId } = ids(request); return renders.cancel(context, { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), jobId: String((request.params as Record<string, unknown>).renderId ?? "") });
+  });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ForbiddenError) return reply.code(403).send({ error: error.message });
     if (error instanceof AssetError) return reply.code(error.status).send({ error: error.message });
