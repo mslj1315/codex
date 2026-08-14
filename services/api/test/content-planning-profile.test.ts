@@ -16,7 +16,7 @@ describe("content planning store profile", () => {
     await pool.query(importsMigration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
     const profileMigration = await readFile(new URL("../migrations/013_content_planning_profile.sql", import.meta.url), "utf8");
     await pool.query(profileMigration.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
-    app = buildServer({ database: pool, developmentMode: true });
+    app = buildServer({ database: pool, trustedContextResolver: async () => ({ enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" }) });
   });
 
   it("requires the complete first-visit profile and returns completeness", async () => {

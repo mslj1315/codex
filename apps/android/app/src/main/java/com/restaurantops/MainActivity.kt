@@ -63,9 +63,9 @@ class MainActivity : ComponentActivity() {
                 when (rootScreen.value) {
                     RootScreen.WORKSPACE -> if (contentProfileGate(profileViewModel.state) == ContentProfileGate.Ready) {
                         WorkspaceRoot(viewModel = workspaceViewModel, onReturnToOnboarding = { rootScreen.value = RootScreen.ONBOARDING })
-                    } else ContentProfileScreen(viewModel = profileViewModel, onReady = { rootScreen.value = RootScreen.WORKSPACE }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
-                    RootScreen.PROFILE -> ContentProfileScreen(viewModel = profileViewModel, endpointConfigured = contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL), onReady = { rootScreen.value = RootScreen.WORKSPACE }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
-                    RootScreen.ONBOARDING -> StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { if (contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL)) { rootScreen.value = RootScreen.PROFILE; profileViewModel.load("store_demo") } })
+                    } else ContentProfileScreen(viewModel = profileViewModel, endpointConfigured = contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL), onReady = { rootScreen.value = nextRootScreen(RootScreen.PROFILE, contentProfileGate(profileViewModel.state)) }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
+                    RootScreen.PROFILE -> ContentProfileScreen(viewModel = profileViewModel, endpointConfigured = contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL), onReady = { rootScreen.value = nextRootScreen(RootScreen.PROFILE, contentProfileGate(profileViewModel.state)) }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
+                    RootScreen.ONBOARDING -> StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { if (contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL)) { rootScreen.value = nextRootScreen(RootScreen.ONBOARDING, contentProfileGate(profileViewModel.state)); profileViewModel.load("store_demo") } })
                 }
             }
         }
