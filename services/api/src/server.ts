@@ -32,10 +32,12 @@ export function buildServer(options: ServerOptions = {}) {
   if (database) {
     registerOperatorAuthRoutes(app, database);
   }
+  if (database) {
+    app.register((instance) => registerOperatorContentRoutes(instance, database));
+  }
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, database, contextResolver));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
-    app.register((instance) => registerOperatorContentRoutes(instance, database, contextResolver));
   }
 
   return app;

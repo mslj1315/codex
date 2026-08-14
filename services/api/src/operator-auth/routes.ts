@@ -10,9 +10,9 @@ export function registerOperatorAuthRoutes(app: FastifyInstance, database: Datab
   const repository = new OperatorAuthRepository(database, sessionTtl());
   app.decorateRequest("operatorSession", undefined);
   app.addHook("onRequest", async (request, reply) => {
-    if (!request.url.startsWith("/v1/operator-content/") || !isStateChange(request.method)) return;
+    if (!request.url.startsWith("/v1/operator-content/")) return;
     const session = await repository.authenticateSession(readSessionCookie(request.headers.cookie));
-    if (!session || !isSameOrigin(request) || request.headers["x-csrf-token"] !== session.csrfToken) return reply.code(403).send({ error: "Forbidden" });
+    if (!session || (isStateChange(request.method) && (!isSameOrigin(request) || request.headers["x-csrf-token"] !== session.csrfToken))) return reply.code(403).send({ error: "Forbidden" });
     request.operatorSession = session;
   });
 

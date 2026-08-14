@@ -18,6 +18,8 @@ describe("operator authentication", () => {
     await pool.query(contentMigration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
     const migration = await readFile(new URL("../migrations/015_operator_accounts_sessions.sql", import.meta.url), "utf8");
     await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    const versionsMigration = await readFile(new URL("../migrations/016_operator_content_versions.sql", import.meta.url), "utf8");
+    await pool.query(versionsMigration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
     await pool.query(
       "INSERT INTO operator_accounts (account_id, password_hash, role) VALUES ($1, $2, 'operator_admin')",
       ["op-1", await bcrypt.hash("correct horse", 4)]
