@@ -35,10 +35,11 @@ describe("016 operator content migration structural scope (pg-mem does not execu
   });
 });
 
-const realPostgresUrl = process.env.REAL_POSTGRES_TEST_URL ?? process.env.DATABASE_URL;
+// This must be a dedicated disposable test database; never use a generic runtime DATABASE_URL.
+const realPostgresUrl = process.env.REAL_POSTGRES_TEST_URL;
 const realPostgresIt = realPostgresUrl ? it : it.skip;
 describe("016 operator content PostgreSQL trigger invariants", () => {
-  realPostgresIt("requires REAL_POSTGRES_TEST_URL or DATABASE_URL; applies full migrations and rejects unmarked publication plus published history rewrites", async () => {
+  realPostgresIt("requires dedicated REAL_POSTGRES_TEST_URL; applies full migrations and rejects unmarked publication plus direct published/disabled history rewrites", async () => {
     const database = createDatabase(realPostgresUrl!);
     const files = (await readdir(new URL("../migrations/", import.meta.url))).filter((file) => file.endsWith(".sql")).sort();
     await runMigrations(database, await Promise.all(files.map(async (id) => ({ id, sql: await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8") }))));

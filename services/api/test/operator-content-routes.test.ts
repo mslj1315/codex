@@ -96,7 +96,7 @@ describe("operator content logical versions", () => {
     for (const file of ["014_content_templates_rules.sql", "015_operator_accounts_sessions.sql"]) { const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"); await legacyPool.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, "")); }
     await legacyPool.query("INSERT INTO content_review_rules (id,name,status,rule_type,severity,patterns_json,created_by_actor_id) VALUES ('legacy-rule','legacy','published','absolute_claim','block','[\"best\"]','old')");
     const migration = await readFile(new URL("../migrations/016_operator_content_versions.sql", import.meta.url), "utf8"); await legacyPool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
-    expect((await legacyPool.query("SELECT status FROM operator_content_rule_versions WHERE logical_id='legacy-rule'")).rows).toEqual([{ status: "disabled" }]);
+    expect((await legacyPool.query("SELECT status, ever_published_at IS NOT NULL AS marked FROM operator_content_rule_versions WHERE logical_id='legacy-rule'")).rows).toEqual([{ status: "disabled", marked: true }]);
   });
 
   it("bridges legacy published templates with a permanent publication marker", async () => {
@@ -105,6 +105,14 @@ describe("operator content logical versions", () => {
     await legacyPool.query("INSERT INTO content_templates (id,name,status,content_json,constraints_json,fallback_scope_json,created_by_actor_id) VALUES ('legacy-template','legacy','published','{}','{}','{}','old')");
     const migration = await readFile(new URL("../migrations/016_operator_content_versions.sql", import.meta.url), "utf8"); await legacyPool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
     expect((await legacyPool.query("SELECT status, ever_published_at IS NOT NULL AS marked FROM operator_content_template_versions WHERE logical_id='legacy-template'")).rows).toEqual([{ status: "published", marked: true }]);
+  });
+
+  it("bridges legacy disabled templates as permanently protected history", async () => {
+    const memory = newDb({ noAstCoverageCheck: true }); const { Pool } = memory.adapters.createPg(); const legacyPool: Database = new Pool();
+    for (const file of ["014_content_templates_rules.sql", "015_operator_accounts_sessions.sql"]) { const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"); await legacyPool.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, "")); }
+    await legacyPool.query("INSERT INTO content_templates (id,name,status,content_json,constraints_json,fallback_scope_json,created_by_actor_id) VALUES ('legacy-disabled','legacy','disabled','{}','{}','{}','old')");
+    const migration = await readFile(new URL("../migrations/016_operator_content_versions.sql", import.meta.url), "utf8"); await legacyPool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    expect((await legacyPool.query("SELECT status, ever_published_at IS NOT NULL AS marked FROM operator_content_template_versions WHERE logical_id='legacy-disabled'")).rows).toEqual([{ status: "disabled", marked: true }]);
   });
 
   it("rolls back a publish when its audit write fails", async () => {

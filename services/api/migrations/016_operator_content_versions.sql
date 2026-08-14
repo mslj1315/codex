@@ -21,16 +21,17 @@ CREATE TABLE operator_content_audit_events (
 -- Copy prototype records as v1 logical versions. This migration is safe when 014 has no rows.
 INSERT INTO operator_content_template_items(logical_id) SELECT id FROM content_templates ON CONFLICT DO NOTHING;
 INSERT INTO operator_content_template_versions(id,logical_id,version,name,status,content_json,constraints_json,fallback_scope_json,actor_id,created_at,ever_published_at,disabled_by_actor_id,disabled_at)
-SELECT id,id,1, name, CASE WHEN status='published' THEN 'published' WHEN status='disabled' THEN 'disabled' ELSE 'draft' END, content_json,constraints_json,fallback_scope_json,created_by_actor_id,created_at,CASE WHEN status='published' THEN created_at ELSE NULL END,CASE WHEN status='disabled' THEN created_by_actor_id ELSE NULL END,CASE WHEN status='disabled' THEN created_at ELSE NULL END FROM content_templates ON CONFLICT DO NOTHING;
+SELECT id,id,1, name, CASE WHEN status='published' THEN 'published' WHEN status='disabled' THEN 'disabled' ELSE 'draft' END, content_json,constraints_json,fallback_scope_json,created_by_actor_id,created_at,CASE WHEN status IN ('published','disabled') THEN created_at ELSE NULL END,CASE WHEN status='disabled' THEN created_by_actor_id ELSE NULL END,CASE WHEN status='disabled' THEN created_at ELSE NULL END FROM content_templates ON CONFLICT DO NOTHING;
 INSERT INTO operator_content_rule_items(logical_id) SELECT id FROM content_review_rules ON CONFLICT DO NOTHING;
-INSERT INTO operator_content_rule_versions(id,logical_id,version,name,rule_type,patterns_json,semantic_categories_json,severity,platform,scope,guidance,status,actor_id,created_at,disabled_by_actor_id,disabled_at)
+INSERT INTO operator_content_rule_versions(id,logical_id,version,name,rule_type,patterns_json,semantic_categories_json,severity,platform,scope,guidance,status,actor_id,created_at,ever_published_at,disabled_by_actor_id,disabled_at)
 -- legacy published rules require enrichment of semantic categories and guidance before publication.
-SELECT id,id,1,name,rule_type,patterns_json,'[]',severity,'douyin','all_copy','',CASE WHEN status='published' THEN 'disabled' WHEN status='disabled' THEN 'disabled' ELSE 'draft' END,created_by_actor_id,created_at,CASE WHEN status IN ('published','disabled') THEN created_by_actor_id ELSE NULL END,CASE WHEN status IN ('published','disabled') THEN created_at ELSE NULL END FROM content_review_rules ON CONFLICT DO NOTHING;
+SELECT id,id,1,name,rule_type,patterns_json,'[]',severity,'douyin','all_copy','',CASE WHEN status='published' THEN 'disabled' WHEN status='disabled' THEN 'disabled' ELSE 'draft' END,created_by_actor_id,created_at,CASE WHEN status IN ('published','disabled') THEN created_at ELSE NULL END,CASE WHEN status IN ('published','disabled') THEN created_by_actor_id ELSE NULL END,CASE WHEN status IN ('published','disabled') THEN created_at ELSE NULL END FROM content_review_rules ON CONFLICT DO NOTHING;
 
 -- PostgreSQL append-only guards
 CREATE OR REPLACE FUNCTION reject_operator_content_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'published history cannot be deleted'; END IF;
+  IF OLD.status = 'disabled' THEN RAISE EXCEPTION 'disabled history is immutable'; END IF;
   IF OLD.ever_published_at IS NOT NULL THEN
     IF OLD.status <> 'published' OR NEW.status <> 'disabled' THEN RAISE EXCEPTION 'published history is immutable'; END IF;
     IF NEW.id IS DISTINCT FROM OLD.id OR NEW.logical_id IS DISTINCT FROM OLD.logical_id OR NEW.version IS DISTINCT FROM OLD.version OR NEW.name IS DISTINCT FROM OLD.name OR NEW.actor_id IS DISTINCT FROM OLD.actor_id OR NEW.created_at IS DISTINCT FROM OLD.created_at OR NEW.ever_published_at IS DISTINCT FROM OLD.ever_published_at THEN RAISE EXCEPTION 'published history is immutable'; END IF;
