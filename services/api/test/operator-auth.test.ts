@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { hash } from "bcryptjs";
+import bcrypt from "bcryptjs";
 import { newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
@@ -20,7 +20,7 @@ describe("operator authentication", () => {
     await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
     await pool.query(
       "INSERT INTO operator_accounts (account_id, password_hash, role) VALUES ($1, $2, 'operator_admin')",
-      ["op-1", await hash("correct horse", 4)]
+      ["op-1", await bcrypt.hash("correct horse", 4)]
     );
   });
 
@@ -32,12 +32,38 @@ describe("operator authentication", () => {
 
   });
 
+  it("runs a password comparison even when an account cannot authenticate", async () => {
+    const comparisons: string[] = [];
+    const repository = new OperatorAuthRepository(pool, undefined, async (_password, passwordHash) => { comparisons.push(passwordHash); return false; });
+    expect(await repository.verifyPassword("missing", "password")).toBe(false);
+    expect(comparisons).toHaveLength(1);
+  });
+
   it("disables an account atomically, revokes its session, and audits the action", async () => {
     const repository = new OperatorAuthRepository(pool);
     const created = await repository.createSession("op-1");
     expect(await repository.disableAccount("op-1")).toBe(true);
     expect(await repository.authenticateSession(created.cookieValue)).toBeUndefined();
     expect((await pool.query("SELECT event_type FROM operator_auth_audit_events WHERE account_id='op-1' ORDER BY occurred_at DESC")).rows).toContainEqual({ event_type: "account_disabled" });
+  });
+
+  it("returns a neutral HTTP failure for a disabled account", async () => {
+    await new OperatorAuthRepository(pool).disableAccount("op-1");
+    const app = buildServer({ database: pool });
+    const response = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "Forbidden" });
+  });
+
+  it("rejects expired sessions and malformed login bodies", async () => {
+    const repository = new OperatorAuthRepository(pool);
+    const session = await repository.createSession("op-1");
+    await pool.query("UPDATE operator_sessions SET expires_at='2000-01-01T00:00:00.000Z'");
+    const app = buildServer({ database: pool });
+    expect((await app.inject({ method: "GET", url: "/v1/operator-auth/session", headers: { cookie: `operator_session=${session.cookieValue}` } })).statusCode).toBe(403);
+    const malformed = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: [] });
+    expect(malformed.statusCode).toBe(403);
+    expect(malformed.json()).toEqual({ error: "Forbidden" });
   });
 
   it("revokes a session on logout and requires CSRF plus same-origin for operator writes", async () => {

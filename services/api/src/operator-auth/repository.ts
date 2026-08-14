@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { compare, hash } from "bcryptjs";
+import bcrypt from "bcryptjs";
 import type { Database, Queryable } from "../db.js";
 
 export const OPERATOR_SESSION_COOKIE = "operator_session";
@@ -12,14 +12,23 @@ export interface OperatorSession {
 }
 
 type Row = Record<string, unknown>;
+type PasswordComparer = (password: string, passwordHash: string) => Promise<boolean>;
+const DUMMY_PASSWORD_HASH = "$2a$12$78h33h55QelGiyV0HyFXjOdzJZDCHjoDLzod0JQGR2ZCI6IUDc4ry";
 
 export class OperatorAuthRepository {
-  constructor(private readonly database: Database, private readonly sessionTtlMs = 8 * 60 * 60 * 1000) {}
+  constructor(
+    private readonly database: Database,
+    private readonly sessionTtlMs = 8 * 60 * 60 * 1000,
+    private readonly passwordComparer: PasswordComparer = bcrypt.compare.bind(bcrypt)
+  ) {}
 
   async verifyPassword(accountId: string, password: string): Promise<boolean> {
     const result = await this.database.query<Row>("SELECT password_hash, enabled, role FROM operator_accounts WHERE account_id=$1", [accountId]);
-    if (result.rowCount !== 1 || result.rows[0].enabled !== true || result.rows[0].role !== OPERATOR_ADMIN_ROLE) return false;
-    return compare(password, String(result.rows[0].password_hash));
+    const row = result.rowCount === 1 ? result.rows[0] : undefined;
+    const usable = row?.enabled === true && row.role === OPERATOR_ADMIN_ROLE;
+    const passwordHash = usable ? String(row.password_hash) : DUMMY_PASSWORD_HASH;
+    const matches = await this.passwordComparer(password, passwordHash);
+    return usable && matches;
   }
 
   async createSession(accountId: string, now = new Date()): Promise<{ cookieValue: string; session: OperatorSession }> {
@@ -55,7 +64,7 @@ export class OperatorAuthRepository {
   }
 
   async provision(accountId: string, password: string, workFactor: number): Promise<boolean> {
-    const passwordHash = await hash(password, workFactor);
+    const passwordHash = await bcrypt.hash(password, workFactor);
     const result = await this.database.query<Row>(
       "INSERT INTO operator_accounts (account_id, password_hash, role) VALUES ($1,$2,$3) ON CONFLICT (account_id) DO NOTHING RETURNING account_id",
       [accountId, passwordHash, OPERATOR_ADMIN_ROLE]
