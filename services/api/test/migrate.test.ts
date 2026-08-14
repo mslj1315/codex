@@ -43,6 +43,8 @@ describe("021 storyboard project migration structural scope", () => {
     const sql = await readFile(new URL("../migrations/021_storyboard_projects.sql", import.meta.url), "utf8");
     expect(sql).toContain("slots_json JSONB NOT NULL CHECK (jsonb_typeof(slots_json) = 'array')");
     expect(sql).not.toMatch(/cover_asset_id[^\n]*REFERENCES/i);
+    expect(sql).toContain("storyboard_project_versions_append_only");
+    expect(sql).toContain("reject_storyboard_project_version_mutation");
   });
 });
 
@@ -67,6 +69,25 @@ describe("021 storyboard project PostgreSQL creation invariant", () => {
       expect((await database.query("SELECT count(*)::int AS count FROM storyboard_projects WHERE enterprise_id=$1 AND store_id=$2", [enterpriseId, storeId])).rows).toEqual([{ count: 1 }]);
       expect((await database.query("SELECT count(*)::int AS count FROM storyboard_project_versions WHERE project_id=$1", [first.id])).rows).toEqual([{ count: 1 }]);
     } finally { await database.end(); }
+  }, 30_000);
+});
+describe("021 storyboard project PostgreSQL append-only invariant", () => {
+  realPostgresIt("rejects direct mutation or deletion of historical and final versions", async () => {
+    const database = createDatabase(realPostgresUrl!);
+    const files = (await readdir(new URL("../migrations/", import.meta.url))).filter(file => file.endsWith(".sql")).sort();
+    await runMigrations(database, await Promise.all(files.map(async id => ({ id, sql: await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8") }))));
+    const client = await database.connect(); const taskId = randomUUID(), topicId = randomUUID(), copyId = randomUUID(), shotListId = randomUUID(), projectId = randomUUID();
+    try {
+      await client.query("BEGIN");
+      await client.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES($1,'append-e','append-s','append-a',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')", [taskId]);
+      await client.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$2,1,'t','a','p','g',1)", [topicId, taskId]);
+      await client.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,1,'t','b','s','p','g',1)", [copyId, taskId, topicId]);
+      await client.query("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json) VALUES($1,$2,$3,'[]')", [shotListId, taskId, copyId]);
+      await client.query("INSERT INTO storyboard_projects(id,enterprise_id,store_id,task_id,shot_list_id,actor_id) VALUES($1,'append-e','append-s',$2,$3,'append-a')", [projectId, taskId, shotListId]);
+      await client.query("INSERT INTO storyboard_project_versions(id,project_id,version,status,slots_json) VALUES($1,$2,1,'draft','[]'),($3,$2,2,'final','[]')", [randomUUID(), projectId, randomUUID()]);
+      await expectRejected(client, "UPDATE storyboard_project_versions SET cover_title='rewrite' WHERE project_id=$1 AND version=1", [projectId]);
+      await expectRejected(client, "DELETE FROM storyboard_project_versions WHERE project_id=$1 AND version=2", [projectId]);
+    } finally { try { await client.query("ROLLBACK"); } catch {} client.release(); await database.end(); }
   }, 30_000);
 });
 describe("016 operator content PostgreSQL trigger invariants", () => {

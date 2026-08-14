@@ -4,7 +4,7 @@ import type { TrustedContext } from "../imports/service.js";
 
 type Row = Record<string, unknown>;
 export class ProjectError extends Error { constructor(message: string, readonly status: number) { super(message); } }
-export type ProjectSlot = { slotId: string; kind: "shot" | "supplemental"; shotIndex?: number; assetId: string; order: number; trimStartSeconds: number; trimEndSeconds: number; muted: boolean; subtitleText: string };
+export type ProjectSlot = { slotId: string; kind: "shot" | "supplemental"; shotIndex?: number; assetId: string; order: number; trimStartSeconds: number; trimEndSeconds: number; muted: boolean; subtitleText: string; subtitleEnabled: boolean };
 
 export class ProjectRepository {
   constructor(private readonly database: Database) {}
@@ -67,7 +67,7 @@ async function confirmedSource(queryable: { query: Database["query"] }, context:
   const row = result.rows[0];
   try { const shots: unknown = JSON.parse(String(row.shots_json)); if (!Array.isArray(shots)) throw new Error("not an array"); return { shots, copyTitle: row.copy_title, copyBody: row.copy_body }; } catch { throw new ProjectError("Confirmed shot list is invalid", 409); }
 }
-function seedSlots(shots: unknown[], copyBody: string): ProjectSlot[] { return shots.map((shot, index) => { const item = object(shot); return { slotId: `shot-${index + 1}`, kind: "shot", shotIndex: index + 1, assetId: "", order: index + 1, trimStartSeconds: 0, trimEndSeconds: 0, muted: false, subtitleText: text(item.narration) || text(item.shot) || copyBody }; }); }
+function seedSlots(shots: unknown[], copyBody: string): ProjectSlot[] { return shots.map((shot, index) => { const item = object(shot); return { slotId: `shot-${index + 1}`, kind: "shot", shotIndex: index + 1, assetId: "", order: index + 1, trimStartSeconds: 0, trimEndSeconds: 0, muted: false, subtitleText: text(item.narration) || text(item.shot) || copyBody, subtitleEnabled: true }; }); }
 function validateSlots(value: unknown, shots: unknown[]): ProjectSlot[] {
   if (!Array.isArray(value) || value.length === 0) throw new ProjectError("At least one storyboard slot is required", 422);
   const ids = new Set<string>(), orders = new Set<number>(); let duration = 0;
@@ -79,9 +79,9 @@ function validateSlots(value: unknown, shots: unknown[]): ProjectSlot[] {
     const order = positive(item.order, "Slot order"); const start = nonnegative(item.trimStartSeconds, "Trim start"); const end = positive(item.trimEndSeconds, "Trim end");
     if (end <= start) throw new ProjectError("Trim end must be after trim start", 422);
     if (typeof item.muted !== "boolean") throw new ProjectError("Muted must be a boolean", 422);
-    const subtitleText = nonempty(item.subtitleText, "Subtitle text"); const assetId = nonempty(item.assetId, "Asset id");
+    const subtitleText = nonempty(item.subtitleText, "Subtitle text"); const subtitleEnabled = boolean(item.subtitleEnabled, "Subtitle enabled"); const assetId = nonempty(item.assetId, "Asset id");
     if (ids.has(slotId) || orders.has(order)) throw new ProjectError("Slot ids and order values must be unique", 422); ids.add(slotId); orders.add(order); duration += end - start;
-    return { slotId, kind, ...(shotIndex ? { shotIndex } : {}), assetId, order, trimStartSeconds: start, trimEndSeconds: end, muted: item.muted, subtitleText };
+    return { slotId, kind, ...(shotIndex ? { shotIndex } : {}), assetId, order, trimStartSeconds: start, trimEndSeconds: end, muted: item.muted, subtitleText, subtitleEnabled };
   });
   if (duration > 90) throw new ProjectError("Storyboard duration cannot exceed 90 seconds", 422);
   return slots.sort((a, b) => a.order - b.order);
@@ -112,5 +112,6 @@ function stringOrUndefined(value: unknown): string | undefined { return value ==
 function stringOrEmpty(value: unknown, label: string): string { if (value === undefined) return ""; if (typeof value !== "string" || value.trim().length > 120) throw new ProjectError(`${label} is invalid`, 422); return value.trim(); }
 function positive(value: unknown, label: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) throw new ProjectError(`${label} is invalid`, 422); return value; }
 function nonnegative(value: unknown, label: string): number { if (typeof value !== "number") throw new ProjectError(`${label} is invalid`, 422); if (!Number.isFinite(value) || value < 0) throw new ProjectError(`${label} is invalid`, 422); return value; }
+function boolean(value: unknown, label: string): boolean { if (typeof value !== "boolean") throw new ProjectError(`${label} must be a boolean`, 422); return value; }
 function invalidKind(): never { throw new ProjectError("Slot kind is invalid", 422); }
 async function rollback(client: { query: Database["query"] }) { try { await client.query("ROLLBACK"); } catch {} }

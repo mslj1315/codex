@@ -23,3 +23,13 @@ CREATE TABLE storyboard_project_versions (
   UNIQUE (project_id, version)
 );
 CREATE INDEX storyboard_project_versions_project_idx ON storyboard_project_versions(project_id, version DESC);
+
+CREATE OR REPLACE FUNCTION reject_storyboard_project_version_mutation()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'storyboard project versions are append-only';
+END;
+$$;
+CREATE TRIGGER storyboard_project_versions_append_only
+BEFORE UPDATE OR DELETE ON storyboard_project_versions
+FOR EACH ROW EXECUTE FUNCTION reject_storyboard_project_version_mutation();

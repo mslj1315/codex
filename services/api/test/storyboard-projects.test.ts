@@ -24,7 +24,7 @@ describe("storyboard editing projects", () => {
 
   it("creates a customer project only from a confirmed shot list and seeds editable subtitle drafts", async () => {
     const created = await create(); expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ id: expect.any(String), version: 1, status: "draft", slots: [{ slotId: "shot-1", subtitleText: "shot one" }], coverTitle: "signature noodles" });
+    expect(created.json()).toMatchObject({ id: expect.any(String), version: 1, status: "draft", slots: [{ slotId: "shot-1", subtitleText: "shot one", subtitleEnabled: true }], coverTitle: "signature noodles" });
     await database.query("UPDATE content_tasks SET status='copy_draft', confirmed_copy_id=NULL WHERE id=$1", [taskId]);
     expect((await create()).statusCode).toBe(409);
   });
@@ -62,13 +62,15 @@ describe("storyboard editing projects", () => {
 
   it("validates selected assets, trims, order, audio, subtitles, supplemental slots, and the 90 second cap", async () => {
     const project = (await create()).json(); const update = (body: object) => app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: body });
-    const valid = { slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 1, trimEndSeconds: 5, muted: true, subtitleText: "edited subtitle" }, { slotId: "extra-1", kind: "supplemental", assetId, order: 2, trimStartSeconds: 5, trimEndSeconds: 10, muted: false, subtitleText: "supplemental" }] };
-    expect((await update(valid)).statusCode).toBe(201);
+    const valid = { slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 1, trimEndSeconds: 5, muted: true, subtitleText: "edited subtitle", subtitleEnabled: false }, { slotId: "extra-1", kind: "supplemental", assetId, order: 2, trimStartSeconds: 5, trimEndSeconds: 10, muted: false, subtitleText: "supplemental", subtitleEnabled: true }] };
+    const saved = await update(valid); expect(saved.statusCode).toBe(201); expect(saved.json().slots[0]).toMatchObject({ slotId: "shot-1", subtitleEnabled: false });
     for (const invalid of [
       { ...valid, slots: [{ ...valid.slots[0], trimEndSeconds: 11 }] },
       { ...valid, slots: [{ ...valid.slots[0], order: 0 }] },
       { ...valid, slots: [{ ...valid.slots[0], muted: "no" }] },
       { ...valid, slots: [{ ...valid.slots[0], subtitleText: "" }] },
+      { ...valid, slots: [{ ...valid.slots[0], subtitleEnabled: "no" }] },
+      { ...valid, slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 1, trimEndSeconds: 5, muted: true, subtitleText: "edited subtitle" }] },
       { ...valid, slots: [{ ...valid.slots[0], assetId: "outside" }] },
       { ...valid, slots: [{ ...valid.slots[0], trimEndSeconds: 5 }, { ...valid.slots[1], trimStartSeconds: 5, trimEndSeconds: 11 }] },
       { ...valid, slots: Array.from({ length: 10 }, (_, index) => ({ ...valid.slots[0], slotId: `s-${index}`, kind: "supplemental", shotIndex: undefined, order: index + 1, trimStartSeconds: 0, trimEndSeconds: 10 })) }
@@ -76,7 +78,7 @@ describe("storyboard editing projects", () => {
   });
 
   it("preserves version history, makes finalized versions immutable, and persists a real source-frame cover selection", async () => {
-    const project = (await create()).json(); const body = { slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleText: "subtitle" }], coverAssetId: assetId, coverFrameOffsetSeconds: 6, coverTitle: "today's signature", finalize: true };
+    const project = (await create()).json(); const body = { slots: [{ slotId: "shot-1", kind: "shot", shotIndex: 1, assetId, order: 1, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleText: "subtitle", subtitleEnabled: true }], coverAssetId: assetId, coverFrameOffsetSeconds: 6, coverTitle: "today's signature", finalize: true };
     expect((await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: { ...body, finalize: false, coverFrameOffsetSeconds: 10 } })).statusCode).toBe(422);
     expect((await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: { ...body, finalize: false, coverFrameOffsetSeconds: undefined } })).statusCode).toBe(422);
     const final = await app.inject({ method: "POST", url: `${path()}/projects/${project.id}/versions`, payload: body }); expect(final.statusCode).toBe(201); expect(final.json()).toMatchObject({ version: 2, status: "final", coverAssetId: assetId, coverFrameOffsetSeconds: 6, coverTitle: "today's signature" });
