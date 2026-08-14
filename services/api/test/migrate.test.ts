@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createDatabase } from "../src/db.js";
 import { buildServer } from "../src/server.js";
 import type { ModelGenerationService } from "../src/model-providers/generation.js";
+import { ProjectRepository } from "../src/video-editing/project-repository.js";
 
 describe("runMigrations", () => {
   it("records a migration and skips it on the next run", async () => {
@@ -37,9 +38,37 @@ describe("016 operator content migration structural scope (pg-mem does not execu
   });
 });
 
+describe("021 storyboard project migration structural scope", () => {
+  it("persists project slots as a JSON array without adding a cover-asset foreign key", async () => {
+    const sql = await readFile(new URL("../migrations/021_storyboard_projects.sql", import.meta.url), "utf8");
+    expect(sql).toContain("slots_json JSONB NOT NULL CHECK (jsonb_typeof(slots_json) = 'array')");
+    expect(sql).not.toMatch(/cover_asset_id[^\n]*REFERENCES/i);
+  });
+});
+
 // This must be a dedicated disposable test database; never use a generic runtime DATABASE_URL.
 const realPostgresUrl = process.env.REAL_POSTGRES_TEST_URL;
 const realPostgresIt = realPostgresUrl ? it : it.skip;
+describe("021 storyboard project PostgreSQL creation invariant", () => {
+  realPostgresIt("creates one deterministic project and draft when concurrent customer creates race", async () => {
+    const database = createDatabase(realPostgresUrl!);
+    const files = (await readdir(new URL("../migrations/", import.meta.url))).filter(file => file.endsWith(".sql")).sort();
+    await runMigrations(database, await Promise.all(files.map(async id => ({ id, sql: await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8") }))));
+    const enterpriseId = `storyboard-e-${randomUUID()}`, storeId = `storyboard-s-${randomUUID()}`, actorId = `storyboard-a-${randomUUID()}`;
+    const taskId = randomUUID(), topicId = randomUUID(), copyId = randomUUID(), shotListId = randomUUID();
+    try {
+      await database.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status,confirmed_copy_id) VALUES($1,$2,$3,$4,1,'{}','{}','[]','owner','story','sincere',1,'copy_confirmed',$5)", [taskId, enterpriseId, storeId, actorId, copyId]);
+      await database.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$2,1,'t','a','p','g',1)", [topicId, taskId]);
+      await database.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level,status,confirmed_at) VALUES($1,$2,$3,1,'t','b','s','p','g',1,'confirmed',CURRENT_TIMESTAMP)", [copyId, taskId, topicId]);
+      await database.query("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json) VALUES($1,$2,$3,'[]')", [shotListId, taskId, copyId]);
+      const repository = new ProjectRepository(database); const context = { enterpriseId, storeId, actorId };
+      const [first, second] = await Promise.all([repository.create(context, { taskId, shotListId }), repository.create(context, { taskId, shotListId })]);
+      expect(first).toMatchObject({ id: second.id, version: 1, status: "draft" });
+      expect((await database.query("SELECT count(*)::int AS count FROM storyboard_projects WHERE enterprise_id=$1 AND store_id=$2", [enterpriseId, storeId])).rows).toEqual([{ count: 1 }]);
+      expect((await database.query("SELECT count(*)::int AS count FROM storyboard_project_versions WHERE project_id=$1", [first.id])).rows).toEqual([{ count: 1 }]);
+    } finally { await database.end(); }
+  }, 30_000);
+});
 describe("016 operator content PostgreSQL trigger invariants", () => {
   realPostgresIt("requires dedicated REAL_POSTGRES_TEST_URL; applies full migrations and rejects unmarked publication plus direct published/disabled history rewrites", async () => {
     const database = createDatabase(realPostgresUrl!);

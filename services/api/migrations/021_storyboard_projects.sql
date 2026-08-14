@@ -15,7 +15,7 @@ CREATE TABLE storyboard_project_versions (
   project_id TEXT NOT NULL REFERENCES storyboard_projects(id),
   version INTEGER NOT NULL CHECK (version > 0),
   status TEXT NOT NULL CHECK (status IN ('draft', 'final')),
-  slots_json TEXT NOT NULL,
+  slots_json JSONB NOT NULL CHECK (jsonb_typeof(slots_json) = 'array'),
   cover_asset_id TEXT,
   cover_frame_offset_seconds DOUBLE PRECISION,
   cover_title TEXT NOT NULL DEFAULT '',

@@ -15,9 +15,12 @@ export class ProjectRepository {
       await client.query("BEGIN");
       const source = await confirmedSource(client, context, input.taskId, input.shotListId, true);
       const id = projectId(context, input.taskId, input.shotListId);
-      const existing = await client.query<Row>("SELECT * FROM storyboard_projects WHERE id=$1 FOR UPDATE", [id]);
-      if (existing.rowCount) { await client.query("COMMIT"); return this.get(context, input.taskId, input.shotListId, id); }
-      await client.query("INSERT INTO storyboard_projects(id,enterprise_id,store_id,task_id,shot_list_id,actor_id) VALUES($1,$2,$3,$4,$5,$6)", [id, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
+      const created = await client.query<Row>("INSERT INTO storyboard_projects(id,enterprise_id,store_id,task_id,shot_list_id,actor_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id", [id, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
+      if (!created.rowCount) {
+        const version = await client.query<Row>("SELECT * FROM storyboard_project_versions WHERE project_id=$1 ORDER BY version DESC LIMIT 1", [id]);
+        if (!version.rowCount) throw new ProjectError("Storyboard project creation is still in progress", 409);
+        await client.query("COMMIT"); return versionJson(id, version.rows[0]);
+      }
       const slots = seedSlots(source.shots, String(source.copyBody));
       const inserted = await client.query<Row>("INSERT INTO storyboard_project_versions(id,project_id,version,status,slots_json,cover_title) VALUES($1,$2,1,'draft',$3,$4) RETURNING *", [randomUUID(), id, JSON.stringify(slots), String(source.copyTitle)]);
       await client.query("COMMIT"); return versionJson(id, inserted.rows[0]);
@@ -62,7 +65,7 @@ async function confirmedSource(queryable: { query: Database["query"] }, context:
   const result = await queryable.query<Row>(`SELECT s.shots_json,c.title AS copy_title,c.body AS copy_body FROM content_task_shot_lists s JOIN content_tasks t ON t.id=s.task_id JOIN content_task_copies c ON c.id=s.copy_id WHERE s.id=$1 AND s.task_id=$2 AND t.enterprise_id=$3 AND t.store_id=$4 AND t.actor_id=$5 AND t.status='copy_confirmed' AND t.confirmed_copy_id=s.copy_id AND c.status='confirmed'${lock ? " FOR UPDATE" : ""}`, [shotListId, taskId, context.enterpriseId, context.storeId, context.actorId]);
   if (!result.rowCount) throw new ProjectError("A confirmed shot list is required", 409);
   const row = result.rows[0];
-  try { return { shots: JSON.parse(String(row.shots_json)) as unknown[], copyTitle: row.copy_title, copyBody: row.copy_body }; } catch { throw new ProjectError("Confirmed shot list is invalid", 409); }
+  try { const shots: unknown = JSON.parse(String(row.shots_json)); if (!Array.isArray(shots)) throw new Error("not an array"); return { shots, copyTitle: row.copy_title, copyBody: row.copy_body }; } catch { throw new ProjectError("Confirmed shot list is invalid", 409); }
 }
 function seedSlots(shots: unknown[], copyBody: string): ProjectSlot[] { return shots.map((shot, index) => { const item = object(shot); return { slotId: `shot-${index + 1}`, kind: "shot", shotIndex: index + 1, assetId: "", order: index + 1, trimStartSeconds: 0, trimEndSeconds: 0, muted: false, subtitleText: text(item.narration) || text(item.shot) || copyBody }; }); }
 function validateSlots(value: unknown, shots: unknown[]): ProjectSlot[] {
@@ -100,7 +103,8 @@ function validateCoverFrame(coverAssetId: string | undefined, value: unknown, du
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value >= Number(durations.get(coverAssetId))) throw new ProjectError("Cover frame offset must be inside the selected source video", 422);
   return value;
 }
-function versionJson(projectId: string, row: Row) { return { id: projectId, version: Number(row.version), status: row.status, slots: JSON.parse(String(row.slots_json)), coverAssetId: row.cover_asset_id ?? undefined, coverFrameOffsetSeconds: row.cover_frame_offset_seconds === null || row.cover_frame_offset_seconds === undefined ? undefined : Number(row.cover_frame_offset_seconds), coverTitle: row.cover_title, createdAt: new Date(String(row.created_at)).toISOString() }; }
+function versionJson(projectId: string, row: Row) { return { id: projectId, version: Number(row.version), status: row.status, slots: jsonArray(row.slots_json), coverAssetId: row.cover_asset_id ?? undefined, coverFrameOffsetSeconds: row.cover_frame_offset_seconds === null || row.cover_frame_offset_seconds === undefined ? undefined : Number(row.cover_frame_offset_seconds), coverTitle: row.cover_title, createdAt: new Date(String(row.created_at)).toISOString() }; }
+function jsonArray(value: unknown): unknown[] { const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value; if (!Array.isArray(parsed)) throw new ProjectError("Stored storyboard project slots are invalid", 409); return parsed; }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProjectError("Storyboard slot must be an object", 422); return value as Record<string, unknown>; }
 function text(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
 function nonempty(value: unknown, label: string): string { const result = text(value); if (!result) throw new ProjectError(`${label} is required`, 422); return result; }
