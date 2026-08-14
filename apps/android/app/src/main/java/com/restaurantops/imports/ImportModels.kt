@@ -8,7 +8,14 @@ enum class ImportSourceType {
 
 enum class ImportCandidateStatus {
     READY,
-    NEEDS_CONFIRMATION
+    NEEDS_CONFIRMATION,
+    CONFIRMED,
+    REJECTED
+}
+
+enum class ImportBatchStatus {
+    PENDING_CONFIRMATION,
+    CONFIRMED
 }
 
 data class ImportCandidate(
@@ -28,6 +35,7 @@ data class ImportCandidate(
 data class ImportSummary(
     val id: String,
     val sourceType: ImportSourceType,
+    val status: ImportBatchStatus = ImportBatchStatus.PENDING_CONFIRMATION,
     val rangeStart: String,
     val rangeEnd: String,
     val candidates: List<ImportCandidate>
@@ -43,6 +51,25 @@ data class ManualImportDraft(
     val rangeStart: String,
     val rangeEnd: String,
     val candidates: List<ImportCandidate>
+)
+
+data class PreparedImportFile(
+    val uri: String,
+    val displayName: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val bytes: ByteArray
+)
+
+data class FileImportDraft(
+    val rangeStart: String,
+    val rangeEnd: String,
+    val file: PreparedImportFile
+)
+
+data class FileImportResult(
+    val summary: ImportSummary,
+    val duplicate: Boolean
 )
 
 data class ImportCandidateUpdate(

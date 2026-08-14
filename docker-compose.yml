@@ -26,25 +26,90 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   api:
     build:
-      context: ./services/api
+      context: .
+      dockerfile: services/api/Dockerfile
     environment:
       PORT: 3000
       LOCAL_CONTAINER_DEVELOPMENT_MODE: "true"
+      PROVIDER_BROWSER_DEVELOPMENT_MODE: ${PROVIDER_BROWSER_DEVELOPMENT_MODE:-false}
       DATABASE_URL: ${DATABASE_URL}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
     command: sh -c "npm run migrate && npm start"
     depends_on:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "127.0.0.1:${API_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  import-cleanup:
+    profiles: ["maintenance"]
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      PORT: 3000
+      LOCAL_CONTAINER_DEVELOPMENT_MODE: "true"
+      DATABASE_URL: ${DATABASE_URL}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+    command: sh -c "npm run migrate && npm run cleanup:imports"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  import-reconciliation:
+    profiles: ["maintenance"]
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      PORT: 3000
+      LOCAL_CONTAINER_DEVELOPMENT_MODE: "true"
+      DATABASE_URL: ${DATABASE_URL}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+    command: sh -c "npm run migrate && npm run reconcile:imports"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  import-maintenance-status:
+    profiles: ["maintenance"]
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    command: sh -c "npm run migrate && npm run maintenance:status"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

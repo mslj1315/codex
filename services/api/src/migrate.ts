@@ -7,6 +7,8 @@ export interface Migration {
   sql: string;
 }
 
+export const MIGRATION_ADVISORY_LOCK_KEY = 734982136;
+
 export async function runMigrations(
   database: Database,
   migrations: readonly Migration[]
@@ -15,6 +17,10 @@ export async function runMigrations(
 
   try {
     await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock($1::bigint)",
+      [MIGRATION_ADVISORY_LOCK_KEY]
+    );
     await client.query(
       `CREATE TABLE IF NOT EXISTS schema_migrations (
         migration_id text UNIQUE

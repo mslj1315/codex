@@ -6,6 +6,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import java.time.LocalDate
+
+data class OperationsPeriod(val rangeStart: String, val rangeEnd: String)
 
 class WorkspaceViewModel(
     private val savedStateHandle: SavedStateHandle
@@ -13,6 +16,9 @@ class WorkspaceViewModel(
     var selectedTab by mutableStateOf(
         WorkspaceTab.fromWireValue(savedStateHandle[SELECTED_TAB])
     )
+        private set
+
+    var selectedOperationsPeriod by mutableStateOf(restoreOperationsPeriod())
         private set
 
     private val restoredOverlay = restoreOverlay()
@@ -49,6 +55,15 @@ class WorkspaceViewModel(
     fun selectTab(tab: WorkspaceTab) {
         selectedTab = tab
         savedStateHandle[SELECTED_TAB] = tab.wireValue
+    }
+
+    fun openOperations(rangeStart: String, rangeEnd: String) {
+        requireValidOperationsPeriod(rangeStart, rangeEnd)
+        selectedOperationsPeriod = OperationsPeriod(rangeStart, rangeEnd)
+        savedStateHandle[OPERATIONS_RANGE_START] = rangeStart
+        savedStateHandle[OPERATIONS_RANGE_END] = rangeEnd
+        selectTab(WorkspaceTab.OPERATIONS)
+        closeOverlay()
     }
 
     fun createPriorityTask() {
@@ -133,8 +148,27 @@ class WorkspaceViewModel(
         }
     }
 
+    private fun restoreOperationsPeriod(): OperationsPeriod? {
+        val rangeStart = savedStateHandle.get<String>(OPERATIONS_RANGE_START) ?: return null
+        val rangeEnd = savedStateHandle.get<String>(OPERATIONS_RANGE_END) ?: return null
+        return try {
+            requireValidOperationsPeriod(rangeStart, rangeEnd)
+            OperationsPeriod(rangeStart, rangeEnd)
+        } catch (_: IllegalArgumentException) {
+            savedStateHandle[OPERATIONS_RANGE_START] = null
+            savedStateHandle[OPERATIONS_RANGE_END] = null
+            null
+        }
+    }
+
+    private fun requireValidOperationsPeriod(rangeStart: String, rangeEnd: String) {
+        require(!LocalDate.parse(rangeStart).isAfter(LocalDate.parse(rangeEnd)))
+    }
+
     private companion object {
         const val SELECTED_TAB = "workspace_selected_tab"
+        const val OPERATIONS_RANGE_START = "workspace_operations_range_start"
+        const val OPERATIONS_RANGE_END = "workspace_operations_range_end"
         const val OVERLAY = "workspace_overlay"
         const val IS_DIAGNOSIS_OPEN = "workspace_is_diagnosis_open"
         const val IS_VIDEO_FACTORY_OPEN = "workspace_is_video_factory_open"

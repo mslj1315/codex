@@ -3,9 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "cleanup:imports": "tsx src/cleanup-import-files.ts",
+    "reconcile:imports": "tsx src/reconcile-import-objects.ts",
+    "maintenance:status": "tsx src/import-maintenance-status.ts",
+    "publish:metric-catalog": "tsx src/publish-metric-catalog.ts",
+    "provision:account": "tsx src/provision-account.ts",
+    "grant:service-role": "tsx src/grant-service-role.ts",
     "migrate": "tsx src/migrate.ts",
-    "provision:operator": "tsx src/operator-auth/provision.ts",
-    "disable:operator": "tsx src/operator-auth/provision.ts --disable",
     "start": "tsx src/server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -16,6 +20,7 @@
     "bcryptjs": "^2.4.3",
     "exceljs": "^4.4.0",
     "fastify": "^5.2.1",
+    "minio": "8.0.7",
     "pg": "^8.23.0",
     "yauzl": "^3.4.0"
   },

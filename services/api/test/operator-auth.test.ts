@@ -9,6 +9,7 @@ import type { TrustedContext } from "../src/imports/service.js";
 
 describe("operator authentication", () => {
   let pool: Database;
+  const appForOperator = () => buildServer({ database: pool, trustedContextResolver: async () => undefined });
 
   beforeEach(async () => {
     const memory = newDb({ noAstCoverageCheck: true });
@@ -27,7 +28,7 @@ describe("operator authentication", () => {
   });
 
   it("returns neutral failures for incorrect operator credentials", async () => {
-    const app = buildServer({ database: pool });
+    const app = appForOperator();
     const wrongPassword = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "wrong" } });
     expect(wrongPassword.statusCode).toBe(403);
     expect(wrongPassword.json()).toEqual({ error: "Forbidden" });
@@ -51,7 +52,7 @@ describe("operator authentication", () => {
 
   it("returns a neutral HTTP failure for a disabled account", async () => {
     await new OperatorAuthRepository(pool).disableAccount("op-1");
-    const app = buildServer({ database: pool });
+    const app = appForOperator();
     const response = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ error: "Forbidden" });
@@ -61,7 +62,7 @@ describe("operator authentication", () => {
     const repository = new OperatorAuthRepository(pool);
     const session = await repository.createSession("op-1");
     await pool.query("UPDATE operator_sessions SET expires_at='2000-01-01T00:00:00.000Z'");
-    const app = buildServer({ database: pool });
+    const app = appForOperator();
     expect((await app.inject({ method: "GET", url: "/v1/operator-auth/session", headers: { cookie: `operator_session=${session.cookieValue}` } })).statusCode).toBe(403);
     const malformed = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: [] });
     expect(malformed.statusCode).toBe(403);
@@ -69,7 +70,7 @@ describe("operator authentication", () => {
   });
 
   it("revokes a session on logout and requires CSRF plus same-origin for operator writes", async () => {
-    const app = buildServer({ database: pool });
+    const app = appForOperator();
     const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     const cookie = login.headers["set-cookie"]!;
 
@@ -85,7 +86,7 @@ describe("operator authentication", () => {
   });
 
   it("returns an HttpOnly session and admin capability for a valid operator login", async () => {
-    const app = buildServer({ database: pool });
+    const app = appForOperator();
 
     const response = await app.inject({
       method: "POST",
@@ -103,7 +104,7 @@ describe("operator authentication", () => {
   });
 
   it("rejects a cross-origin login attempt", async () => {
-    const app = buildServer({ database: pool });
+    const app = appForOperator();
     const response = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "https://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ error: "Forbidden" });

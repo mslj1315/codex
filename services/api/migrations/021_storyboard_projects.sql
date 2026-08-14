@@ -10,6 +10,7 @@ CREATE TABLE storyboard_projects (
 );
 CREATE INDEX storyboard_projects_scope_idx ON storyboard_projects(enterprise_id, store_id, task_id, shot_list_id, actor_id);
 
+-- PostgreSQL append-only guards: pg-mem skips JSONB validation and immutable version history.
 CREATE TABLE storyboard_project_versions (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES storyboard_projects(id),
@@ -24,6 +25,7 @@ CREATE TABLE storyboard_project_versions (
 );
 CREATE INDEX storyboard_project_versions_project_idx ON storyboard_project_versions(project_id, version DESC);
 
+-- Storyboard project versions are immutable history.
 CREATE OR REPLACE FUNCTION reject_storyboard_project_version_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN

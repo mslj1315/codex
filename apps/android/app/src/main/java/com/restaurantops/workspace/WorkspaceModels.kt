@@ -1,6 +1,7 @@
 package com.restaurantops.workspace
 
 enum class WorkspaceTab(val title: String, val wireValue: String) {
+    OPERATIONS("Operations", "operations"),
     HOME("首页", "home"),
     TASKS("任务", "tasks"),
     MESSAGES("消息", "messages"),

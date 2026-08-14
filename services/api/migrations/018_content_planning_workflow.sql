@@ -54,7 +54,7 @@ CREATE TABLE content_task_copy_reviews (
 CREATE UNIQUE INDEX content_task_one_confirmed_copy ON content_task_copies(task_id) WHERE status='confirmed';
 CREATE INDEX content_tasks_scope_idx ON content_tasks(enterprise_id, store_id, created_at DESC);
 
--- Task inputs, generated alternatives, and frozen shot lists are append-only history.
+-- PostgreSQL append-only guards: task inputs, generated alternatives, and frozen shot lists are append-only history.
 CREATE OR REPLACE FUNCTION reject_content_task_history_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN

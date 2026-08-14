@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_XLSX_BYTES, ParserInputError, parseCsv, parseRows, parseXlsx } from "../src/imports/parser.js";
+import { MAX_XLSX_BYTES, ParserInputError, parseCsv, parseCsvBytes, parseRows, parseXlsx } from "../src/imports/parser.js";
 import ExcelJS from "exceljs";
 import yazl from "yazl";
 
@@ -216,6 +216,46 @@ describe("import parser", () => {
     await expect(parseXlsx(new Uint8Array(MAX_XLSX_BYTES + 1), validRange)).rejects.toMatchObject({
       code: "xlsx_too_large"
     } satisfies Partial<ParserInputError>);
+  });
+
+  it("rejects invalid UTF-8 CSV bytes with a typed input error", () => {
+    expect(() => parseCsvBytes(Buffer.from([0xff, 0xfe, 0xfd]), validRange)).toThrowError(
+      expect.objectContaining({ code: "invalid_csv_encoding" })
+    );
+  });
+
+  it("decodes valid UTF-8 before calling the supplied CSV parser", () => {
+    const expected = { candidates: [], unknownHeaders: ["sentinel"] };
+    const result = parseCsvBytes(
+      Buffer.from("订单数\n12\n"),
+      validRange,
+      (decoded, options) => {
+        expect(decoded).toBe("订单数\n12\n");
+        expect(options).toBe(validRange);
+        return expected;
+      }
+    );
+
+    expect(result).toBe(expected);
+  });
+
+  it("preserves CSV parser failures instead of rewriting them as encoding errors", () => {
+    const failures = [
+      new TypeError("parser type sentinel"),
+      new RangeError("parser range sentinel"),
+      new Error("parser resource sentinel"),
+      new ParserInputError("no_recognized_candidates")
+    ];
+
+    for (const failure of failures) {
+      let caught: unknown;
+      try {
+        parseCsvBytes(Buffer.from("订单数\n12\n"), validRange, () => { throw failure; });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(failure);
+    }
   });
 
   it("rejects an XLSX archive whose declared expanded size exceeds the preflight budget", async () => {

@@ -26,7 +26,7 @@ describe("operator content logical versions", () => {
   });
 
   async function appForAdmin() {
-    const app = buildServer({ database: pool });
+    const app = buildServer({ database: pool, trustedContextResolver: async () => undefined });
     const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     const cookie = login.headers["set-cookie"]!;
     const headers = { cookie: Array.isArray(cookie) ? cookie[0] : cookie, host: "localhost", origin: "http://localhost", "x-csrf-token": login.json().csrfToken };

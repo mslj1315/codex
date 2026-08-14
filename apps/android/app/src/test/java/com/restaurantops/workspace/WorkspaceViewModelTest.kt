@@ -8,6 +8,31 @@ import org.junit.Test
 
 class WorkspaceViewModelTest {
     @Test
+    fun `operations tab is restored after workspace recreation`() {
+        val handle = SavedStateHandle()
+        WorkspaceViewModel(handle).selectTab(WorkspaceTab.OPERATIONS)
+
+        assertEquals(WorkspaceTab.OPERATIONS, WorkspaceViewModel(handle).selectedTab)
+    }
+
+    @Test
+    fun `opening operations persists the confirmed period and closes overlays`() {
+        val handle = SavedStateHandle()
+        val viewModel = WorkspaceViewModel(handle)
+        viewModel.openImport()
+
+        viewModel.openOperations("2026-08-01", "2026-08-07")
+
+        assertEquals(WorkspaceTab.OPERATIONS, viewModel.selectedTab)
+        assertEquals(OperationsPeriod("2026-08-01", "2026-08-07"), viewModel.selectedOperationsPeriod)
+        assertFalse(viewModel.isImportOpen)
+        assertEquals(
+            OperationsPeriod("2026-08-01", "2026-08-07"),
+            WorkspaceViewModel(handle).selectedOperationsPeriod
+        )
+    }
+
+    @Test
     fun `restoration safely defaults unknown wire values and resolves legacy overlay conflicts`() {
         val legacyRestoredViewModel = WorkspaceViewModel(
             SavedStateHandle(

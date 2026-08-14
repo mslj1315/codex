@@ -12,6 +12,7 @@ export const operatorApiProxy = {
 };
 
 export default defineConfig({
+  base: '/operator/',
   plugins: [react()],
   server: {
     proxy: {

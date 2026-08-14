@@ -12,11 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -28,25 +27,39 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.SavedStateHandle
 import com.restaurantops.onboarding.BusinessType
 import com.restaurantops.onboarding.OnboardingStep
 import com.restaurantops.onboarding.StoreFactDraft
 import com.restaurantops.onboarding.StoreOnboardingViewModel
+import com.restaurantops.auth.AuthApi
+import com.restaurantops.auth.AuthenticatedApiClient
+import com.restaurantops.auth.EncryptedRefreshTokenStore
+import com.restaurantops.auth.HttpAuthRepository
+import com.restaurantops.auth.LoginScreen
+import com.restaurantops.auth.LoginViewModel
+import com.restaurantops.auth.AppSessionState
+import com.restaurantops.auth.PreferencesSelectedStoreStore
+import com.restaurantops.auth.RemoteServiceUnavailableScreen
+import com.restaurantops.auth.SessionViewModel
+import com.restaurantops.auth.StoreSelectionScreen
+import com.restaurantops.imports.network.LocalImportApiRuntime
 import com.restaurantops.workspace.WorkspaceRoot
 import com.restaurantops.workspace.WorkspaceViewModel
-import com.restaurantops.content.ContentProfileHttpClient
-import com.restaurantops.content.ContentProfileViewModel
-import com.restaurantops.content.ContentProfileGate
-import com.restaurantops.content.StoreContentProfile
-import com.restaurantops.content.contentProfileGate
-import com.restaurantops.content.contentProfileEndpointConfigured
-import com.restaurantops.content.RootScreen
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 
 class MainActivity : ComponentActivity() {
     private val onboardingViewModel: StoreOnboardingViewModel by viewModels()
@@ -56,18 +69,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                val rootScreen = rememberSaveable { androidx.compose.runtime.mutableStateOf(RootScreen.ONBOARDING) }
-                val profileViewModel = remember {
-                    ContentProfileViewModel(ContentProfileHttpClient(BuildConfig.CONTENT_PROFILE_API_BASE_URL) {
-                        if (BuildConfig.DEBUG) mapOf("X-Development-Context" to "ent_demo:store_demo:actor_demo") else emptyMap()
-                    })
-                }
-                when (rootScreen.value) {
-                    RootScreen.WORKSPACE -> if (contentProfileGate(profileViewModel.state) == ContentProfileGate.Ready) {
-                        WorkspaceRoot(viewModel = workspaceViewModel, onReturnToOnboarding = { rootScreen.value = RootScreen.ONBOARDING })
-                    } else ContentProfileScreen(viewModel = profileViewModel, endpointConfigured = contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL), onReady = { rootScreen.value = nextRootScreen(RootScreen.PROFILE, contentProfileGate(profileViewModel.state)) }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
-                    RootScreen.PROFILE -> ContentProfileScreen(viewModel = profileViewModel, endpointConfigured = contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL), onReady = { rootScreen.value = nextRootScreen(RootScreen.PROFILE, contentProfileGate(profileViewModel.state)) }, onBack = { rootScreen.value = RootScreen.ONBOARDING })
-                    RootScreen.ONBOARDING -> StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { if (contentProfileEndpointConfigured(BuildConfig.CONTENT_PROFILE_API_BASE_URL)) { rootScreen.value = nextRootScreen(RootScreen.ONBOARDING, contentProfileGate(profileViewModel.state)); profileViewModel.load("store_demo") } })
+                val canUseRemoteApi = LocalImportApiRuntime.canUseLocalApi(
+                    isDebug = BuildConfig.DEBUG,
+                    baseUrl = BuildConfig.LOCAL_API_BASE_URL
+                )
+                if (canUseRemoteApi) {
+                    AuthenticatedAppRoot(
+                        workspaceViewModel = workspaceViewModel,
+                        onboardingViewModel = onboardingViewModel
+                    )
+                } else {
+                    RemoteServiceUnavailableScreen()
                 }
             }
         }
@@ -75,53 +87,95 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun ContentProfileScreen(viewModel: ContentProfileViewModel, endpointConfigured: Boolean, onReady: () -> Unit, onBack: () -> Unit) {
-    val current = viewModel.state.profile
-    val address = rememberSaveable(current?.detailedAddress) { androidx.compose.runtime.mutableStateOf(current?.detailedAddress ?: "") }
-    val storeName = rememberSaveable(current?.storeName) { androidx.compose.runtime.mutableStateOf(current?.storeName ?: "") }
-    val industry = rememberSaveable(current?.industryCode) { androidx.compose.runtime.mutableStateOf(current?.industryCode ?: "") }
-    val category = rememberSaveable(current?.categoryCode) { androidx.compose.runtime.mutableStateOf(current?.categoryCode ?: "") }
-    val province = rememberSaveable(current?.provinceCode) { androidx.compose.runtime.mutableStateOf(current?.provinceCode ?: "") }
-    val city = rememberSaveable(current?.cityCode) { androidx.compose.runtime.mutableStateOf(current?.cityCode ?: "") }
-    val district = rememberSaveable(current?.districtCode) { androidx.compose.runtime.mutableStateOf(current?.districtCode ?: "") }
-    val businessDistrict = rememberSaveable(current?.businessDistrictType) { androidx.compose.runtime.mutableStateOf(current?.businessDistrictType ?: "") }
-    val operatingMode = rememberSaveable(current?.operatingMode) { androidx.compose.runtime.mutableStateOf(current?.operatingMode ?: "") }
-    Scaffold(topBar = { TopAppBar(title = { Text("门店内容档案") }) }) { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("完成门店档案后才能进入内容工作台", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(storeName.value, { storeName.value = it }, label = { Text("门店名称") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(address.value, { address.value = it }, label = { Text("详细地址") }, modifier = Modifier.fillMaxWidth())
-            ProfileChoice("Industry", industry.value, listOf("fast_food", "full_service", "hotpot_skewers", "barbecue_night", "beverages_desserts", "bakery", "snacks_local", "other"), { industry.value = it })
-            ProfileChoice("Category", category.value, listOf("rice_noodle", "chinese_dining", "sichuan", "hotpot", "skewers", "barbecue", "night_market", "tea_coffee", "dessert", "bakery", "snacks", "local_specialty", "other"), { category.value = it })
-            ProfileChoice("Province", province.value, listOf("sc"), { province.value = it })
-            ProfileChoice("City", city.value, listOf("cd"), { city.value = it })
-            ProfileChoice("District", district.value, listOf("sl"), { district.value = it })
-            ProfileChoice("Business district", businessDistrict.value, listOf("office", "community", "mall", "school", "scenic", "transport", "industrial_park", "mixed", "food_street", "other"), { businessDistrict.value = it })
-            ProfileChoice("Operating mode", operatingMode.value, listOf("dine_in", "takeaway", "dine_in_takeaway", "group_buy", "multi_mode"), { operatingMode.value = it })
-            if (viewModel.state.error != null) Text(viewModel.state.error!!, color = MaterialTheme.colorScheme.error)
-            if (!endpointConfigured) Text("内容服务暂未配置，暂不能提交门店档案", color = MaterialTheme.colorScheme.error)
-            Button(onClick = {
-                viewModel.submit("store_demo", StoreContentProfile("store_demo", storeName.value, industry.value, category.value, provinceCode = province.value, cityCode = city.value, districtCode = district.value, detailedAddress = address.value, businessDistrictType = businessDistrict.value, operatingMode = operatingMode.value), current != null)
-            }, enabled = endpointConfigured && listOf(storeName.value, industry.value, category.value, province.value, city.value, district.value, address.value, businessDistrict.value, operatingMode.value).all { it.isNotBlank() }) { Text("提交档案") }
-            if (contentProfileGate(viewModel.state) == ContentProfileGate.Ready) Button(onClick = onReady) { Text("进入内容工作台") }
-            TextButton(onClick = onBack) { Text("返回") }
-        }
+private fun AuthenticatedAppRoot(
+    workspaceViewModel: WorkspaceViewModel,
+    onboardingViewModel: StoreOnboardingViewModel
+) {
+    val context = LocalContext.current.applicationContext
+    val repository = remember(context) {
+        val api = Retrofit.Builder()
+            .baseUrl(BuildConfig.LOCAL_API_BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(AuthApi::class.java)
+        HttpAuthRepository(api, EncryptedRefreshTokenStore(context))
+    }
+    val sessionViewModel = remember(repository, context) {
+        SessionViewModel(repository, PreferencesSelectedStoreStore(context), SavedStateHandle())
+    }
+    val loginViewModel = remember(repository) { LoginViewModel(repository, SavedStateHandle()) }
+    val authenticatedApiClient = remember(repository) { AuthenticatedApiClient(repository) }
+    var isInLocalWorkspace by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(sessionViewModel) {
+        sessionViewModel.restore()
+    }
+    LaunchedEffect(repository, sessionViewModel) {
+        repository.onSessionInvalidated = sessionViewModel::onSessionInvalidated
+    }
+
+    if (isInLocalWorkspace) {
+        LocalDemoRoot(
+            workspaceViewModel = workspaceViewModel,
+            onboardingViewModel = onboardingViewModel,
+            onExit = {
+                isInLocalWorkspace = false
+                sessionViewModel.leaveLocalDemo()
+            }
+        )
+        return
+    }
+
+    when (val state = sessionViewModel.state) {
+        AppSessionState.Loading -> SessionLoadingScreen()
+        AppSessionState.Login -> LoginScreen(
+            viewModel = loginViewModel,
+            allowLocalDemo = BuildConfig.DEBUG,
+            onLocalDemo = {
+                sessionViewModel.enterLocalDemo()
+                isInLocalWorkspace = true
+            },
+            onAuthenticated = sessionViewModel::acceptLogin
+        )
+        is AppSessionState.StoreSelection -> StoreSelectionScreen(state.stores, sessionViewModel::selectStore)
+        is AppSessionState.RemoteWorkspace -> WorkspaceRoot(
+            viewModel = workspaceViewModel,
+            onReturnToOnboarding = sessionViewModel::logout,
+            storeId = state.store.storeId,
+            authenticatedApiClient = authenticatedApiClient,
+            onLogout = sessionViewModel::logout,
+            onChooseAnotherStore = sessionViewModel::chooseAnotherStore
+        )
+        AppSessionState.LocalDemo -> Unit
     }
 }
 
 @Composable
-private fun ProfileChoice(label: String, selected: String, options: List<String>, onSelected: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, style = MaterialTheme.typography.labelLarge)
-        options.forEach { option ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = selected == option, onClick = { onSelected(option) })
-                Text(option)
-            }
-        }
+private fun LocalDemoRoot(
+    workspaceViewModel: WorkspaceViewModel,
+    onboardingViewModel: StoreOnboardingViewModel,
+    onExit: () -> Unit
+) {
+    var isInWorkspace by rememberSaveable { mutableStateOf(false) }
+    if (isInWorkspace) {
+        WorkspaceRoot(
+            viewModel = workspaceViewModel,
+            onReturnToOnboarding = onExit,
+            storeId = "store_demo"
+        )
+    } else {
+        StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { isInWorkspace = true })
+    }
+}
+
+@Composable
+private fun SessionLoadingScreen() {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        CircularProgressIndicator()
     }
 }
 
@@ -231,7 +285,8 @@ private fun StepContent(
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = draft.businessType == type,
-                        onClick = { onBusinessTypeSelected(type) }
+                        onClick = { onBusinessTypeSelected(type) },
+                        modifier = Modifier.testTag("business-type-${type.wireValue}")
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(type.displayName)

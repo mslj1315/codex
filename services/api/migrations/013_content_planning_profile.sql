@@ -46,7 +46,7 @@ CREATE INDEX store_content_profile_current_idx
 CREATE INDEX store_operating_stages_store_idx
   ON store_operating_stages (enterprise_id, store_id, effective_date DESC);
 
--- Content profile and operating stage history is append-only. Corrections create a new version/stage.
+-- PostgreSQL append-only guards: content profile and operating stage history is append-only.
 CREATE OR REPLACE FUNCTION reject_content_profile_mutation()
 RETURNS TRIGGER
 LANGUAGE plpgsql

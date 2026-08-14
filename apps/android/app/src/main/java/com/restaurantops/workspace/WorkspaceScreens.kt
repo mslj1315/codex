@@ -24,20 +24,65 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.restaurantops.imports.ImportScreen
 import com.restaurantops.imports.ImportViewModel
 import com.restaurantops.imports.LocalDemoImportRepository
+import com.restaurantops.imports.files.AndroidImportFileReader
+import com.restaurantops.BuildConfig
+import com.restaurantops.auth.AuthenticatedApiClient
+import com.restaurantops.imports.network.HttpImportRepository
+import com.restaurantops.imports.network.ImportApi
+import com.restaurantops.imports.network.LocalImportApiRuntime
+import com.restaurantops.operations.OperationsRuntime
+import com.restaurantops.operations.OperationsScreen
+import com.restaurantops.operations.OperationsViewModel
+import com.restaurantops.home.OperationsHomeScreen
+import com.restaurantops.home.OperationsHomeViewModel
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspaceRoot(
     viewModel: WorkspaceViewModel,
-    onReturnToOnboarding: () -> Unit
+    onReturnToOnboarding: () -> Unit,
+    storeId: String,
+    authenticatedApiClient: AuthenticatedApiClient? = null,
+    onLogout: (() -> Unit)? = null,
+    onChooseAnotherStore: (() -> Unit)? = null
 ) {
-    val importViewModel = remember { ImportViewModel(LocalDemoImportRepository()) }
+    val contentResolver = LocalContext.current.contentResolver
+    val importFileReader = remember(contentResolver) { AndroidImportFileReader(contentResolver) }
+    val importViewModel = remember(importFileReader, storeId, authenticatedApiClient) {
+        val repository = if (authenticatedApiClient != null) {
+            val api = authenticatedApiClient.retrofit(BuildConfig.LOCAL_API_BASE_URL).create(ImportApi::class.java)
+            HttpImportRepository(api)
+        } else {
+            LocalDemoImportRepository()
+        }
+        ImportViewModel(repository, fileReader = importFileReader)
+    }
+    val operationsRepository = remember(authenticatedApiClient, storeId) {
+        authenticatedApiClient?.let { OperationsRuntime.repository(BuildConfig.LOCAL_API_BASE_URL, it) }
+            ?: OperationsRuntime.repository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
+    }
+    val operationsMetricCatalogRepository = remember(authenticatedApiClient, storeId) {
+        authenticatedApiClient?.let { OperationsRuntime.metricCatalogRepository(BuildConfig.LOCAL_API_BASE_URL, it) }
+            ?: OperationsRuntime.metricCatalogRepository(BuildConfig.DEBUG, BuildConfig.LOCAL_API_BASE_URL)
+    }
+    val operationsViewModel = remember(storeId, operationsRepository, operationsMetricCatalogRepository) {
+        OperationsViewModel(operationsRepository, metricCatalogRepository = operationsMetricCatalogRepository)
+    }
+    val operationsHomeRepository = remember(authenticatedApiClient, storeId) {
+        authenticatedApiClient?.let { OperationsRuntime.homeRepository(BuildConfig.LOCAL_API_BASE_URL, it) }
+    }
+    val operationsHomeViewModel = remember(storeId, operationsHomeRepository, operationsRepository) {
+        operationsHomeRepository?.let { OperationsHomeViewModel(it, operationsRepository) }
+    }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
             onBack = viewModel::closeOverlay,
@@ -59,6 +104,7 @@ fun WorkspaceRoot(
         )
         viewModel.isImportOpen -> ImportScreen(
             viewModel = importViewModel,
+            storeId = storeId,
             onBack = viewModel::closeOverlay
         )
         else -> Scaffold(
@@ -77,7 +123,15 @@ fun WorkspaceRoot(
             }
         ) { contentPadding ->
             when (viewModel.selectedTab) {
-                WorkspaceTab.HOME -> HomeScreen(
+                WorkspaceTab.HOME -> operationsHomeViewModel?.let { homeViewModel ->
+                    OperationsHomeScreen(
+                        viewModel = homeViewModel,
+                        storeId = storeId,
+                        onOpenImport = viewModel::openImport,
+                        onOpenOperations = { period -> viewModel.openOperations(period.rangeStart, period.rangeEnd) },
+                        modifier = Modifier.padding(contentPadding)
+                    )
+                } ?: HomeScreen(
                     pendingTaskCount = viewModel.tasks.size,
                     onOpenDiagnosis = viewModel::openDiagnosis,
                     onCreateTask = {
@@ -87,6 +141,13 @@ fun WorkspaceRoot(
                     onViewAllAlerts = { viewModel.selectTab(WorkspaceTab.TASKS) },
                     onOpenVideoFactory = viewModel::openVideoFactory,
                     onOpenImport = viewModel::openImport,
+                    modifier = Modifier.padding(contentPadding)
+                )
+                WorkspaceTab.OPERATIONS -> OperationsScreen(
+                    viewModel = operationsViewModel,
+                    storeId = storeId,
+                    rangeStart = viewModel.selectedOperationsPeriod?.rangeStart,
+                    rangeEnd = viewModel.selectedOperationsPeriod?.rangeEnd,
                     modifier = Modifier.padding(contentPadding)
                 )
                 WorkspaceTab.TASKS -> TasksScreen(
@@ -100,6 +161,9 @@ fun WorkspaceRoot(
                 )
                 WorkspaceTab.PROFILE -> ProfileScreen(
                     onReturnToOnboarding = onReturnToOnboarding,
+                    storeId = storeId,
+                    onLogout = onLogout,
+                    onChooseAnotherStore = onChooseAnotherStore,
                     modifier = Modifier.padding(contentPadding)
                 )
             }
@@ -448,7 +512,13 @@ private fun LibraryStage() {
 }
 
 @Composable
-private fun ProfileScreen(onReturnToOnboarding: () -> Unit, modifier: Modifier = Modifier) {
+private fun ProfileScreen(
+    onReturnToOnboarding: () -> Unit,
+    storeId: String,
+    onLogout: (() -> Unit)?,
+    onChooseAnotherStore: (() -> Unit)?,
+    modifier: Modifier = Modifier
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -456,8 +526,17 @@ private fun ProfileScreen(onReturnToOnboarding: () -> Unit, modifier: Modifier =
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("我的", style = MaterialTheme.typography.titleLarge)
-        Text("当前为本地演示，没有账号、同步状态或云端门店资料。")
-        Button(onClick = onReturnToOnboarding) { Text("返回修改门店档案") }
+        if (onLogout == null) {
+            Text("当前为本地演示，没有账号、同步状态或云端门店资料。")
+            Button(onClick = onReturnToOnboarding) { Text("返回修改门店档案") }
+        } else {
+            Text("当前门店：$storeId")
+            Text("远端数据访问权限由服务端账户和门店成员关系决定。")
+            onChooseAnotherStore?.let { choose ->
+                TextButton(onClick = choose, modifier = Modifier.fillMaxWidth()) { Text("切换门店") }
+            }
+            Button(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("退出登录") }
+        }
     }
 }
 
