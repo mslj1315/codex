@@ -1,0 +1,3 @@
+/** Injectable process boundary; production adapters may invoke FFmpeg without exposing it to HTTP handlers. */
+export interface RenderRunner { render(manifest: { width: 1080; height: 1920; fps: 30; durationSeconds: number }): Promise<{ output: Buffer; coverFrames: [Buffer, Buffer, Buffer] }>; }
+export function validateRenderManifest(manifest: { width: number; height: number; fps: number; durationSeconds: number }) { if (manifest.width !== 1080 || manifest.height !== 1920 || manifest.fps !== 30 || !Number.isFinite(manifest.durationSeconds) || manifest.durationSeconds <= 0 || manifest.durationSeconds > 90) throw new Error("Invalid render manifest"); }
