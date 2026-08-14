@@ -1,0 +1,25 @@
+:root { font-family: Inter, "Microsoft YaHei", sans-serif; color: #17212b; background: #f6f8fa; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+.state { display: grid; min-height: 100vh; place-items: center; }
+.login-page { display: grid; min-height: 100vh; place-items: center; padding: 24px; }
+.login-form { display: grid; width: min(100%, 360px); gap: 16px; }
+.login-form h1 { margin: 0 0 8px; font-size: 24px; }
+.login-form label { display: grid; gap: 6px; font-size: 14px; }
+.login-form input { min-height: 40px; border: 1px solid #aeb9c4; border-radius: 4px; padding: 8px; }
+.login-form button { min-height: 40px; border: 0; border-radius: 4px; color: #fff; background: #066f75; }
+[role="alert"] { margin: 0; color: #a11b1b; }
+.console-shell { display: grid; min-height: 100vh; grid-template-columns: 208px minmax(0, 1fr); }
+aside { display: flex; flex-direction: column; gap: 24px; padding: 20px 12px; border-right: 1px solid #d9e0e6; background: #fff; }
+aside strong { padding: 0 8px; }
+nav { display: grid; gap: 4px; }
+aside button { width: 100%; min-height: 36px; border: 0; border-radius: 4px; background: transparent; text-align: left; padding: 8px; }
+aside button.selected { color: #024b50; background: #dff2ef; }
+aside > button:last-child { margin-top: auto; }
+.workspace { padding: 32px clamp(20px, 4vw, 56px); }
+.workspace header p { margin: 0 0 6px; color: #56707a; font-size: 14px; }
+.workspace h1 { margin: 0; font-size: 24px; }
+.empty-state { margin-top: 36px; padding: 24px 0; border-top: 1px solid #d9e0e6; color: #56707a; }
+@media (max-width: 640px) { .console-shell { grid-template-columns: 1fr; } aside { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid #d9e0e6; } nav { display: flex; flex: 1; } aside > button:last-child { margin: 0; width: auto; } .workspace { padding: 24px; } }
