@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { createDatabase, type Database } from "./db.js";
 import { registerImportRoutes } from "./imports/routes.js";
 import { registerProfileRoutes } from "./content-planning/profile-routes.js";
+import { registerOperatorContentRoutes } from "./operator-content/routes.js";
 import { developmentContextResolver, localContainerContextResolver, type TrustedContextResolver } from "./imports/routes.js";
 
 export interface ServerOptions {
@@ -28,6 +29,7 @@ export function buildServer(options: ServerOptions = {}) {
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, database, contextResolver));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
+    app.register((instance) => registerOperatorContentRoutes(instance, database, contextResolver));
   }
 
   return app;

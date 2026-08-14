@@ -8,6 +8,7 @@ export interface TrustedContext {
   enterpriseId: string;
   storeId: string;
   actorId: string;
+  actorRole?: "operator_editor" | "operator_reviewer" | "provider";
 }
 
 export interface CandidateDraft {
