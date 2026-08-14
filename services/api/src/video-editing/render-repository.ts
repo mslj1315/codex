@@ -40,7 +40,7 @@ export class RenderRepository {
     if (!owner.rowCount) throw new RenderError("Render output is not available", 404);
     const found = await this.database.query<Row>("SELECT output_object_key FROM storyboard_render_jobs WHERE id=$1", [input.jobId]);
     if (!found.rowCount) throw new RenderError("Render output is not available", 404);
-    await remove(String(found.rows[0].output_object_key));
+    const outputKey = String(found.rows[0].output_object_key); await remove(outputKey); await Promise.all([1, 2, 3].map(index => remove(outputKey.replace(/\.mp4$/, `-cover-${index}.jpg`))));
     await this.database.query("UPDATE storyboard_render_jobs SET deleted_at=CURRENT_TIMESTAMP WHERE id=$1 AND deleted_at IS NULL", [input.jobId]);
     await this.database.query("INSERT INTO storyboard_render_output_deletions(id,render_job_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'customer_deleted')", [randomUUID(), input.jobId, context.enterpriseId, context.storeId, context.actorId]);
   }

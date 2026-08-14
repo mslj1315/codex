@@ -22,7 +22,7 @@ export interface VideoStorage {
 /** Worker-only credentialed port. It is never passed to a customer response. */
 export interface ProtectedRenderStorage {
   download(objectKey: string): Promise<Buffer>;
-  putProtected(objectKey: string, bytes: Buffer, metadata: { contentType: "video/mp4"; expiresAt: Date }): Promise<void>;
+  putProtected(objectKey: string, bytes: Buffer, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void>;
   deleteProtected(objectKey: string): Promise<void>;
 }
 
@@ -36,7 +36,7 @@ export class InMemoryVideoStorage implements VideoStorage, ProtectedRenderStorag
   async delete(objectKey: string): Promise<void> { this.objects.delete(objectKey); }
   async put(objectKey: string, metadata: Omit<VideoObjectMetadata, "etag" | "version">): Promise<void> { if (this.closed.has(objectKey) || this.objects.has(objectKey)) throw new Error("immutable upload"); this.objects.set(objectKey, { ...metadata, etag: `etag-${objectKey}`, version: `version-${objectKey}` }); }
   async download(objectKey: string): Promise<Buffer> { if (!this.objects.has(objectKey)) throw Object.assign(new Error("source unavailable"), { code: "ENOENT" }); return Buffer.from("source"); }
-  async putProtected(objectKey: string, bytes: Buffer, _metadata?: { contentType: "video/mp4"; expiresAt: Date }): Promise<void> { if (this.protectedObjects.has(objectKey)) throw new Error("immutable output"); this.protectedObjects.set(objectKey, Buffer.from(bytes)); }
+  async putProtected(objectKey: string, bytes: Buffer, _metadata?: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void> { if (this.protectedObjects.has(objectKey)) throw new Error("immutable output"); this.protectedObjects.set(objectKey, Buffer.from(bytes)); }
   async deleteProtected(objectKey: string): Promise<void> { this.protectedObjects.delete(objectKey); }
 }
 
@@ -56,7 +56,7 @@ class InternalSignerVideoStorage implements VideoStorage, ProtectedRenderStorage
   async revokeUpload(objectKey: string) { await this.call<void>("revoke", { objectKey }); }
   async delete(objectKey: string) { await this.call<void>("delete", { objectKey }); }
   async download(objectKey: string) { const value = await this.call<{ bytes: string }>("worker-download", { objectKey }); return Buffer.from(value.bytes, "base64"); }
-  async putProtected(objectKey: string, bytes: Buffer, metadata: { contentType: "video/mp4"; expiresAt: Date }) { await this.call<void>("worker-put-protected", { objectKey, bytes: bytes.toString("base64"), contentType: metadata.contentType, expiresAt: metadata.expiresAt.toISOString() }); }
+  async putProtected(objectKey: string, bytes: Buffer, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }) { await this.call<void>("worker-put-protected", { objectKey, bytes: bytes.toString("base64"), contentType: metadata.contentType, expiresAt: metadata.expiresAt.toISOString() }); }
   async deleteProtected(objectKey: string) { await this.call<void>("worker-delete-protected", { objectKey }); }
   private async call<T>(action: string, body: unknown): Promise<T> { const response = await fetch(`${this.endpoint.replace(/\/$/, "")}/${action}`, { method: "POST", headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" }, body: JSON.stringify(body) }); if (!response.ok) throw new Error("video storage signer request failed"); return response.status === 204 ? undefined as T : await response.json() as T; }
 }

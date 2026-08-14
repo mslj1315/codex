@@ -70,6 +70,7 @@ describe("storyboard render queue", () => {
     await worker.runOnce();
     expect(events).toContain("remove:work/job-1");
     expect(events.join("\n")).toContain("output:video/mp4");
+    expect(events.filter(event => event === "output:image/jpeg")).toHaveLength(3);
     expect(events.find(event => event.startsWith("succeed:"))).toContain('"positionSeconds":1');
   });
 

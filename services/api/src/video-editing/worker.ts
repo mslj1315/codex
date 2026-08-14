@@ -3,7 +3,7 @@ export type RunnerResult = { output: Buffer; metadata: { width: number; height: 
 export interface RenderRunner { render(manifest: RenderManifest): Promise<RunnerResult>; }
 export interface ClaimedRender { id: string; kind: "preview" | "final"; projectId: string; projectVersion: number; durationSeconds: number; subtitleText: string[]; sourceKeys: string[]; }
 export interface RenderWorkerRepository { claim(): Promise<ClaimedRender | undefined>; succeed(id: string, result: { outputExpiresAt: Date; coverCandidates: Array<{ positionSeconds: number }> }): Promise<void>; fail(id: string, category: string, retryable: boolean): Promise<void>; isCancelled(id: string): Promise<boolean>; }
-export interface WorkerStorage { download(key: string): Promise<Buffer>; putProtected(key: string, bytes: Buffer, metadata: { contentType: "video/mp4"; expiresAt: Date }): Promise<void>; }
+export interface WorkerStorage { download(key: string): Promise<Buffer>; putProtected(key: string, bytes: Buffer, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void>; }
 export interface TemporaryWorkspace { create(jobId: string): Promise<string>; remove(path: string): Promise<void>; }
 
 export class StoryboardRenderWorker {
@@ -20,6 +20,7 @@ export class StoryboardRenderWorker {
       if (await this.repository.isCancelled(job.id)) return true;
       const expiresAt = new Date(this.now().getTime() + (job.kind === "final" ? 180 : 7) * 24 * 60 * 60 * 1000);
       await this.storage.putProtected(`storyboard-render-output/${job.id}.mp4`, result.output, { contentType: "video/mp4", expiresAt });
+      await Promise.all(result.coverFrames.map((frame, index) => this.storage.putProtected(`storyboard-render-output/${job.id}-cover-${index + 1}.jpg`, frame.bytes, { contentType: "image/jpeg", expiresAt })));
       await this.repository.succeed(job.id, { outputExpiresAt: expiresAt, coverCandidates: result.coverFrames.map(frame => ({ positionSeconds: frame.positionSeconds })) });
     } catch (error) { await this.repository.fail(job.id, category(error), retryable(error)); }
     finally { await this.workspace.remove(path); }
