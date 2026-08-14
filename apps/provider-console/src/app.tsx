@@ -21,6 +21,11 @@ export function App({ api = defaultApi }: { api?: OperatorApi }) {
     return () => { active = false; };
   }, [api]);
 
+  useEffect(() => api.onSessionExpired(() => {
+    setError(undefined);
+    setSession(undefined);
+  }), [api]);
+
   if (loading) return <main className="state">正在恢复会话...</main>;
   if (!session?.capabilities.operatorAdmin) return <Login api={api} error={error} onSession={(next) => { setError(undefined); setSession(next); }} />;
   return <ConsoleShell api={api} onExpired={() => setSession(undefined)} />;

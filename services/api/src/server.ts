@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "node:url";
 import { createDatabase, type Database } from "./db.js";
 import { registerImportRoutes } from "./imports/routes.js";
@@ -13,6 +14,7 @@ export interface ServerOptions {
   developmentMode?: boolean;
   localContainerDevelopmentMode?: boolean;
   trustedContextResolver?: TrustedContextResolver;
+  operatorConsoleDistDir?: string;
 }
 
 export function buildServer(options: ServerOptions = {}) {
@@ -39,6 +41,9 @@ export function buildServer(options: ServerOptions = {}) {
     app.register((instance) => registerImportRoutes(instance, database, contextResolver));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
   }
+  if (options.operatorConsoleDistDir) {
+    app.register(fastifyStatic, { root: options.operatorConsoleDistDir, prefix: "/", wildcard: false });
+  }
 
   return app;
 }
@@ -47,7 +52,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const app = buildServer({
     databaseUrl: process.env.DATABASE_URL,
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
-    localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true"
+    localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
+    operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR
   });
   const port = Number(process.env.PORT ?? 3000);
 

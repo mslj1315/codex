@@ -7,6 +7,7 @@ export interface OperatorApi {
   logout(): Promise<void>;
   restoreSession(): Promise<OperatorSession | undefined>;
   request(method: OperatorMethod, path: string, body?: unknown): Promise<unknown>;
+  onSessionExpired(listener: () => void): () => void;
 }
 
 export class OperatorApiError extends Error {
@@ -15,18 +16,25 @@ export class OperatorApiError extends Error {
   }
 }
 
+const logicalId = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const version = '[1-9][0-9]*';
 const allowedRequests: ReadonlyArray<{ method: OperatorMethod; path: RegExp }> = [
   { method: 'GET', path: /^\/v1\/operator-auth\/session$/ },
   { method: 'POST', path: /^\/v1\/operator-auth\/(login|logout)$/ },
-  { method: 'GET', path: /^\/v1\/operator-content\/templates(?:\/(?:match|[^/]+\/(?:versions(?:\/\d+)?|history)))?$/ },
-  { method: 'POST', path: /^\/v1\/operator-content\/templates(?:\/[^/]+\/versions\/\d+\/(?:publish|disable))?$/ },
-  { method: 'PUT', path: /^\/v1\/operator-content\/templates\/[^/]+\/draft$/ },
-  { method: 'GET', path: /^\/v1\/operator-content\/rules(?:\/(?:active|[^/]+\/(?:versions(?:\/\d+)?|history)))?$/ },
-  { method: 'POST', path: /^\/v1\/operator-content\/rules(?:\/(?:preview|[^/]+\/versions\/\d+\/(?:publish|disable)))?$/ },
-  { method: 'PUT', path: /^\/v1\/operator-content\/rules\/[^/]+\/draft$/ }
+  { method: 'GET', path: new RegExp(`^/v1/operator-content/templates(?:/${logicalId}/(?:versions(?:/${version})?|history))?$`) },
+  { method: 'POST', path: new RegExp(`^/v1/operator-content/templates(?:/${logicalId}/versions/${version}/(?:publish|disable))?$`) },
+  { method: 'PUT', path: new RegExp(`^/v1/operator-content/templates/${logicalId}/draft$`) },
+  { method: 'GET', path: new RegExp(`^/v1/operator-content/rules(?:/(?:active|${logicalId}/(?:versions(?:/${version})?|history)))?$`) },
+  { method: 'POST', path: new RegExp(`^/v1/operator-content/rules(?:/(?:preview|${logicalId}/versions/${version}/(?:publish|disable)))?$`) },
+  { method: 'PUT', path: new RegExp(`^/v1/operator-content/rules/${logicalId}/draft$`) }
 ];
 
 export function createOperatorApi(sessionStore: SessionStore): OperatorApi {
+  const expiryListeners = new Set<() => void>();
+  function expireSession(): void {
+    sessionStore.clear();
+    expiryListeners.forEach((listener) => listener());
+  }
   async function request(method: OperatorMethod, path: string, body?: unknown): Promise<unknown> {
     if (!isAllowed(method, path)) throw new Error('Unsupported operator API request');
     const headers: Record<string, string> = {};
@@ -42,7 +50,11 @@ export function createOperatorApi(sessionStore: SessionStore): OperatorApi {
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
-    if (!response.ok) throw new OperatorApiError(response.status, await errorMessage(response));
+    if (!response.ok) {
+      const error = new OperatorApiError(response.status, await errorMessage(response));
+      if (path !== '/v1/operator-auth/login' && response.status === 403) expireSession();
+      throw error;
+    }
     if (response.status === 204) return undefined;
     return response.json() as Promise<unknown>;
   }
@@ -72,12 +84,22 @@ export function createOperatorApi(sessionStore: SessionStore): OperatorApi {
         throw error;
       }
     },
-    request
+    request,
+    onSessionExpired(listener) {
+      expiryListeners.add(listener);
+      return () => expiryListeners.delete(listener);
+    }
   };
 }
 
 function isAllowed(method: OperatorMethod, path: string): boolean {
-  return path.startsWith('/') && !path.includes('?') && allowedRequests.some((entry) => entry.method === method && entry.path.test(path));
+  if (!path.startsWith('/') || /[\\%?#]/.test(path)) return false;
+  try {
+    if (new URL(path, 'http://operator-console.invalid').pathname !== path) return false;
+  } catch {
+    return false;
+  }
+  return allowedRequests.some((entry) => entry.method === method && entry.path.test(path));
 }
 
 function readSession(value: unknown): OperatorSession {

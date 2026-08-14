@@ -42,4 +42,25 @@ describe('operator API client', () => {
     await expect(api.request('GET', 'https://example.test/steal')).rejects.toThrow('Unsupported operator API request');
     await expect(api.request('GET', '/v1/provider/customers')).rejects.toThrow('Unsupported operator API request');
   });
+
+  it('clears session and notifies the shell when a protected request is forbidden', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const session = createSessionStore();
+    session.set({ csrfToken: 'csrf', capabilities: { operatorAdmin: true } });
+    const api = createOperatorApi(session);
+    const expired = vi.fn();
+    api.onSessionExpired(expired);
+
+    await expect(api.request('POST', '/v1/operator-content/templates', { name: 'test' })).rejects.toMatchObject({ status: 403 });
+
+    expect(session.current()).toBeUndefined();
+    expect(expired).toHaveBeenCalledOnce();
+  });
+
+  it.each(['/v1/operator-content/templates/%2e%2e/rules', '/v1/operator-content/templates/%2F', '/v1/operator-content/templates/..', '/v1/operator-content/templates\\x', '/v1/operator-content/templates?x=1', '/v1/operator-content/templates#x'])('rejects normalized route escape %s', async (path) => {
+    const api = createOperatorApi(createSessionStore());
+
+    await expect(api.request('GET', path)).rejects.toThrow('Unsupported operator API request');
+  });
 });
