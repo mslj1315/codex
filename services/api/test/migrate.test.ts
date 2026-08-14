@@ -59,6 +59,26 @@ describe("016 operator content PostgreSQL trigger invariants", () => {
   }, 30_000);
 });
 
+describe("018 content planning PostgreSQL transaction and immutability invariants", () => {
+  realPostgresIt("persists a committed copy/version batch and rejects immutable history rewrites", async () => {
+    const database = createDatabase(realPostgresUrl!);
+    const files = (await readdir(new URL("../migrations/", import.meta.url))).filter((file) => file.endsWith(".sql")).sort();
+    await runMigrations(database, await Promise.all(files.map(async (id) => ({ id, sql: await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8") }))));
+    const client = await database.connect(); const taskId = randomUUID(); const topicId = randomUUID(); const copyId = randomUUID();
+    try {
+      await client.query("BEGIN");
+      await client.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES($1,'e','s','a',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')", [taskId]);
+      await client.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$2,1,'t','a','p','g',1)", [topicId, taskId]);
+      await client.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,1,'t','b','s','p','g',1)", [copyId, taskId, topicId]);
+      await client.query("INSERT INTO content_task_copy_versions(id,copy_id,version,title,body) VALUES($1,$2,1,'t','b')", [randomUUID(), copyId]);
+      await client.query("COMMIT");
+      expect((await database.query("SELECT id FROM content_task_copies WHERE id=$1", [copyId])).rowCount).toBe(1);
+      await expectRejected(client, "UPDATE content_task_topics SET title='rewrite' WHERE id=$1", [topicId]);
+      await expectRejected(client, "UPDATE content_task_copy_versions SET title='rewrite' WHERE copy_id=$1", [copyId]);
+    } finally { try { await client.query("ROLLBACK"); } catch {} client.release(); await database.end(); }
+  }, 30_000);
+});
+
 async function expectRejected(client: { query(text: string, values?: unknown[]): Promise<unknown> }, sql: string, values: unknown[]): Promise<void> {
   await client.query("SAVEPOINT expected_failure");
   await expect(client.query(sql, values)).rejects.toThrow();
