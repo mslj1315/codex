@@ -4,6 +4,7 @@ import { newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
+import { TemplateRepository } from "../src/operator-content/template-repository.js";
 
 const template = {
   name: "Noodle shop story", content: { hook: "Morning broth", story: "The owner starts early", value: "Freshly made", productAppearance: "The bowl arrives naturally", cta: "Visit when nearby", shotRhythm: "Quick cuts", captionVoiceRequirements: "Natural voice", prohibitedExpressions: ["best"] },
@@ -26,7 +27,7 @@ describe("operator content logical versions", () => {
 
   async function appForAdmin() {
     const app = buildServer({ database: pool });
-    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     const cookie = login.headers["set-cookie"]!;
     const headers = { cookie: Array.isArray(cookie) ? cookie[0] : cookie, host: "localhost", origin: "http://localhost", "x-csrf-token": login.json().csrfToken };
     return { app, headers };
@@ -82,5 +83,28 @@ describe("operator content logical versions", () => {
     const { headers } = await appForAdmin();
     const malformed = await app.inject({ method: "POST", url: "/v1/operator-content/templates", headers, payload: [] });
     expect(malformed.statusCode).toBe(422);
+  });
+
+  it("rejects incomplete structured templates before they can publish or match", async () => {
+    const { app, headers } = await appForAdmin();
+    const invalid = { ...template, content: { ...template.content, prohibitedExpressions: [] }, constraints: { ...template.constraints, commercialLevel: 9 }, fallbackScope: { allowCategoryFallback: "yes" } };
+    expect((await app.inject({ method: "POST", url: "/v1/operator-content/templates", headers, payload: invalid })).statusCode).toBe(422);
+  });
+
+  it("bridges legacy published rules as disabled pending enrichment", async () => {
+    const memory = newDb({ noAstCoverageCheck: true }); const { Pool } = memory.adapters.createPg(); const legacyPool: Database = new Pool();
+    for (const file of ["014_content_templates_rules.sql", "015_operator_accounts_sessions.sql"]) { const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"); await legacyPool.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, "")); }
+    await legacyPool.query("INSERT INTO content_review_rules (id,name,status,rule_type,severity,patterns_json,created_by_actor_id) VALUES ('legacy-rule','legacy','published','absolute_claim','block','[\"best\"]','old')");
+    const migration = await readFile(new URL("../migrations/016_operator_content_versions.sql", import.meta.url), "utf8"); await legacyPool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    expect((await legacyPool.query("SELECT status FROM operator_content_rule_versions WHERE logical_id='legacy-rule'")).rows).toEqual([{ status: "disabled" }]);
+  });
+
+  it("rolls back a publish when its audit write fails", async () => {
+    const calls: string[] = [];
+    const client = { query: async (sql: string) => { calls.push(sql); if (sql === "UPDATE operator_content_template_versions SET status=$3,ever_published_at=now() WHERE logical_id=$1 AND version=$2 AND status=$4 RETURNING *") return { rowCount: 1, rows: [{ id: "v1", logical_id: "item", version: 1, name: "name", status: "published", content_json: JSON.stringify(template.content), constraints_json: JSON.stringify(template.constraints), fallback_scope_json: JSON.stringify(template.fallbackScope) }] }; if (sql.startsWith("INSERT INTO operator_content_audit_events")) throw new Error("audit unavailable"); return { rowCount: 0, rows: [] }; }, release() {} };
+    const database = { connect: async () => client, query: client.query } as unknown as Database;
+    await expect(new TemplateRepository(database).publishDraft("item", 1, "op-1")).rejects.toThrow("audit unavailable");
+    expect(calls).toContain("ROLLBACK");
+    expect(calls).not.toContain("COMMIT");
   });
 });

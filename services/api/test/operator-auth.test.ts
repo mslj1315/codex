@@ -28,7 +28,7 @@ describe("operator authentication", () => {
 
   it("returns neutral failures for incorrect operator credentials", async () => {
     const app = buildServer({ database: pool });
-    const wrongPassword = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "wrong" } });
+    const wrongPassword = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "wrong" } });
     expect(wrongPassword.statusCode).toBe(403);
     expect(wrongPassword.json()).toEqual({ error: "Forbidden" });
 
@@ -52,7 +52,7 @@ describe("operator authentication", () => {
   it("returns a neutral HTTP failure for a disabled account", async () => {
     await new OperatorAuthRepository(pool).disableAccount("op-1");
     const app = buildServer({ database: pool });
-    const response = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    const response = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ error: "Forbidden" });
   });
@@ -63,14 +63,14 @@ describe("operator authentication", () => {
     await pool.query("UPDATE operator_sessions SET expires_at='2000-01-01T00:00:00.000Z'");
     const app = buildServer({ database: pool });
     expect((await app.inject({ method: "GET", url: "/v1/operator-auth/session", headers: { cookie: `operator_session=${session.cookieValue}` } })).statusCode).toBe(403);
-    const malformed = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: [] });
+    const malformed = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: [] });
     expect(malformed.statusCode).toBe(403);
     expect(malformed.json()).toEqual({ error: "Forbidden" });
   });
 
   it("revokes a session on logout and requires CSRF plus same-origin for operator writes", async () => {
     const app = buildServer({ database: pool });
-    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     const cookie = login.headers["set-cookie"]!;
 
     const missingCsrf = await app.inject({ method: "POST", url: "/v1/operator-content/templates", headers: { cookie, host: "localhost", origin: "http://localhost" }, payload: {} });
@@ -90,7 +90,7 @@ describe("operator authentication", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/operator-auth/login",
-      payload: { accountId: "op-1", password: "correct horse" }
+      headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" }
     });
 
     expect(response.statusCode).toBe(200);
@@ -102,15 +102,22 @@ describe("operator authentication", () => {
     });
   });
 
+  it("rejects a cross-origin login attempt", async () => {
+    const app = buildServer({ database: pool });
+    const response = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "https://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "Forbidden" });
+  });
+
   it("never accepts a legacy trusted role without a session and accepts a valid admin session at the protected write gate", async () => {
     const legacyEditor: TrustedContext = { enterpriseId: "platform", storeId: "operator", actorId: "legacy-editor", actorRole: "operator_editor" };
     const app = buildServer({ database: pool, trustedContextResolver: async () => legacyEditor });
-    const payload = { name: "template", content: { hook: "hook", story: "story", value: "value", productAppearance: "product", cta: "cta", shotRhythm: "rhythm", captionVoiceRequirements: "voice" }, constraints: {}, fallbackScope: {} };
+    const payload = { name: "template", content: { hook: "hook", story: "story", value: "value", productAppearance: "product", cta: "cta", shotRhythm: "rhythm", captionVoiceRequirements: "voice", prohibitedExpressions: ["best"] }, constraints: { industryCode: "fast_food", categoryCode: "noodle", persona: "owner", contentType: "story", commercialLevel: 1, style: "natural", priceDiscountEffectRestrictions: ["no_absolute"], riskLevel: "low" }, fallbackScope: { allowCategoryFallback: true, allowIndustryFallback: false } };
     const legacy = await app.inject({ method: "POST", url: "/v1/operator-content/templates", payload });
     expect(legacy.statusCode).toBe(403);
     expect(legacy.json()).toEqual({ error: "Forbidden" });
 
-    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     const allowed = await app.inject({ method: "POST", url: "/v1/operator-content/templates", headers: { cookie: login.headers["set-cookie"]!, host: "localhost", origin: "http://localhost", "x-csrf-token": login.json().csrfToken }, payload });
     expect(allowed.statusCode).toBe(201);
     const invalidCsrf = await app.inject({ method: "POST", url: "/v1/operator-content/templates", headers: { cookie: login.headers["set-cookie"]!, host: "localhost", origin: "http://localhost", "x-csrf-token": "wrong" }, payload });
@@ -126,7 +133,7 @@ describe("operator authentication", () => {
 
   it("rejects a same-host Origin when its scheme differs from the direct request", async () => {
     const app = buildServer({ database: pool, trustedContextResolver: async () => ({ enterpriseId: "platform", storeId: "operator", actorId: "legacy-editor", actorRole: "operator_editor" }) });
-    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", headers: { host: "localhost", origin: "http://localhost" }, payload: { accountId: "op-1", password: "correct horse" } });
     const response = await app.inject({
       method: "POST",
       url: "/v1/operator-content/templates",

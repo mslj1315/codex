@@ -18,7 +18,7 @@ export function registerOperatorAuthRoutes(app: FastifyInstance, database: Datab
 
   app.post("/v1/operator-auth/login", async (request, reply) => {
     const body = request.body;
-    if (!isCredentials(body) || !(await repository.verifyPassword(body.accountId, body.password))) return reply.code(403).send({ error: "Forbidden" });
+    if (!isSameOrigin(request) || !isCredentials(body) || !(await repository.verifyPassword(body.accountId, body.password))) return reply.code(403).send({ error: "Forbidden" });
     const created = await repository.createSession(body.accountId);
     reply.header("set-cookie", sessionCookie(created.cookieValue, created.session.expiresAt));
     return { csrfToken: created.session.csrfToken, capabilities: { operatorAdmin: true } };
