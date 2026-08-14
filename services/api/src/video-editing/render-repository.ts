@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Database } from "../db.js";
 import type { TrustedContext } from "../imports/service.js";
 import type { ClaimedRender, RenderWorkerRepository } from "./worker.js";
+import type { ArtifactCleanupRepository, ClaimedArtifact } from "./render-cleanup.js";
 
 type Row = Record<string, unknown>;
 export class RenderError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -45,6 +46,13 @@ export class RenderRepository {
     await this.database.query("INSERT INTO storyboard_render_output_deletions(id,render_job_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'customer_deleted')", [randomUUID(), input.jobId, context.enterpriseId, context.storeId, context.actorId]);
   }
   workerRepository(now = () => new Date()): RenderWorkerRepository { return new DatabaseRenderWorkerRepository(this.database, now); }
+  cleanupRepository(now = () => new Date()): ArtifactCleanupRepository { return new DatabaseArtifactCleanupRepository(this.database, now); }
+}
+class DatabaseArtifactCleanupRepository implements ArtifactCleanupRepository {
+  constructor(private readonly database: Database, private readonly now: () => Date) {}
+  async claimDue(): Promise<ClaimedArtifact | undefined> { const client = await this.database.connect(); try { await client.query("BEGIN"); const now = this.now(); const result = await client.query<Row>("SELECT a.id,a.object_key FROM storyboard_render_artifacts a JOIN storyboard_render_jobs j ON j.id=a.render_job_id WHERE a.deleted_at IS NULL AND j.output_expires_at<=$1 AND (a.next_cleanup_attempt_at IS NULL OR a.next_cleanup_attempt_at<=$1) AND (a.cleanup_lease_expires_at IS NULL OR a.cleanup_lease_expires_at<$1) ORDER BY a.created_at LIMIT 1 FOR UPDATE", [now]); if (!result.rowCount) { await client.query("COMMIT"); return undefined; } const row = result.rows[0]; await client.query("UPDATE storyboard_render_artifacts SET cleanup_attempt_count=cleanup_attempt_count+1,cleanup_lease_expires_at=$2 WHERE id=$1", [row.id, new Date(now.getTime() + 10 * 60 * 1000)]); await client.query("COMMIT"); return { id: String(row.id), objectKey: String(row.object_key) }; } catch (error) { try { await client.query("ROLLBACK"); } catch {} throw error; } finally { client.release(); } }
+  async markDeleted(id: string) { await this.database.query("UPDATE storyboard_render_artifacts SET deleted_at=CURRENT_TIMESTAMP,cleanup_lease_expires_at=NULL,next_cleanup_attempt_at=NULL,last_cleanup_error=NULL WHERE id=$1", [id]); }
+  async retry(id: string) { await this.database.query("UPDATE storyboard_render_artifacts SET cleanup_lease_expires_at=NULL,next_cleanup_attempt_at=$2,last_cleanup_error='storage_unavailable' WHERE id=$1", [id, new Date(this.now().getTime() + 60_000)]); }
 }
 class DatabaseRenderWorkerRepository implements RenderWorkerRepository {
   constructor(private readonly database: Database, private readonly now: () => Date) {}

@@ -6,6 +6,7 @@ import type { Database } from "../src/db.js";
 import { buildServer } from "../src/server.js";
 import { InMemoryVideoStorage } from "../src/video-editing/storage.js";
 import { StoryboardRenderWorker } from "../src/video-editing/worker.js";
+import { RenderArtifactCleanupRunner } from "../src/video-editing/render-cleanup.js";
 
 const scope = { enterpriseId: "render-ent", storeId: "render-store", actorId: "render-customer" };
 
@@ -101,6 +102,17 @@ describe("storyboard render queue", () => {
   it("persists render artifacts separately so cleanup does not derive customer-visible storage identifiers", async () => {
     const columns = await database.query("SELECT column_name FROM information_schema.columns WHERE table_name='storyboard_render_artifacts'");
     expect(columns.rows.map(row => row.column_name)).toEqual(expect.arrayContaining(["render_job_id", "object_key", "kind", "deleted_at", "next_cleanup_attempt_at"]));
+  });
+
+  it("claims and deletes one due artifact idempotently while retaining retryable failures", async () => {
+    const events: string[] = [];
+    const cleanup = new RenderArtifactCleanupRunner({
+      claimDue: async () => events.includes("claimed") ? undefined : (events.push("claimed"), { id: "artifact-1", objectKey: "internal" }),
+      markDeleted: async () => { events.push("deleted"); },
+      retry: async () => { events.push("retry"); }
+    }, { deleteProtected: async () => { events.push("storage-delete"); } });
+    await cleanup.runOnce(); await cleanup.runOnce();
+    expect(events).toEqual(["claimed", "storage-delete", "deleted"]);
   });
 
   function path() { return `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}`; }
