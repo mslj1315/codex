@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { createOperatorApi, OperatorApiError, type OperatorApi } from './api';
 import { createSessionStore, type OperatorSession } from './session';
+import { TemplateList } from './operator-content/template-list';
+import { RuleList } from './operator-content/rule-list';
 
 const defaultApi = createOperatorApi(createSessionStore());
 
@@ -71,6 +73,6 @@ function ConsoleShell({ api, onExpired }: { api: OperatorApi; onExpired(): void 
   }
   return <div className="console-shell">
     <aside><strong>内容运营</strong><nav aria-label="运营导航"><button className={view === 'templates' ? 'selected' : ''} onClick={() => setView('templates')}>模板库</button><button className={view === 'rules' ? 'selected' : ''} onClick={() => setView('rules')}>审核规则</button></nav><button onClick={() => void logout()}>退出登录</button></aside>
-    <main className="workspace"><header><p>内部内容库</p><h1>{view === 'templates' ? '模板库' : '审核规则'}</h1></header>{error && <p role="alert">{error}</p>}<section className="empty-state">{view === 'templates' ? '模板列表将在此处显示。' : '审核规则将在此处显示。'}</section></main>
+    <main className="workspace"><header><p>内部内容库</p><h1>{view === 'templates' ? '模板库' : '审核规则'}</h1></header>{error && <p role="alert">{error}</p>}{view === 'templates' ? <TemplateList api={api} /> : <RuleList api={api} />}</main>
   </div>;
 }

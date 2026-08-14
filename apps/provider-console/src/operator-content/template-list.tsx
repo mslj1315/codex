@@ -1,0 +1,17 @@
+import { useEffect, useState } from 'react';
+import { OperatorApiError, type OperatorApi } from '../api';
+import { TemplateEditor } from './template-editor';
+import { emptyTemplate, type Template, type TemplateInput } from './types';
+
+export function TemplateList({ api }: { api: Pick<OperatorApi, 'request'> }) {
+  const [items, setItems] = useState<Template[]>([]); const [selected, setSelected] = useState<Template>(); const [versions, setVersions] = useState<Template[]>([]); const [state, setState] = useState<'loading' | 'ready' | 'forbidden' | 'failed'>('loading'); const [message, setMessage] = useState<string>();
+  async function load() { setState('loading'); try { const result = await api.request('GET', '/v1/operator-content/templates'); setItems(Array.isArray(result) ? result as Template[] : []); setState('ready'); } catch (cause) { setState(cause instanceof OperatorApiError || (typeof cause === 'object' && cause !== null && 'status' in cause && (cause as { status: unknown }).status === 403) ? 'forbidden' : 'failed'); } }
+  useEffect(() => { void load(); }, []);
+  async function choose(item: Template) { setSelected(item); try { setVersions(await api.request('GET', `/v1/operator-content/templates/${item.logicalId}/versions`) as Template[]); } catch { setMessage('Unable to load version history.'); } }
+  async function save(id: string | undefined, input: TemplateInput) { const item = id ? await api.request('PUT', `/v1/operator-content/templates/${id}/draft`, input) as Template : await api.request('POST', '/v1/operator-content/templates', input) as Template; await load(); await choose(item); setMessage('Draft saved.'); }
+  async function transition(action: 'publish' | 'disable', id: string, version: number) { const item = await api.request('POST', `/v1/operator-content/templates/${id}/versions/${version}/${action}`) as Template; await load(); await choose(item); setMessage(action === 'publish' ? 'Version published.' : 'Version disabled.'); }
+  if (state === 'loading') return <p className="state">Loading templates...</p>;
+  if (state === 'forbidden') return <section className="state"><p>Access is unavailable.</p><button onClick={() => void load()}>Retry</button></section>;
+  if (state === 'failed') return <section className="state"><p>Templates could not be loaded.</p><button onClick={() => void load()}>Retry</button></section>;
+  return <div className="content-manager"><section className="library-list"><div className="list-heading"><h2>Templates</h2><button onClick={() => { setSelected(undefined); setVersions([]); }}>New template</button></div>{items.length === 0 ? <p>No templates yet.</p> : <ul>{items.map((item) => <li key={item.logicalId}><button className={selected?.logicalId === item.logicalId ? 'selected' : ''} onClick={() => void choose(item)}><span>{item.name}</span><small>v{item.version} · {item.status}</small></button></li>)}</ul>}</section><section className="detail"><h2>{selected ? `${selected.name} v${selected.version}` : 'New template'}</h2>{message && <p role="status">{message}</p>}<TemplateEditor template={selected} onSave={save} onPublish={(id, version) => transition('publish', id, version)} onDisable={(id, version) => transition('disable', id, version)} />{versions.length > 0 && <section aria-label="Template version history"><h3>Version history</h3><ul>{versions.map((item) => <li key={item.version}>v{item.version} · {item.status}</li>)}</ul></section>}</section></div>;
+}
