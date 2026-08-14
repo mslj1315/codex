@@ -99,6 +99,14 @@ describe("operator content logical versions", () => {
     expect((await legacyPool.query("SELECT status FROM operator_content_rule_versions WHERE logical_id='legacy-rule'")).rows).toEqual([{ status: "disabled" }]);
   });
 
+  it("bridges legacy published templates with a permanent publication marker", async () => {
+    const memory = newDb({ noAstCoverageCheck: true }); const { Pool } = memory.adapters.createPg(); const legacyPool: Database = new Pool();
+    for (const file of ["014_content_templates_rules.sql", "015_operator_accounts_sessions.sql"]) { const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"); await legacyPool.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, "")); }
+    await legacyPool.query("INSERT INTO content_templates (id,name,status,content_json,constraints_json,fallback_scope_json,created_by_actor_id) VALUES ('legacy-template','legacy','published','{}','{}','{}','old')");
+    const migration = await readFile(new URL("../migrations/016_operator_content_versions.sql", import.meta.url), "utf8"); await legacyPool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    expect((await legacyPool.query("SELECT status, ever_published_at IS NOT NULL AS marked FROM operator_content_template_versions WHERE logical_id='legacy-template'")).rows).toEqual([{ status: "published", marked: true }]);
+  });
+
   it("rolls back a publish when its audit write fails", async () => {
     const calls: string[] = [];
     const client = { query: async (sql: string) => { calls.push(sql); if (sql === "UPDATE operator_content_template_versions SET status=$3,ever_published_at=now() WHERE logical_id=$1 AND version=$2 AND status=$4 RETURNING *") return { rowCount: 1, rows: [{ id: "v1", logical_id: "item", version: 1, name: "name", status: "published", content_json: JSON.stringify(template.content), constraints_json: JSON.stringify(template.constraints), fallback_scope_json: JSON.stringify(template.fallbackScope) }] }; if (sql.startsWith("INSERT INTO operator_content_audit_events")) throw new Error("audit unavailable"); return { rowCount: 0, rows: [] }; }, release() {} };
