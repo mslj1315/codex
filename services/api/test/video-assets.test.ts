@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { newDb } from "pg-mem";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
-import { InMemoryVideoStorage } from "../src/video-editing/storage.js";
+import { createConfiguredVideoStorage, InMemoryVideoStorage } from "../src/video-editing/storage.js";
 
 const scope = { enterpriseId: "media-ent", storeId: "media-store", actorId: "media-actor" };
 const maxAssetBytes = 500 * 1024 * 1024;
@@ -110,8 +110,6 @@ describe("storyboard media assets", () => {
   it("reclaims all grant-expired pending uploads before enforcing the next project quota", async () => {
     const grants = await Promise.all(Array.from({ length: 20 }, () => requestGrant()));
     for (const grant of grants) await database.query("UPDATE storyboard_media_upload_grants SET expires_at=$1 WHERE asset_id=$2", [new Date(Date.now() - 1_000), grant.json().assetId]);
-    const repository = new (await import("../src/video-editing/asset-repository.js")).AssetRepository(database, storage);
-    expect(await repository.expirePendingUploads(new Date())).toBe(20);
     expect((await requestGrant()).statusCode).toBe(201);
   });
 
@@ -121,6 +119,17 @@ describe("storyboard media assets", () => {
     expect((await app.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${grant.json().assetId}/complete` })).statusCode).toBe(201);
     await expect(storage.put(grant.json().objectKey, { sizeBytes: 2, contentType: "video/mp4", durationSeconds: 2 })).rejects.toThrow("immutable");
     expect(await storage.inspect(grant.json().objectKey)).toMatchObject({ sizeBytes: 1, durationSeconds: 1 });
+  });
+
+  it("strictly filters internal signer upload targets and rejects malformed signer responses", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ method: "PUT", url: "https://uploads.example/object" }) });
+    vi.stubGlobal("fetch", fetchSpy);
+    const storage = createConfiguredVideoStorage({ VIDEO_STORAGE_MODE: "internal_signer", VIDEO_STORAGE_SIGNER_URL: "https://signer.example/v1", VIDEO_STORAGE_SIGNER_TOKEN: "server-only" })!;
+    await expect(storage.createDirectUpload("object", "video/mp4", new Date())).resolves.toEqual({ method: "PUT", url: "https://uploads.example/object" });
+    fetchSpy.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ method: "PUT", url: "https://uploads.example/object", secret: "must-not-leak" }) });
+    await expect(storage.createDirectUpload("object", "video/mp4", new Date())).rejects.toThrow("invalid upload target");
+    expect(() => createConfiguredVideoStorage({ VIDEO_STORAGE_MODE: "internal_signer", VIDEO_STORAGE_SIGNER_URL: "http://signer.example/v1", VIDEO_STORAGE_SIGNER_TOKEN: "server-only" })).toThrow("HTTPS");
+    vi.unstubAllGlobals();
   });
 
   afterEach(async () => { await app.close(); });

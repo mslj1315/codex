@@ -17,6 +17,7 @@ export class AssetRepository {
 
   async createUploadGrant(context: TrustedContext, input: { taskId: string; shotListId: string; expectedSizeBytes: number; contentType: string }) {
     validateGrantInput(input);
+    await this.expirePendingUploads(new Date());
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");

@@ -39,11 +39,12 @@ export function createConfiguredVideoStorage(environment: Record<string, string 
 }
 
 class InternalSignerVideoStorage implements VideoStorage {
-  constructor(private readonly endpoint: string, private readonly token: string) { const url = new URL(endpoint); if (!url.hostname) throw new Error("VIDEO_STORAGE_SIGNER_URL must be absolute"); }
-  async createDirectUpload(objectKey: string, contentType: string, expiresAt: Date) { return this.call<DirectUploadTarget>("create", { objectKey, contentType, expiresAt: expiresAt.toISOString() }); }
+  constructor(private readonly endpoint: string, private readonly token: string) { const url = new URL(endpoint); if (url.protocol !== "https:" || !url.hostname) throw new Error("VIDEO_STORAGE_SIGNER_URL must be an absolute HTTPS URL"); }
+  async createDirectUpload(objectKey: string, contentType: string, expiresAt: Date) { return uploadTarget(await this.call<unknown>("create", { objectKey, contentType, expiresAt: expiresAt.toISOString() })); }
   async inspect(objectKey: string) { return this.call<VideoObjectMetadata | undefined>("inspect", { objectKey }); }
   async finalizeUpload(objectKey: string) { return this.call<VideoObjectMetadata | undefined>("finalize", { objectKey }); }
   async revokeUpload(objectKey: string) { await this.call<void>("revoke", { objectKey }); }
   async delete(objectKey: string) { await this.call<void>("delete", { objectKey }); }
   private async call<T>(action: string, body: unknown): Promise<T> { const response = await fetch(`${this.endpoint.replace(/\/$/, "")}/${action}`, { method: "POST", headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" }, body: JSON.stringify(body) }); if (!response.ok) throw new Error("video storage signer request failed"); return response.status === 204 ? undefined as T : await response.json() as T; }
 }
+function uploadTarget(value: unknown): DirectUploadTarget { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid upload target"); const item = value as Record<string, unknown>; if (item.method !== "PUT" || typeof item.url !== "string" || Object.keys(item).some(key => /secret|token|credential|access.?key/i.test(key))) throw new Error("invalid upload target"); try { const url = new URL(item.url); if (url.protocol !== "https:" || !url.hostname) throw new Error(); } catch { throw new Error("invalid upload target"); } return { method: "PUT", url: item.url }; }
