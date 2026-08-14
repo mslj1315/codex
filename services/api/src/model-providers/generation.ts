@@ -38,7 +38,7 @@ export function createGenerationService(config: GenerationConfig, dependencies: 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         try {
-          const response = await provider.generate({ ...request, model: config.model, signal: controller.signal });
+          const response = await provider.generate({ model: config.model, requestId: request.requestId, promptVersion: request.promptVersion, commercialLevel: request.commercialLevel, input: request.input, signal: controller.signal });
           const output = parseStructured(request.schema, response.output, request.commercialLevel);
           return { provider: provider.id, model: config.model, output, usage: response.usage, latencyMs: Math.max(0, now() - startedAt) };
         } catch (error) {

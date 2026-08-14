@@ -29,6 +29,7 @@ describe("model providers", () => {
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
     expect(http.post).toHaveBeenCalledWith(expect.objectContaining({ url: "https://api.deepseek.com/chat/completions", headers: { authorization: "Bearer deepseek-secret", "content-type": "application/json" } }));
     expect(JSON.parse((http.post as ReturnType<typeof vi.fn>).mock.calls[0][0].body)).toMatchObject({ model: "deepseek-chat", response_format: { type: "json_object" } });
+    expect(JSON.parse(JSON.parse((http.post as ReturnType<typeof vi.fn>).mock.calls[0][0].body).messages[0].content)).toMatchObject({ commercialLevel: 1 });
   });
 
   it("normalizes Qwen requests without changing the configured provider", async () => {
@@ -38,6 +39,7 @@ describe("model providers", () => {
     await service.generateStructured({ requestId: "request-2", promptVersion: "topic-v1", commercialLevel: 1, input: { inspiration: "现熬" }, schema: topicArraySchema });
 
     expect(http.post).toHaveBeenCalledWith(expect.objectContaining({ url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", headers: { authorization: "Bearer qwen-secret", "content-type": "application/json" } }));
+    expect(JSON.parse(JSON.parse((http.post as ReturnType<typeof vi.fn>).mock.calls[0][0].body).messages[0].content)).toMatchObject({ commercialLevel: 1 });
   });
 
   it("retries a transient failure only with the same configured provider", async () => {
@@ -97,6 +99,14 @@ describe("model providers", () => {
     const service = createGenerationService({ provider: "deepseek", model: "deepseek-chat", apiKey: "key", maxRetries: 2 }, { http });
 
     await expect(service.generateStructured({ requestId: "request-usage", promptVersion: "topic-v1", commercialLevel: 1, input: {}, schema: topicArraySchema })).rejects.toThrow("usage");
+    expect(http.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry an outer provider JSON parsing failure", async () => {
+    const http: ModelHttpClient = { post: vi.fn().mockResolvedValue({ status: 200, json: async () => { throw new SyntaxError("unexpected end of JSON input"); } }) };
+    const service = createGenerationService({ provider: "qwen", model: "qwen-plus", apiKey: "key", maxRetries: 1 }, { http });
+
+    await expect(service.generateStructured({ requestId: "request-json", promptVersion: "topic-v1", commercialLevel: 1, input: {}, schema: topicArraySchema })).rejects.toThrow("invalid JSON");
     expect(http.post).toHaveBeenCalledTimes(1);
   });
 

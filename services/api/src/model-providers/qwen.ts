@@ -15,7 +15,7 @@ export class QwenProvider implements ModelProvider {
       body: JSON.stringify({
         model: request.model,
         response_format: { type: "json_object" },
-        messages: [{ role: "user", content: JSON.stringify({ requestId: request.requestId, promptVersion: request.promptVersion, input: request.input }) }]
+        messages: [{ role: "user", content: JSON.stringify({ requestId: request.requestId, promptVersion: request.promptVersion, commercialLevel: request.commercialLevel, input: request.input }) }]
       }),
       signal: request.signal
     });

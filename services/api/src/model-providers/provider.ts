@@ -20,6 +20,7 @@ export interface ProviderRequest {
   model: string;
   requestId: string;
   promptVersion: string;
+  commercialLevel: 0 | 1 | 2 | 3;
   input: unknown;
   signal: AbortSignal;
 }

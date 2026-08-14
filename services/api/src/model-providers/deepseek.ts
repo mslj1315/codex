@@ -22,13 +22,18 @@ function chatBody(request: ProviderRequest): string {
   return JSON.stringify({
     model: request.model,
     response_format: { type: "json_object" },
-    messages: [{ role: "user", content: JSON.stringify({ requestId: request.requestId, promptVersion: request.promptVersion, input: request.input }) }]
+    messages: [{ role: "user", content: JSON.stringify({ requestId: request.requestId, promptVersion: request.promptVersion, commercialLevel: request.commercialLevel, input: request.input }) }]
   });
 }
 
 export async function parseChatResponse(response: { status: number; json(): Promise<unknown> }): Promise<ProviderResponse> {
   if (response.status < 200 || response.status >= 300) throw new ModelProviderHttpError(response.status);
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown } };
+  let payload: { choices?: Array<{ message?: { content?: unknown } }>; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown } };
+  try {
+    payload = await response.json() as typeof payload;
+  } catch {
+    throw new ModelProviderResponseError("model provider returned invalid JSON");
+  }
   const content = payload.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new ModelProviderResponseError("model provider response has no structured content");
   try {
