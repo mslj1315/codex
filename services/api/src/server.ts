@@ -9,7 +9,7 @@ import { registerOperatorContentRoutes } from "./operator-content/routes.js";
 import { registerOperatorAuthRoutes } from "./operator-auth/routes.js";
 import { createConfiguredGenerationService, type ModelGenerationService } from "./model-providers/generation.js";
 import { registerVideoAssetRoutes } from "./video-editing/routes.js";
-import type { VideoStorage } from "./video-editing/storage.js";
+import { createConfiguredVideoStorage, type VideoStorage } from "./video-editing/storage.js";
 import { developmentContextResolver, localContainerContextResolver, type TrustedContextResolver } from "./imports/routes.js";
 
 export interface ServerOptions {
@@ -64,7 +64,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
     operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR,
-    modelGenerationService: createConfiguredGenerationService(process.env)
+    modelGenerationService: createConfiguredGenerationService(process.env),
+    videoStorage: createConfiguredVideoStorage(process.env)
   });
   const port = Number(process.env.PORT ?? 3000);
 

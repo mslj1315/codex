@@ -21,7 +21,7 @@ describe("storyboard media assets", () => {
     const memory = newDb({ noAstCoverageCheck: true });
     const { Pool } = memory.adapters.createPg();
     database = new Pool();
-    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql"]) {
+    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
       await database.query(sql.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     }
@@ -40,7 +40,7 @@ describe("storyboard media assets", () => {
     await storage.put(first.objectKey, { sizeBytes: 10_000, contentType: "video/mp4", durationSeconds: 8 });
     const accepted = await app.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${first.assetId}/complete` });
     expect(accepted.statusCode).toBe(201);
-    expect(accepted.json()).toMatchObject({ id: first.assetId, projectId, sizeBytes: 10_000, durationSeconds: 8, expiresAt: expect.any(String) });
+    expect(accepted.json()).toMatchObject({ id: first.assetId, projectId: first.projectId, sizeBytes: 10_000, durationSeconds: 8, expiresAt: expect.any(String) });
     expect((await app.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${first.assetId}/complete` })).statusCode).toBe(409);
     expect((await app.inject({ method: "DELETE", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${first.assetId}` })).statusCode).toBe(204);
     expect(await storage.inspect(first.objectKey)).toBeUndefined();
@@ -58,14 +58,24 @@ describe("storyboard media assets", () => {
     }
   });
 
+  it("denies another customer in the same enterprise and store without creating an asset or upload session", async () => {
+    const before = await database.query("SELECT count(*)::int AS count FROM storyboard_media_assets");
+    const otherCustomer = buildServer({ database, trustedContextResolver: async () => ({ ...scope, actorId: "other-customer" }), videoStorage: storage });
+    const response = await otherCustomer.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/upload-grants`, payload: { expectedSizeBytes: 10_000, contentType: "video/mp4" } });
+    expect(response.statusCode).toBe(403);
+    expect(await database.query("SELECT count(*)::int AS count FROM storyboard_media_assets")).toEqual(before);
+    await otherCustomer.close();
+  });
+
   it("enforces project scope, 20 files, 500MB per file, and ten minutes of verified total duration", async () => {
     expect((await requestGrant({ expectedSizeBytes: maxAssetBytes + 1 })).statusCode).toBe(422);
-    for (let index = 1; index <= 20; index++) await database.query("INSERT INTO storyboard_media_assets(id,enterprise_id,store_id,task_id,shot_list_id,project_id,object_key,content_type,expected_size_bytes,size_bytes,duration_seconds,status,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'video/mp4',1,1,1,'accepted',CURRENT_TIMESTAMP + interval '30 days')", [`asset-${index}`, scope.enterpriseId, scope.storeId, taskId, shotListId, projectId, `already-${index}`]);
+    const first = await requestGrant(); const serverProjectId = first.json().projectId;
+    for (let index = 1; index <= 19; index++) await database.query("INSERT INTO storyboard_media_assets(id,enterprise_id,store_id,task_id,shot_list_id,project_id,object_key,content_type,expected_size_bytes,size_bytes,duration_seconds,status,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,'video/mp4',1,1,1,'accepted',CURRENT_TIMESTAMP + interval '30 days')", [`asset-${index}`, scope.enterpriseId, scope.storeId, taskId, shotListId, serverProjectId, `already-${index}`]);
     expect((await requestGrant()).statusCode).toBe(409);
-    expect((await requestGrant({ projectId: randomUUID() })).statusCode).toBe(201);
+    expect((await requestGrant({ projectId: randomUUID() })).statusCode).toBe(409);
     await database.query("DELETE FROM storyboard_media_upload_grants");
     await database.query("DELETE FROM storyboard_media_assets");
-    await database.query("INSERT INTO storyboard_media_assets(id,enterprise_id,store_id,task_id,shot_list_id,project_id,object_key,content_type,expected_size_bytes,size_bytes,duration_seconds,status,expires_at) VALUES('long',$1,$2,$3,$4,$5,'long','video/mp4',1,1,600,'accepted',CURRENT_TIMESTAMP + interval '30 days')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]);
+    await database.query("INSERT INTO storyboard_media_assets(id,enterprise_id,store_id,task_id,shot_list_id,project_id,object_key,content_type,expected_size_bytes,size_bytes,duration_seconds,status,expires_at) VALUES('long',$1,$2,$3,$4,$5,'long','video/mp4',1,1,600,'accepted',CURRENT_TIMESTAMP + interval '30 days')", [scope.enterpriseId, scope.storeId, taskId, shotListId, serverProjectId]);
     const grant = await requestGrant();
     await storage.put(grant.json().objectKey, { sizeBytes: 1, contentType: "video/mp4", durationSeconds: 1 });
     expect((await app.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${grant.json().assetId}/complete` })).statusCode).toBe(422);
@@ -74,16 +84,27 @@ describe("storyboard media assets", () => {
   it("rejects expired grants and audits retention cleanup after deleting its protected object", async () => {
     const grant = await requestGrant();
     await database.query("UPDATE storyboard_media_upload_grants SET expires_at=$1 WHERE asset_id=$2", [new Date(Date.now() - 1_000), grant.json().assetId]);
+    await database.query("UPDATE storyboard_media_assets SET expires_at=$1 WHERE id=$2", [new Date(Date.now() - 1_000), grant.json().assetId]);
     await storage.put(grant.json().objectKey, { sizeBytes: 1, contentType: "video/mp4", durationSeconds: 1 });
     expect((await app.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${grant.json().assetId}/complete` })).statusCode).toBe(409);
+    const repository = new (await import("../src/video-editing/asset-repository.js")).AssetRepository(database, storage);
+    expect(await repository.expireSources(new Date())).toBe(1);
+    await expect(storage.put(grant.json().objectKey, { sizeBytes: 1, contentType: "video/mp4", durationSeconds: 1 })).rejects.toThrow("immutable");
     const accepted = await requestGrant({ projectId: randomUUID() });
     await storage.put(accepted.json().objectKey, { sizeBytes: 1, contentType: "video/mp4", durationSeconds: 1 });
     await app.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${accepted.json().assetId}/complete` });
     await database.query("UPDATE storyboard_media_assets SET expires_at=$1 WHERE id=$2", [new Date(Date.now() - 1_000), accepted.json().assetId]);
-    const repository = new (await import("../src/video-editing/asset-repository.js")).AssetRepository(database, storage);
     expect(await repository.expireSources(new Date())).toBe(1);
     expect(await storage.inspect(accepted.json().objectKey)).toBeUndefined();
     expect((await database.query("SELECT reason FROM storyboard_media_asset_deletions WHERE asset_id=$1", [accepted.json().assetId])).rows).toEqual([{ reason: "retention_expired" }]);
+  });
+
+  it("prevents overwriting the object after the customer has completed an upload", async () => {
+    const grant = await requestGrant();
+    await storage.put(grant.json().objectKey, { sizeBytes: 1, contentType: "video/mp4", durationSeconds: 1 });
+    expect((await app.inject({ method: "POST", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${grant.json().assetId}/complete` })).statusCode).toBe(201);
+    await expect(storage.put(grant.json().objectKey, { sizeBytes: 2, contentType: "video/mp4", durationSeconds: 2 })).rejects.toThrow("immutable");
+    expect(await storage.inspect(grant.json().objectKey)).toMatchObject({ sizeBytes: 1, durationSeconds: 1 });
   });
 
   afterEach(async () => { await app.close(); });

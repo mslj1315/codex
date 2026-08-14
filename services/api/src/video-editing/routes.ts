@@ -16,7 +16,7 @@ export async function registerVideoAssetRoutes(app: FastifyInstance, database: D
   };
   const ids = (request: FastifyRequest) => { const params = request.params as Record<string, unknown>; return { taskId: String(params.taskId ?? ""), shotListId: String(params.shotListId ?? ""), assetId: String(params.assetId ?? "") }; };
   app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/assets/upload-grants", async (request, reply) => {
-    const body = record(request.body); const result = await assets.createUploadGrant(scope(request), { ...ids(request), projectId: String(body.projectId ?? ""), expectedSizeBytes: body.expectedSizeBytes as number, contentType: String(body.contentType ?? "") });
+    const body = record(request.body); const result = await assets.createUploadGrant(scope(request), { ...ids(request), expectedSizeBytes: body.expectedSizeBytes as number, contentType: String(body.contentType ?? "") });
     return reply.code(201).send(result);
   });
   app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/assets/:assetId/complete", async (request, reply) => reply.code(201).send(await assets.acceptUploadedAsset(scope(request), ids(request))));
