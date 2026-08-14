@@ -7,6 +7,7 @@ import { buildServer } from "../src/server.js";
 import { InMemoryVideoStorage } from "../src/video-editing/storage.js";
 import { StoryboardRenderWorker } from "../src/video-editing/worker.js";
 import { RenderArtifactCleanupRunner } from "../src/video-editing/render-cleanup.js";
+import { DatabaseRenderWorkerRepository } from "../src/video-editing/render-repository.js";
 
 const scope = { enterpriseId: "render-ent", storeId: "render-store", actorId: "render-customer" };
 
@@ -113,6 +114,21 @@ describe("storyboard render queue", () => {
     }, { deleteProtected: async () => { events.push("storage-delete"); } });
     await cleanup.runOnce(); await cleanup.runOnce();
     expect(events).toEqual(["claimed", "storage-delete", "deleted"]);
+  });
+
+  it("database worker repository leases, succeeds with artifacts, retries infrastructure failures, and terminals validation failures", async () => {
+    const now = new Date("2026-08-15T00:00:00.000Z");
+    const repository = new DatabaseRenderWorkerRepository(database, () => now);
+    await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state) VALUES('job-success',$1,$2,$3,$4,$5,1,'final','queued')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]);
+    const claimed = await repository.claim();
+    expect(claimed?.id).toBe("job-success");
+    expect((await database.query("SELECT state,attempt_count FROM storyboard_render_jobs WHERE id='job-success'")).rows).toEqual([{ state: "processing", attempt_count: 1 }]);
+    await repository.succeed("job-success", { outputExpiresAt: new Date("2027-02-11T00:00:00.000Z"), coverCandidates: [{ positionSeconds: 1 }, { positionSeconds: 2 }, { positionSeconds: 3 }], artifacts: [{ objectKey: "output", kind: "video" }, { objectKey: "cover-1", kind: "cover" }, { objectKey: "cover-2", kind: "cover" }, { objectKey: "cover-3", kind: "cover" }] });
+    expect((await database.query("SELECT kind FROM storyboard_render_artifacts WHERE render_job_id='job-success' ORDER BY kind")).rows).toHaveLength(4);
+    await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state) VALUES('job-retry',$1,$2,$3,$4,$5,1,'final','processing')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]); await repository.fail("job-retry", "infrastructure_unavailable", true);
+    expect((await database.query("SELECT state,next_attempt_at FROM storyboard_render_jobs WHERE id='job-retry'")).rows[0].state).toBe("queued");
+    await database.query("UPDATE storyboard_render_jobs SET state='cancelled' WHERE id='job-retry'"); await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state) VALUES('job-terminal',$1,$2,$3,$4,$5,1,'final','processing')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]); await repository.fail("job-terminal", "render_validation_failed", false);
+    expect((await database.query("SELECT state,error_message FROM storyboard_render_jobs WHERE id='job-terminal'")).rows[0]).toMatchObject({ state: "failed", error_message: "render_validation_failed" });
   });
 
   function path() { return `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}`; }
