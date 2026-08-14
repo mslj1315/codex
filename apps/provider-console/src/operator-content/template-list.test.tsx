@@ -47,6 +47,19 @@ describe('TemplateList', () => {
     expect(screen.getByText('v2 · draft_saved')).toBeInTheDocument();
     expect(screen.queryByText('v1 · a_late_event')).toBeNull();
   });
+
+  it('keeps the new-template editor when an older selection completes late', async () => {
+    const a = item('11111111-1111-1111-1111-111111111111', 'A template', 1);
+    const pending = new Map<string, ReturnType<typeof deferred>>();
+    const request = vi.fn((method: string, path: string) => method === 'GET' && path === '/v1/operator-content/templates' ? Promise.resolve([a]) : (() => { const next = deferred<unknown>(); pending.set(path, next); return next.promise; })());
+    const user = userEvent.setup();
+    render(<TemplateList api={{ request } as never} />);
+    await user.click(await screen.findByRole('button', { name: /A template/ }));
+    await user.click(screen.getByRole('button', { name: 'New template' }));
+    resolveSelection(pending, a, [a], [{ version: 1, eventType: 'a_late_event' }]);
+    expect(await screen.findByRole('heading', { name: 'New template' })).toBeInTheDocument();
+    expect(screen.queryByText('v1 · a_late_event')).toBeNull();
+  });
 });
 
 function item(logicalId: string, name: string, version: number): Template {
