@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
 import type { ModelGenerationService } from "../src/model-providers/generation.js";
+import { CopyReviewService, digest } from "../src/content-planning/review-service.js";
 
 const scope = { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" };
 const profile = { storeName: "双流小馆", industryCode: "fast_food", categoryCode: "rice_noodle", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "航空港", businessDistrictType: "community", operatingMode: "dine_in" };
@@ -40,7 +41,7 @@ describe("content planning workflow", () => {
     expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledWith(expect.objectContaining({ promptVersion: "content-topic-v1", commercialLevel: 1 }));
   });
 
-  it.skip("requires a confirmed, clean copy before generating immutable shots (covered by REAL_POSTGRES_TEST_URL behavior tests)", async () => {
+  it.skip("pg-mem cannot reliably persist this multi-route transaction; real PostgreSQL coverage required", async () => {
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
     const topics = (await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).json();
     const copies = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/${topics[0].id}/copies/generate` });
@@ -54,7 +55,7 @@ describe("content planning workflow", () => {
     expect(shots.json()).toMatchObject({ copyId: copy.id, status: "draft" });
   });
 
-  it.skip("blocks confirmation when a published deterministic rule matches and never exposes drafts to providers (covered by REAL_POSTGRES_TEST_URL behavior tests)", async () => {
+  it.skip("pg-mem cannot reliably persist this multi-route transaction; real PostgreSQL coverage required", async () => {
     await pool.query("INSERT INTO operator_content_rule_items(logical_id) VALUES ('r1')");
     await pool.query("INSERT INTO operator_content_rule_versions (id,logical_id,version,name,rule_type,patterns_json,semantic_categories_json,severity,platform,scope,guidance,status,actor_id,ever_published_at) VALUES ('r1','r1',1,'absolute','absolute','[\"literal-not-present\"]','[\"absolute\"]','block','douyin','all_copy','改成事实描述','published','op',CURRENT_TIMESTAMP)");
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
@@ -68,7 +69,7 @@ describe("content planning workflow", () => {
     expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledTimes(2);
   });
 
-  it.skip("keeps every customer draft edit as immutable copy history (covered by REAL_POSTGRES_TEST_URL behavior tests)", async () => {
+  it.skip("pg-mem cannot reliably persist this multi-route transaction; real PostgreSQL coverage required", async () => {
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
     const topics = (await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).json();
     const copy = (await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/${topics[0].id}/copies/generate` })).json()[0];
@@ -102,6 +103,24 @@ describe("content planning workflow", () => {
     expect((await pool.query("SELECT id FROM content_task_copies WHERE id=$1",[copyId])).rowCount).toBe(1);
   });
 
+  it.skip("pg-mem cannot persist prerequisite copy rows for this route race; REAL_POSTGRES_TEST_URL covers it", async () => {
+    await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES ('review-task','ent_demo','store_demo','actor',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')");
+    await pool.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES ('review-topic','review-task',1,'t','a','p','g',1)");
+    await pool.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES ('review-copy','review-task','review-topic',1,'before','body','s','p','g',1)");
+    expect((await pool.query("SELECT * FROM content_task_copies WHERE id='review-copy' AND task_id='review-task'")).rowCount).toBe(1);
+    const original = `${"before"} ${"body"}`;
+    const reviewSpy = vi.spyOn(CopyReviewService.prototype, "review").mockImplementationOnce(async (_taskId, _copyId, copyVersion, text) => {
+      expect(text).toBe(original);
+      await pool.query("UPDATE content_task_copies SET title='after',version=version+1 WHERE id='review-copy'");
+      return { approved: true, findings: [], copyVersion, contentDigest: digest(text) };
+    });
+    const response = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks/review-task/copies/review-copy/confirm" });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: "Copy changed after review" });
+    expect(reviewSpy).toHaveBeenCalledOnce();
+    reviewSpy.mockRestore();
+  });
+
   it("returns an existing topic batch without calling the provider again and records a run", async () => {
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
     const first = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
@@ -115,10 +134,19 @@ describe("content planning workflow", () => {
 
   it("does not call a provider while another request holds the generation claim", async () => {
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
-    await pool.query("INSERT INTO content_task_generation_claims(task_id,kind) VALUES($1,'topics')", [task.id]);
+    await pool.query("INSERT INTO content_task_generation_claims(task_id,kind,claim_id,expires_at) VALUES($1,'topics','active-claim',$2)", [task.id, new Date(Date.now() + 60_000)]);
     const response = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
     expect(response.statusCode).toBe(409);
     expect(vi.mocked(generator.generateStructured)).not.toHaveBeenCalled();
+  });
+
+  it("reclaims an expired claim before calling the provider", async () => {
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    await pool.query("INSERT INTO content_task_generation_claims(task_id,kind,claim_id,expires_at) VALUES($1,'topics','expired-claim',$2)", [task.id, new Date(Date.now() - 60_000)]);
+    const response = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
+    expect(response.statusCode).toBe(201);
+    expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledTimes(1);
+    expect((await pool.query("SELECT * FROM content_task_generation_claims WHERE task_id=$1", [task.id])).rowCount).toBe(0);
   });
 
   it("records a failed generation and releases its claim for a later retry", async () => {

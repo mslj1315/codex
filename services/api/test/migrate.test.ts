@@ -4,6 +4,8 @@ import { runMigrations } from "../src/migrate.js";
 import { readFile, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createDatabase } from "../src/db.js";
+import { buildServer } from "../src/server.js";
+import type { ModelGenerationService } from "../src/model-providers/generation.js";
 
 describe("runMigrations", () => {
   it("records a migration and skips it on the next run", async () => {
@@ -59,12 +61,12 @@ describe("016 operator content PostgreSQL trigger invariants", () => {
   }, 30_000);
 });
 
-describe("018 content planning PostgreSQL transaction and immutability invariants", () => {
-  realPostgresIt("persists a committed copy/version batch and rejects immutable history rewrites", async () => {
+describe("018 content planning PostgreSQL transaction, partial-unique, and trigger invariants", () => {
+  realPostgresIt("persists a committed copy/version batch, permits one confirmed copy, and rejects immutable history rewrites", async () => {
     const database = createDatabase(realPostgresUrl!);
     const files = (await readdir(new URL("../migrations/", import.meta.url))).filter((file) => file.endsWith(".sql")).sort();
     await runMigrations(database, await Promise.all(files.map(async (id) => ({ id, sql: await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8") }))));
-    const client = await database.connect(); const taskId = randomUUID(); const topicId = randomUUID(); const copyId = randomUUID();
+    const client = await database.connect(); const taskId = randomUUID(); const topicId = randomUUID(); const copyId = randomUUID(); const secondCopyId = randomUUID();
     try {
       await client.query("BEGIN");
       await client.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES($1,'e','s','a',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')", [taskId]);
@@ -73,9 +75,44 @@ describe("018 content planning PostgreSQL transaction and immutability invariant
       await client.query("INSERT INTO content_task_copy_versions(id,copy_id,version,title,body) VALUES($1,$2,1,'t','b')", [randomUUID(), copyId]);
       await client.query("COMMIT");
       expect((await database.query("SELECT id FROM content_task_copies WHERE id=$1", [copyId])).rowCount).toBe(1);
+      await client.query("BEGIN");
       await expectRejected(client, "UPDATE content_task_topics SET title='rewrite' WHERE id=$1", [topicId]);
       await expectRejected(client, "UPDATE content_task_copy_versions SET title='rewrite' WHERE copy_id=$1", [copyId]);
+      await client.query("UPDATE content_task_copies SET status='confirmed',confirmed_at=now() WHERE id=$1", [copyId]);
+      await expectRejected(client, "UPDATE content_task_copies SET title='rewrite' WHERE id=$1", [copyId]);
+      await client.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,2,'t2','b2','s','p','g',1)", [secondCopyId, taskId, topicId]);
+      await expectRejected(client, "UPDATE content_task_copies SET status='confirmed',confirmed_at=now() WHERE id=$1", [secondCopyId]);
     } finally { try { await client.query("ROLLBACK"); } catch {} client.release(); await database.end(); }
+  }, 30_000);
+
+  realPostgresIt("returns conflict when a copy changes after its version-bound review", async () => {
+    const database = createDatabase(realPostgresUrl!);
+    const files = (await readdir(new URL("../migrations/", import.meta.url))).filter((file) => file.endsWith(".sql")).sort();
+    await runMigrations(database, await Promise.all(files.map(async (id) => ({ id, sql: await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8") }))));
+    const taskId = randomUUID(); const topicId = randomUUID(); const copyId = randomUUID();
+    await database.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES($1,'race-enterprise','race-store','actor',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')", [taskId]);
+    await database.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$2,1,'t','a','p','g',1)", [topicId, taskId]);
+    await database.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,1,'before','body','s','p','g',1)", [copyId, taskId, topicId]);
+    let raced = false;
+    const racedDatabase = {
+      connect: () => database.connect(),
+      query: async <Row extends Record<string, unknown>>(text: string, values?: readonly unknown[]) => {
+        if (!raced && text.startsWith("INSERT INTO content_task_copy_reviews")) {
+          raced = true;
+          await database.query("UPDATE content_task_copies SET title='after',version=version+1 WHERE id=$1", [copyId]);
+        }
+        return database.query<Row>(text, values ? [...values] : undefined);
+      }
+    };
+    const generator: ModelGenerationService = { generateStructured: async () => { throw new Error("not used by confirmation"); } };
+    const app = buildServer({ database: racedDatabase, trustedContextResolver: async () => ({ enterpriseId: "race-enterprise", storeId: "race-store", actorId: "actor" }), modelGenerationService: generator });
+    try {
+      const response = await app.inject({ method: "POST", url: `/v1/stores/race-store/content-tasks/${taskId}/copies/${copyId}/confirm` });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: "Copy changed after review" });
+      expect(raced).toBe(true);
+      expect((await database.query("SELECT status,version,title FROM content_task_copies WHERE id=$1", [copyId])).rows).toMatchObject([{ status: "draft", version: 2, title: "after" }]);
+    } finally { await app.close(); await database.end(); }
   }, 30_000);
 });
 

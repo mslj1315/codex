@@ -5,10 +5,11 @@ import type { Database, Queryable } from "../db.js";
 import { ForbiddenError } from "../imports/repository.js";
 import type { TrustedContext } from "../imports/service.js";
 import { copyDraftsSchema, shotListSchema, topicArraySchema, type GenerationResult, type ModelGenerationService } from "../model-providers/generation.js";
-import { CopyReviewService } from "./review-service.js";
+import { CopyReviewService, digest } from "./review-service.js";
 
 type Row = Record<string, unknown>;
 type GenerationKind = "topics" | "copies" | "shots";
+interface GenerationClaim { existing?: Row[]; claimId?: string; }
 class WorkflowError extends Error { constructor(message: string, readonly status = 422, readonly findings?: unknown[]) { super(message); } }
 
 export async function registerWorkflowRoutes(app: FastifyInstance, database: Database, resolve: (request: FastifyRequest) => Promise<TrustedContext | undefined>, generator?: ModelGenerationService): Promise<void> {
@@ -79,15 +80,20 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     const item = await task(request); const id = String((request.params as Row).copyId);
     const copy = await database.query<Row>("SELECT * FROM content_task_copies WHERE id=$1 AND task_id=$2", [id, item.id]);
     if (!copy.rowCount || copy.rows[0].status !== "draft") throw new WorkflowError("Draft copy not found", 409);
-    const reviewed = await review.review(String(item.id), id, `${copy.rows[0].title} ${copy.rows[0].body}`);
+    const reviewed = await review.review(String(item.id), id, Number(copy.rows[0].version), `${copy.rows[0].title} ${copy.rows[0].body}`);
     if (!reviewed.approved) throw new WorkflowError("Copy has blocking review findings", 422, reviewed.findings);
     const client = await database.connect();
     try {
       await client.query("BEGIN");
       const locked = await client.query<Row>("SELECT confirmed_copy_id FROM content_tasks WHERE id=$1 FOR UPDATE", [item.id]);
       if (!locked.rowCount || locked.rows[0].confirmed_copy_id) throw new WorkflowError("A copy is already confirmed", 409);
-      const result = await client.query<Row>("UPDATE content_task_copies SET status='confirmed',confirmed_at=CURRENT_TIMESTAMP WHERE id=$1 AND task_id=$2 AND status='draft' RETURNING *", [id, item.id]);
-      if (!result.rowCount) throw new WorkflowError("Draft copy not found", 409);
+      const current = await client.query<Row>("SELECT * FROM content_task_copies WHERE id=$1 AND task_id=$2 FOR UPDATE", [id, item.id]);
+      if (!current.rowCount || current.rows[0].status !== "draft") throw new WorkflowError("Draft copy not found", 409);
+      if (Number(current.rows[0].version) !== reviewed.copyVersion || digest(`${current.rows[0].title} ${current.rows[0].body}`) !== reviewed.contentDigest) throw new WorkflowError("Copy changed after review", 409);
+      const approvedReview = await client.query("SELECT id FROM content_task_copy_reviews WHERE task_id=$1 AND copy_id=$2 AND copy_version=$3 AND content_digest=$4 AND approved=true", [item.id, id, reviewed.copyVersion, reviewed.contentDigest]);
+      if (!approvedReview.rowCount) throw new WorkflowError("Copy review is no longer valid", 409);
+      const result = await client.query<Row>("UPDATE content_task_copies SET status='confirmed',confirmed_at=CURRENT_TIMESTAMP WHERE id=$1 AND task_id=$2 AND status='draft' AND version=$3 RETURNING *", [id, item.id, reviewed.copyVersion]);
+      if (!result.rowCount) throw new WorkflowError("Copy changed after review", 409);
       const pointer = await client.query("UPDATE content_tasks SET status='copy_confirmed',confirmed_copy_id=$2 WHERE id=$1 AND confirmed_copy_id IS NULL", [item.id, id]);
       if (!pointer.rowCount) throw new WorkflowError("A copy is already confirmed", 409);
       await client.query("COMMIT"); return copyJson(result.rows[0]);
@@ -95,29 +101,29 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
   });
 
   async function generateTopics(item: Row): Promise<unknown[]> {
-    const existing = await acquireClaim(item, "topics", "", client => findTopics(client, item.id));
-    if (existing) return existing.map(topicJson);
+    const claim = await acquireClaim(item, "topics", "", client => findTopics(client, item.id));
+    if (claim.existing) return claim.existing.map(topicJson);
     let output: GenerationResult<Array<Record<string, string | number>>>;
     try {
       output = await generationService.generateStructured({ requestId: String(item.id), promptVersion: "content-topic-v1", commercialLevel: level(item), input: generationInput(item), schema: topicArraySchema });
       if (output.output.length !== 3) throw new WorkflowError("Topic generation must return exactly three topics", 502);
-      return (await completeClaim(item, "topics", "", output, async client => {
+      return (await completeClaim(item, "topics", "", claim.claimId!, output, async client => {
         const saved: Row[] = [];
         for (const [index, topic] of output.output.entries()) saved.push((await client.query<Row>("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", [randomUUID(), item.id, index + 1, topic.title, topic.angle, topic.productReference, topic.goalReference, topic.commercialLevel])).rows[0]);
         return saved;
       }, client => findTopics(client, item.id))).map(topicJson);
-    } catch (error) { await failClaim(item, "topics", "", "content-topic-v1", error); throw error; }
+    } catch (error) { await failClaim(item, "topics", "", claim.claimId!, "content-topic-v1", error); throw error; }
   }
 
   async function generateCopies(item: Row, topicId: string): Promise<unknown[]> {
     const topic = await database.query<Row>("SELECT * FROM content_task_topics WHERE id=$1 AND task_id=$2", [topicId, item.id]);
     if (!topic.rowCount) throw new WorkflowError("Topic not found", 404);
-    const existing = await acquireClaim(item, "copies", topicId, client => findCopies(client, item.id, topicId));
-    if (existing) return existing.map(copyJson);
+    const claim = await acquireClaim(item, "copies", topicId, client => findCopies(client, item.id, topicId));
+    if (claim.existing) return claim.existing.map(copyJson);
     let output: GenerationResult<Array<Record<string, string | number>>>;
     try {
       output = await generationService.generateStructured({ requestId: `${item.id}:${topicId}`, promptVersion: "content-copy-v1", commercialLevel: level(item), input: { ...generationInput(item), topic: topicJson(topic.rows[0]) }, schema: copyDraftsSchema });
-      return (await completeClaim(item, "copies", topicId, output, async client => {
+      return (await completeClaim(item, "copies", topicId, claim.claimId!, output, async client => {
         const saved: Row[] = [];
         for (const [index, generated] of output.output.entries()) {
           const copy = (await client.query<Row>("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *", [randomUUID(), item.id, topicId, index + 1, generated.title, generated.body, generated.strategy, generated.productReference, generated.goalReference, generated.commercialLevel])).rows[0];
@@ -126,58 +132,69 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
         }
         return saved;
       }, client => findCopies(client, item.id, topicId))).map(copyJson);
-    } catch (error) { await failClaim(item, "copies", topicId, "content-copy-v1", error); throw error; }
+    } catch (error) { await failClaim(item, "copies", topicId, claim.claimId!, "content-copy-v1", error); throw error; }
   }
 
   async function generateShots(item: Row): Promise<unknown> {
     if (item.status !== "copy_confirmed" || !item.confirmed_copy_id) throw new WorkflowError("A confirmed copy is required before shots", 409);
     const copy = (await database.query<Row>("SELECT * FROM content_task_copies WHERE id=$1 AND task_id=$2", [item.confirmed_copy_id, item.id])).rows[0];
     const copyId = String(item.confirmed_copy_id);
-    const existing = await acquireClaim(item, "shots", copyId, client => findShots(client, item.id, copyId));
-    if (existing) return shotsJson(existing[0]);
+    const claim = await acquireClaim(item, "shots", copyId, client => findShots(client, item.id, copyId));
+    if (claim.existing) return shotsJson(claim.existing[0]);
     let output: GenerationResult<Array<Record<string, string | number>>>;
     try {
       output = await generationService.generateStructured({ requestId: `${item.id}:${copy.id}`, promptVersion: "content-shots-v1", commercialLevel: level(item), input: { ...generationInput(item), copy: copyJson(copy) }, schema: shotListSchema });
-      const saved = await completeClaim(item, "shots", copyId, output, client => client.query<Row>("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json) VALUES($1,$2,$3,$4) RETURNING *", [randomUUID(), item.id, copy.id, JSON.stringify(output.output)]).then(result => result.rows), client => findShots(client, item.id, copyId));
+      const saved = await completeClaim(item, "shots", copyId, claim.claimId!, output, client => client.query<Row>("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json) VALUES($1,$2,$3,$4) RETURNING *", [randomUUID(), item.id, copy.id, JSON.stringify(output.output)]).then(result => result.rows), client => findShots(client, item.id, copyId));
       return shotsJson(saved[0]);
-    } catch (error) { await failClaim(item, "shots", copyId, "content-shots-v1", error); throw error; }
+    } catch (error) { await failClaim(item, "shots", copyId, claim.claimId!, "content-shots-v1", error); throw error; }
   }
 
-  async function acquireClaim(item: Row, kind: GenerationKind, subjectId: string, findExisting: (client: PoolClient) => Promise<Row[]>): Promise<Row[] | undefined> {
+  async function acquireClaim(item: Row, kind: GenerationKind, subjectId: string, findExisting: (client: PoolClient) => Promise<Row[]>): Promise<GenerationClaim> {
     const client = await database.connect();
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM content_tasks WHERE id=$1 FOR UPDATE", [item.id]);
       const existing = await findExisting(client);
-      if (existing.length) { await client.query("COMMIT"); return existing; }
-      const claim = await client.query("INSERT INTO content_task_generation_claims(task_id,kind,subject_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING task_id", [item.id, kind, subjectId]);
+      if (existing.length) { await client.query("COMMIT"); return { existing }; }
+      const claimId = randomUUID();
+      const inserted = await client.query<Row>("INSERT INTO content_task_generation_claims(task_id,kind,subject_id,claim_id,expires_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING claim_id", [item.id, kind, subjectId, claimId, leaseExpiry()]);
+      let claim = inserted;
+      if (!claim.rowCount) {
+        const active = await client.query<Row>("SELECT claim_id,expires_at FROM content_task_generation_claims WHERE task_id=$1 AND kind=$2 AND subject_id=$3 FOR UPDATE", [item.id, kind, subjectId]);
+        if (!active.rowCount || new Date(String(active.rows[0].expires_at)).getTime() > Date.now()) throw new WorkflowError("Generation is already in progress", 409);
+        claim = await client.query<Row>("UPDATE content_task_generation_claims SET claim_id=$4,claimed_at=CURRENT_TIMESTAMP,expires_at=$5 WHERE task_id=$1 AND kind=$2 AND subject_id=$3 RETURNING claim_id", [item.id, kind, subjectId, claimId, leaseExpiry()]);
+      }
       await client.query("COMMIT");
       if (!claim.rowCount) throw new WorkflowError("Generation is already in progress", 409);
-      return undefined;
+      return { claimId: String(claim.rows[0].claim_id) };
     } catch (error) { await rollback(client); throw error; } finally { client.release(); }
   }
 
-  async function completeClaim<T extends Row>(item: Row, kind: GenerationKind, subjectId: string, output: GenerationResult<unknown>, persist: (client: PoolClient) => Promise<T[]>, findExisting: (client: PoolClient) => Promise<Row[]>): Promise<T[]> {
+  async function completeClaim<T extends Row>(item: Row, kind: GenerationKind, subjectId: string, claimId: string, output: GenerationResult<unknown>, persist: (client: PoolClient) => Promise<T[]>, findExisting: (client: PoolClient) => Promise<Row[]>): Promise<T[]> {
     const client = await database.connect();
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM content_tasks WHERE id=$1 FOR UPDATE", [item.id]);
+      const ownership = await client.query("SELECT claim_id FROM content_task_generation_claims WHERE task_id=$1 AND kind=$2 AND subject_id=$3 AND claim_id=$4 FOR UPDATE", [item.id, kind, subjectId, claimId]);
+      if (!ownership.rowCount) throw new WorkflowError("Generation claim is no longer owned", 409);
       const existing = await findExisting(client);
       const rows = existing.length ? existing as T[] : await persist(client);
       await recordRun(client, item, kind, subjectId, output, "succeeded");
-      await client.query("DELETE FROM content_task_generation_claims WHERE task_id=$1 AND kind=$2 AND subject_id=$3", [item.id, kind, subjectId]);
+      await client.query("DELETE FROM content_task_generation_claims WHERE task_id=$1 AND kind=$2 AND subject_id=$3 AND claim_id=$4", [item.id, kind, subjectId, claimId]);
       await client.query("COMMIT");
       return rows;
     } catch (error) { await rollback(client); throw error; } finally { client.release(); }
   }
 
-  async function failClaim(item: Row, kind: GenerationKind, subjectId: string, promptVersion: string, error: unknown): Promise<void> {
+  async function failClaim(item: Row, kind: GenerationKind, subjectId: string, claimId: string, promptVersion: string, error: unknown): Promise<void> {
     const client = await database.connect();
     try {
       await client.query("BEGIN");
       await client.query("SELECT id FROM content_tasks WHERE id=$1 FOR UPDATE", [item.id]);
+      const ownership = await client.query("SELECT claim_id FROM content_task_generation_claims WHERE task_id=$1 AND kind=$2 AND subject_id=$3 AND claim_id=$4 FOR UPDATE", [item.id, kind, subjectId, claimId]);
+      if (!ownership.rowCount) { await client.query("COMMIT"); return; }
       await recordRun(client, item, kind, subjectId, { provider: "unknown", model: "unknown", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: 0 }, "failed", promptVersion, failureCode(error));
-      await client.query("DELETE FROM content_task_generation_claims WHERE task_id=$1 AND kind=$2 AND subject_id=$3", [item.id, kind, subjectId]);
+      await client.query("DELETE FROM content_task_generation_claims WHERE task_id=$1 AND kind=$2 AND subject_id=$3 AND claim_id=$4", [item.id, kind, subjectId, claimId]);
       await client.query("COMMIT");
     } catch (recordError) { await rollback(client); if (!(recordError instanceof WorkflowError)) return; throw recordError; } finally { client.release(); }
   }
@@ -194,10 +211,11 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
 }
 
 async function recordRun(client: PoolClient, item: Row, kind: GenerationKind, subjectId: string, output: { provider: string; model: string; usage: GenerationResult<unknown>["usage"]; latencyMs: number }, status: "succeeded" | "failed", promptVersion?: string, failure?: string): Promise<void> {
-  await client.query("INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,confirmed_feedback_snapshot_json,status,usage_json,latency_ms,failure_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'{}',$9,$10,$11,$12)", [randomUUID(), item.id, kind, subjectId, output.provider, output.model, promptVersion ?? ({ topics: "content-topic-v1", copies: "content-copy-v1", shots: "content-shots-v1" } as const)[kind], item.template_snapshot_json, status, JSON.stringify(output.usage), output.latencyMs, failure ?? null]);
+  await client.query("INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms,failure_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)", [randomUUID(), item.id, kind, subjectId, output.provider, output.model, promptVersion ?? ({ topics: "content-topic-v1", copies: "content-copy-v1", shots: "content-shots-v1" } as const)[kind], item.template_snapshot_json, status, JSON.stringify(output.usage), output.latencyMs, failure ?? null]);
 }
 async function rollback(client: PoolClient): Promise<void> { try { await client.query("ROLLBACK"); } catch { /* transaction was not started or already closed */ } }
 function failureCode(error: unknown): string { return error instanceof Error ? error.constructor.name.slice(0, 120) : "UnknownError"; }
+function leaseExpiry(): Date { return new Date(Date.now() + 10 * 60 * 1000); }
 function level(item: Row): 0 | 1 | 2 | 3 { return Number(item.commercial_level) as 0 | 1 | 2 | 3; }
 function optional(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
 function generationInput(item: Row) { return { profile: JSON.parse(String(item.profile_snapshot_json)), stage: JSON.parse(String(item.stage_snapshot_json)), templates: JSON.parse(String(item.template_snapshot_json)), inspiration: item.inspiration }; }
