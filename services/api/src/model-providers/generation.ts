@@ -1,5 +1,5 @@
 import { DeepSeekProvider } from "./deepseek.js";
-import type { ModelHttpClient, ModelProvider, ModelProviderId } from "./provider.js";
+import { ModelProviderError, ModelProviderResponseError, ModelProviderTimeoutError, type ModelHttpClient, type ModelProvider, type ModelProviderId } from "./provider.js";
 import { QwenProvider } from "./qwen.js";
 
 export type { ModelHttpClient } from "./provider.js";
@@ -34,7 +34,6 @@ export function createGenerationService(config: GenerationConfig, dependencies: 
     async generateStructured<T>(request: GenerateStructuredRequest<T>): Promise<GenerationResult<T>> {
       if (!isCommercialLevel(request.commercialLevel)) throw new Error("commercialLevel must be a safe integer from 0 to 3");
       const startedAt = now();
-      let lastError: unknown;
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -43,13 +42,14 @@ export function createGenerationService(config: GenerationConfig, dependencies: 
           const output = parseStructured(request.schema, response.output, request.commercialLevel);
           return { provider: provider.id, model: config.model, output, usage: response.usage, latencyMs: Math.max(0, now() - startedAt) };
         } catch (error) {
-          lastError = controller.signal.aborted ? new Error(`model provider timed out after ${timeoutMs}ms`) : error;
+          const classifiedError = controller.signal.aborted ? new ModelProviderTimeoutError(timeoutMs) : error;
+          if (attempt === maxRetries || !isRetryable(classifiedError)) throw classifiedError;
         } finally {
           clearTimeout(timeout);
         }
-        if (attempt < maxRetries) await sleep(25 * (attempt + 1));
+        await sleep(25 * (attempt + 1));
       }
-      throw lastError;
+      throw new Error("unreachable model generation retry state");
     }
   };
 }
@@ -62,7 +62,7 @@ export function createConfiguredGenerationService(environment: Record<string, st
   if (provider !== "deepseek" && provider !== "qwen") throw new Error("MODEL_PROVIDER must be deepseek or qwen");
   if (!model) throw new Error("MODEL_MODEL is required when MODEL_PROVIDER is configured");
   if (!apiKey) throw new Error("MODEL_API_KEY is required when MODEL_PROVIDER is configured");
-  return createGenerationService({ provider, model, apiKey, baseUrl: environment.MODEL_BASE_URL, timeoutMs: numberFromEnv(environment.MODEL_TIMEOUT_MS), maxRetries: numberFromEnv(environment.MODEL_MAX_RETRIES) });
+  return createGenerationService({ provider, model, apiKey, baseUrl: baseUrlFromEnv(environment.MODEL_BASE_URL), timeoutMs: numberFromEnv(environment.MODEL_TIMEOUT_MS), maxRetries: numberFromEnv(environment.MODEL_MAX_RETRIES) });
 }
 
 function validateConfig(config: GenerationConfig): void {
@@ -79,8 +79,23 @@ function numberFromEnv(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function baseUrlFromEnv(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !url.hostname) throw new Error();
+    return url.toString();
+  } catch {
+    throw new Error("MODEL_BASE_URL must be a non-empty absolute HTTPS URL");
+  }
+}
+
+function isRetryable(error: unknown): boolean {
+  return error instanceof ModelProviderError ? error.retryable : true;
+}
+
 function parseStructured<T>(schema: StructuredSchema<T>, value: unknown, commercialLevel: CommercialLevel): T {
-  try { return schema.parse(value, commercialLevel); } catch { throw new Error("model returned invalid structured output"); }
+  try { return schema.parse(value, commercialLevel); } catch { throw new ModelProviderResponseError("model returned invalid structured output"); }
 }
 
 function object(value: unknown): Record<string, unknown> {

@@ -1,4 +1,4 @@
-import type { ModelHttpClient, ModelProvider, ProviderRequest, ProviderResponse } from "./provider.js";
+import { ModelProviderHttpError, ModelProviderResponseError, type ModelHttpClient, type ModelProvider, type ProviderRequest, type ProviderResponse } from "./provider.js";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 
@@ -27,10 +27,10 @@ function chatBody(request: ProviderRequest): string {
 }
 
 export async function parseChatResponse(response: { status: number; json(): Promise<unknown> }): Promise<ProviderResponse> {
-  if (response.status < 200 || response.status >= 300) throw new Error(`model provider returned HTTP ${response.status}`);
+  if (response.status < 200 || response.status >= 300) throw new ModelProviderHttpError(response.status);
   const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown } };
   const content = payload.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error("model provider response has no structured content");
+  if (typeof content !== "string") throw new ModelProviderResponseError("model provider response has no structured content");
   try {
     return {
       output: JSON.parse(content),
@@ -41,11 +41,12 @@ export async function parseChatResponse(response: { status: number; json(): Prom
       }
     };
   } catch (error) {
-    if (error instanceof SyntaxError) throw new Error("model provider returned invalid JSON");
+    if (error instanceof SyntaxError) throw new ModelProviderResponseError("model provider returned invalid JSON");
     throw error;
   }
 }
 
 function positiveInteger(value: unknown): number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new ModelProviderResponseError("model provider returned invalid usage");
+  return value;
 }
