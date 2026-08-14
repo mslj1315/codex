@@ -60,6 +60,27 @@ describe("content planning workflow", () => {
     expect(vi.mocked(generator.generateStructured)).not.toHaveBeenCalled();
   });
 
+  it("rejects provider and operator contexts from every content workflow command without writes or model calls", async () => {
+    const beforeTasks = await pool.query("SELECT count(*)::int AS count FROM content_tasks");
+    const beforeReviews = await pool.query("SELECT count(*)::int AS count FROM content_task_copy_reviews");
+    const commands = [
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } },
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/topics/generate" },
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/topics/topic/copies/generate" },
+      { method: "PUT", url: "/v1/stores/store_demo/content-tasks/task/copies/copy", payload: { title: "x", body: "y" } },
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/copies/copy/confirm" },
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/shots/generate" }
+    ] as const;
+    for (const actorRole of ["provider", "operator_editor", "operator_reviewer"] as const) {
+      const privilegedApp = buildServer({ database: pool, trustedContextResolver: async () => ({ ...scope, actorRole }), modelGenerationService: generator });
+      for (const command of commands) expect((await privilegedApp.inject(command)).statusCode).toBe(403);
+      await privilegedApp.close();
+    }
+    expect(vi.mocked(generator.generateStructured)).not.toHaveBeenCalled();
+    expect(await pool.query("SELECT count(*)::int AS count FROM content_tasks")).toEqual(beforeTasks);
+    expect(await pool.query("SELECT count(*)::int AS count FROM content_task_copy_reviews")).toEqual(beforeReviews);
+  });
+
   it.skip("pg-mem cannot reliably persist generated copy rows across route transactions", async () => {
     const { taskId } = await seedDraftCopy();
     expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${taskId}/shots/generate` })).statusCode).toBe(409);

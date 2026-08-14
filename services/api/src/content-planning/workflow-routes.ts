@@ -25,6 +25,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     const storeId = String((request.params as Row).storeId ?? "");
     const context = request.trustedContext;
     if (!context || context.storeId !== storeId) throw new ForbiddenError("Store is outside trusted request context");
+    if (context.actorRole !== undefined) throw new ForbiddenError("Content planning is available only to customer actors");
     return context;
   };
   const body = (request: FastifyRequest): Row => {
