@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createDatabase, type Database } from "./db.js";
 import { registerImportRoutes } from "./imports/routes.js";
 import { registerProfileRoutes } from "./content-planning/profile-routes.js";
+import { registerWorkflowRoutes } from "./content-planning/workflow-routes.js";
 import { registerOperatorContentRoutes } from "./operator-content/routes.js";
 import { registerOperatorAuthRoutes } from "./operator-auth/routes.js";
 import { createConfiguredGenerationService, type ModelGenerationService } from "./model-providers/generation.js";
@@ -43,6 +44,7 @@ export function buildServer(options: ServerOptions = {}) {
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, database, contextResolver));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
+    if (options.modelGenerationService) app.register((instance) => registerWorkflowRoutes(instance, database, contextResolver, options.modelGenerationService));
   }
   if (options.operatorConsoleDistDir) {
     app.register(fastifyStatic, { root: options.operatorConsoleDistDir, prefix: "/", wildcard: false });
