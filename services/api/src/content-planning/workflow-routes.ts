@@ -5,7 +5,7 @@ import type { Database, Queryable } from "../db.js";
 import { ForbiddenError } from "../imports/repository.js";
 import type { TrustedContext } from "../imports/service.js";
 import { copyDraftsSchema, shotListSchema, topicArraySchema, type GenerationResult, type ModelGenerationService } from "../model-providers/generation.js";
-import { CopyReviewService, digest } from "./review-service.js";
+import { CopyReviewService, CopyReviewUnavailableError, digest, type CopyReviewResult } from "./review-service.js";
 
 type Row = Record<string, unknown>;
 type GenerationKind = "topics" | "copies" | "shots";
@@ -15,7 +15,7 @@ class WorkflowError extends Error { constructor(message: string, readonly status
 export async function registerWorkflowRoutes(app: FastifyInstance, database: Database, resolve: (request: FastifyRequest) => Promise<TrustedContext | undefined>, generator?: ModelGenerationService): Promise<void> {
   if (!generator) throw new Error("workflow routes require a generation service");
   const generationService = generator;
-  const review = new CopyReviewService(database);
+  const review = new CopyReviewService(database, generationService);
   app.addHook("onRequest", async (request, reply) => {
     const context = await resolve(request);
     if (!context) return reply.code(403).send({ error: "No trusted request context" });
@@ -80,7 +80,13 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     const item = await task(request); const id = String((request.params as Row).copyId);
     const copy = await database.query<Row>("SELECT * FROM content_task_copies WHERE id=$1 AND task_id=$2", [id, item.id]);
     if (!copy.rowCount || copy.rows[0].status !== "draft") throw new WorkflowError("Draft copy not found", 409);
-    const reviewed = await review.review(String(item.id), id, Number(copy.rows[0].version), `${copy.rows[0].title} ${copy.rows[0].body}`);
+    let reviewed: CopyReviewResult;
+    try {
+      reviewed = await review.review(String(item.id), id, Number(copy.rows[0].version), `${copy.rows[0].title} ${copy.rows[0].body}`, level(item));
+    } catch (error) {
+      if (error instanceof CopyReviewUnavailableError) throw new WorkflowError("Semantic review is unavailable; update the draft and try again", 422);
+      throw error;
+    }
     if (!reviewed.approved) throw new WorkflowError("Copy has blocking review findings", 422, reviewed.findings);
     const client = await database.connect();
     try {

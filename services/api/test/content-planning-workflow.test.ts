@@ -31,6 +31,19 @@ describe("content planning workflow", () => {
     await app.inject({ method: "POST", url: "/v1/stores/store_demo/operating-stages", payload: { effectiveDate: "2026-08-14", primaryGoal: "increase_visits" } });
   });
 
+  async function seedDraftCopy() {
+    const taskId = randomUUID(); const topicId = randomUUID(); const copyId = randomUUID(); const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES($1,'ent_demo','store_demo','actor_demo',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')", [taskId]);
+      await client.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$2,1,'t','a','p','g',1)", [topicId, taskId]);
+      await client.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,1,'draft title','draft body','s','p','g',1)", [copyId, taskId, topicId]);
+      await client.query("INSERT INTO content_task_copy_versions(id,copy_id,version,title,body) VALUES($1,$2,1,'draft title','draft body')", [randomUUID(), copyId]);
+      await client.query("COMMIT");
+    } finally { client.release(); }
+    return { taskId, topicId, copyId };
+  }
+
   it("locks profile and stage snapshots, then generates exactly three topics", async () => {
     const task = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { inspiration: "老板每天凌晨熬汤", persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } });
     expect(task.statusCode).toBe(201);
@@ -41,21 +54,18 @@ describe("content planning workflow", () => {
     expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledWith(expect.objectContaining({ promptVersion: "content-topic-v1", commercialLevel: 1 }));
   });
 
-  it.skip("pg-mem cannot reliably persist this multi-route transaction; real PostgreSQL coverage required", async () => {
-    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
-    const topics = (await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).json();
-    const copies = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/${topics[0].id}/copies/generate` });
-    expect(copies.statusCode).toBe(201);
-    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/shots/generate` })).statusCode).toBe(409);
-    const copy = copies.json()[0];
-    expect((await pool.query("SELECT id FROM content_task_copies WHERE id=$1 AND task_id=$2", [copy.id, task.id])).rowCount).toBe(1);
-    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/copies/${copy.id}/confirm` })).statusCode).toBe(200);
-    const shots = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/shots/generate` });
-    expect(shots.statusCode).toBe(201);
-    expect(shots.json()).toMatchObject({ copyId: copy.id, status: "draft" });
+  it("blocks shot generation before any copy is confirmed", async () => {
+    const task = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } });
+    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.json().id}/shots/generate` })).statusCode).toBe(409);
+    expect(vi.mocked(generator.generateStructured)).not.toHaveBeenCalled();
   });
 
-  it.skip("pg-mem cannot reliably persist this multi-route transaction; real PostgreSQL coverage required", async () => {
+  it.skip("pg-mem cannot reliably persist generated copy rows across route transactions", async () => {
+    const { taskId } = await seedDraftCopy();
+    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${taskId}/shots/generate` })).statusCode).toBe(409);
+  });
+
+  it.skip("pg-mem cannot reliably persist generated copy rows across route transactions", async () => {
     await pool.query("INSERT INTO operator_content_rule_items(logical_id) VALUES ('r1')");
     await pool.query("INSERT INTO operator_content_rule_versions (id,logical_id,version,name,rule_type,patterns_json,semantic_categories_json,severity,platform,scope,guidance,status,actor_id,ever_published_at) VALUES ('r1','r1',1,'absolute','absolute','[\"literal-not-present\"]','[\"absolute\"]','block','douyin','all_copy','改成事实描述','published','op',CURRENT_TIMESTAMP)");
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
@@ -69,7 +79,7 @@ describe("content planning workflow", () => {
     expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledTimes(2);
   });
 
-  it.skip("pg-mem cannot reliably persist this multi-route transaction; real PostgreSQL coverage required", async () => {
+  it.skip("pg-mem cannot reliably persist generated copy rows across route transactions", async () => {
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
     const topics = (await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).json();
     const copy = (await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/${topics[0].id}/copies/generate` })).json()[0];
@@ -101,6 +111,14 @@ describe("content planning workflow", () => {
     const copyId=randomUUID(); const client=await pool.connect(); try { await client.query("BEGIN"); for(const [i, item] of [{title:'手艺版',body:'老板凌晨熬汤',strategy:'persona_story'},{title:'生活版',body:'午饭来碗热米线',strategy:'daily_life'},{title:'产品版',body:'招牌米线现煮',strategy:'product_value'}].entries()){const id=i===0?copyId:randomUUID(); const result=await client.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",[id,'exact-task','exact-topic',i+1,item.title,item.body,item.strategy,'招牌米线','到店',1]); await client.query("INSERT INTO content_task_copy_versions(id,copy_id,version,title,body) VALUES($1,$2,1,$3,$4)",[randomUUID(),id,item.title,item.body]); expect(result.rowCount).toBe(1);} expect((await client.query("SELECT id FROM content_task_copies WHERE id=$1",[copyId])).rowCount).toBe(1); await client.query("COMMIT");
     } finally { client.release(); }
     expect((await pool.query("SELECT id FROM content_task_copies WHERE id=$1",[copyId])).rowCount).toBe(1);
+  });
+
+  it("runs structured semantic review server-side and stores only its result metadata", async () => {
+    const { taskId, copyId } = await seedDraftCopy();
+    const result = await new CopyReviewService(pool, generator).review(taskId, copyId, 1, "draft title draft body", 1);
+    expect(result.approved).toBe(true);
+    expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledWith(expect.objectContaining({ promptVersion: "content-semantic-review-v1", commercialLevel: 1, input: expect.objectContaining({ text: "draft title draft body" }) }));
+    expect((await pool.query("SELECT provider,model,prompt_version,result_json FROM content_task_copy_reviews WHERE copy_id=$1", [copyId])).rows).toMatchObject([{ provider: "deepseek", model: "test", prompt_version: "content-semantic-review-v1" }]);
   });
 
   it.skip("pg-mem cannot persist prerequisite copy rows for this route race; REAL_POSTGRES_TEST_URL covers it", async () => {

@@ -104,7 +104,7 @@ describe("018 content planning PostgreSQL transaction, partial-unique, and trigg
         return database.query<Row>(text, values ? [...values] : undefined);
       }
     };
-    const generator: ModelGenerationService = { generateStructured: async () => { throw new Error("not used by confirmation"); } };
+    const generator: ModelGenerationService = { generateStructured: async () => ({ provider: "deepseek", model: "test", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, latencyMs: 1, output: { approved: true, findings: [] } as never }) };
     const app = buildServer({ database: racedDatabase, trustedContextResolver: async () => ({ enterpriseId: "race-enterprise", storeId: "race-store", actorId: "actor" }), modelGenerationService: generator });
     try {
       const response = await app.inject({ method: "POST", url: `/v1/stores/race-store/content-tasks/${taskId}/copies/${copyId}/confirm` });
@@ -112,6 +112,27 @@ describe("018 content planning PostgreSQL transaction, partial-unique, and trigg
       expect(response.json()).toEqual({ error: "Copy changed after review" });
       expect(raced).toBe(true);
       expect((await database.query("SELECT status,version,title FROM content_task_copies WHERE id=$1", [copyId])).rows).toMatchObject([{ status: "draft", version: 2, title: "after" }]);
+    } finally { await app.close(); await database.end(); }
+  }, 30_000);
+
+  realPostgresIt("enforces shot gate, deterministic block, edit history, and semantic fail-closed through routes", async () => {
+    const database = createDatabase(realPostgresUrl!);
+    const files = (await readdir(new URL("../migrations/", import.meta.url))).filter(file => file.endsWith(".sql")).sort();
+    await runMigrations(database, await Promise.all(files.map(async id => ({ id, sql: await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8") }))));
+    const enterpriseId = `route-e-${randomUUID()}`; const storeId = `route-s-${randomUUID()}`;
+    const makeDraft = async (title: string) => { const taskId = randomUUID(); const topicId = randomUUID(); const copyId = randomUUID(); await database.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES($1,$2,$3,'actor',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')", [taskId, enterpriseId, storeId]); await database.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$2,1,'t','a','p','g',1)", [topicId, taskId]); await database.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,1,$4,'body','s','p','g',1)", [copyId, taskId, topicId, title]); await database.query("INSERT INTO content_task_copy_versions(id,copy_id,version,title,body) VALUES($1,$2,1,$3,'body')", [randomUUID(), copyId, title]); return { taskId, copyId }; };
+    let semanticFails = false;
+    const generator: ModelGenerationService = { generateStructured: async request => { if (semanticFails) throw new Error("unavailable"); return { provider: "deepseek", model: "test", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, latencyMs: 1, output: (request.promptVersion === "content-semantic-review-v1" ? { approved: true, findings: [] } : []) as never }; } };
+    const app = buildServer({ database, trustedContextResolver: async () => ({ enterpriseId, storeId, actorId: "actor" }), modelGenerationService: generator });
+    try {
+      const gated = await makeDraft("safe");
+      expect((await app.inject({ method: "POST", url: `/v1/stores/${storeId}/content-tasks/${gated.taskId}/shots/generate` })).statusCode).toBe(409);
+      const editable = await makeDraft("safe");
+      expect((await app.inject({ method: "PUT", url: `/v1/stores/${storeId}/content-tasks/${editable.taskId}/copies/${editable.copyId}`, payload: { title: "edited", body: "edited body" } })).statusCode).toBe(200);
+      expect((await database.query("SELECT version FROM content_task_copy_versions WHERE copy_id=$1 ORDER BY version", [editable.copyId])).rows).toEqual([{ version: 1 }, { version: 2 }]);
+      const ruleId = randomUUID(); await database.query("INSERT INTO operator_content_rule_items(logical_id) VALUES($1)", [ruleId]); await database.query("INSERT INTO operator_content_rule_versions(id,logical_id,version,name,rule_type,patterns_json,semantic_categories_json,severity,platform,scope,guidance,status,actor_id,ever_published_at) VALUES($1,$2,1,'r','literal','[\"forbidden\"]','[]','block','douyin','all_copy','rewrite','published','operator',now())", [randomUUID(), ruleId]);
+      const blocked = await makeDraft("forbidden"); expect((await app.inject({ method: "POST", url: `/v1/stores/${storeId}/content-tasks/${blocked.taskId}/copies/${blocked.copyId}/confirm` })).statusCode).toBe(422);
+      semanticFails = true; const unavailable = await makeDraft("safe again"); expect((await app.inject({ method: "POST", url: `/v1/stores/${storeId}/content-tasks/${unavailable.taskId}/copies/${unavailable.copyId}/confirm` })).statusCode).toBe(422);
     } finally { await app.close(); await database.end(); }
   }, 30_000);
 });
