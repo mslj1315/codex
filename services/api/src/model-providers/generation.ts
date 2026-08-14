@@ -4,10 +4,11 @@ import { QwenProvider } from "./qwen.js";
 
 export type { ModelHttpClient } from "./provider.js";
 
-export interface StructuredSchema<T> { parse(value: unknown): T }
+export type CommercialLevel = 0 | 1 | 2 | 3;
+export interface StructuredSchema<T> { parse(value: unknown, commercialLevel: CommercialLevel): T }
 export interface GenerationConfig { provider: ModelProviderId; model: string; apiKey: string; baseUrl?: string; timeoutMs?: number; maxRetries?: number }
 export interface GenerationDependencies { http?: ModelHttpClient; sleep?: (milliseconds: number) => Promise<void>; now?: () => number }
-export interface GenerateStructuredRequest<T> { requestId: string; promptVersion: string; input: unknown; schema: StructuredSchema<T> }
+export interface GenerateStructuredRequest<T> { requestId: string; promptVersion: string; commercialLevel: CommercialLevel; input: unknown; schema: StructuredSchema<T> }
 export interface GenerationResult<T> { provider: ModelProviderId; model: string; output: T; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; latencyMs: number }
 export interface ModelGenerationService { generateStructured<T>(request: GenerateStructuredRequest<T>): Promise<GenerationResult<T>> }
 
@@ -31,6 +32,7 @@ export function createGenerationService(config: GenerationConfig, dependencies: 
 
   return {
     async generateStructured<T>(request: GenerateStructuredRequest<T>): Promise<GenerationResult<T>> {
+      if (!isCommercialLevel(request.commercialLevel)) throw new Error("commercialLevel must be a safe integer from 0 to 3");
       const startedAt = now();
       let lastError: unknown;
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -38,7 +40,7 @@ export function createGenerationService(config: GenerationConfig, dependencies: 
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         try {
           const response = await provider.generate({ ...request, model: config.model, signal: controller.signal });
-          const output = parseStructured(request.schema, response.output);
+          const output = parseStructured(request.schema, response.output, request.commercialLevel);
           return { provider: provider.id, model: config.model, output, usage: response.usage, latencyMs: Math.max(0, now() - startedAt) };
         } catch (error) {
           lastError = controller.signal.aborted ? new Error(`model provider timed out after ${timeoutMs}ms`) : error;
@@ -77,8 +79,8 @@ function numberFromEnv(value: string | undefined): number | undefined {
   return parsed;
 }
 
-function parseStructured<T>(schema: StructuredSchema<T>, value: unknown): T {
-  try { return schema.parse(value); } catch { throw new Error("model returned invalid structured output"); }
+function parseStructured<T>(schema: StructuredSchema<T>, value: unknown, commercialLevel: CommercialLevel): T {
+  try { return schema.parse(value, commercialLevel); } catch { throw new Error("model returned invalid structured output"); }
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -87,20 +89,27 @@ function object(value: unknown): Record<string, unknown> {
 }
 function text(value: unknown): string { if (typeof value !== "string" || !value.trim() || value.length > 4_000) throw new Error("expected bounded text"); return value; }
 function reference(item: Record<string, unknown>): void { text(item.productReference); text(item.goalReference); }
+function commercialLevel(item: Record<string, unknown>, requestedLevel: CommercialLevel): CommercialLevel {
+  const value = item.commercialLevel;
+  if (!isCommercialLevel(value) || value > requestedLevel) throw new Error("commercial level exceeds the requested level");
+  return value;
+}
+function isCommercialLevel(value: unknown): value is CommercialLevel { return Number.isSafeInteger(value) && typeof value === "number" && value >= 0 && value <= 3; }
 
-export const topicArraySchema: StructuredSchema<Array<Record<string, string>>> = { parse(value) {
+export const topicArraySchema: StructuredSchema<Array<Record<string, string | CommercialLevel>>> = { parse(value, requestedLevel) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 3) throw new Error("expected one to three topics");
-  return value.map((entry) => { const item = object(entry); reference(item); return { title: text(item.title), angle: text(item.angle), productReference: text(item.productReference), goalReference: text(item.goalReference) }; });
+  return value.map((entry) => { const item = object(entry); reference(item); return { title: text(item.title), angle: text(item.angle), productReference: text(item.productReference), goalReference: text(item.goalReference), commercialLevel: commercialLevel(item, requestedLevel) }; });
 } };
 
-export const copyDraftsSchema: StructuredSchema<Array<Record<string, string>>> = { parse(value) {
+export const copyDraftsSchema: StructuredSchema<Array<Record<string, string | CommercialLevel>>> = { parse(value, requestedLevel) {
   if (!Array.isArray(value) || value.length !== 3) throw new Error("expected exactly three copy drafts");
-  const copies = value.map((entry) => { const item = object(entry); reference(item); return { title: text(item.title), body: text(item.body), strategy: text(item.strategy), productReference: text(item.productReference), goalReference: text(item.goalReference) }; });
-  if (new Set(copies.map((copy) => `${copy.title}|${copy.strategy}`)).size !== 3) throw new Error("copy drafts must be materially distinct");
+  const copies = value.map((entry) => { const item = object(entry); reference(item); return { title: text(item.title), body: text(item.body), strategy: text(item.strategy), productReference: text(item.productReference), goalReference: text(item.goalReference), commercialLevel: commercialLevel(item, requestedLevel) }; });
+  if (new Set(copies.map((copy) => copy.strategy)).size !== 3) throw new Error("copy drafts must have distinct strategies");
+  if (new Set(copies.map((copy) => `${copy.title}|${copy.body}`)).size !== 3) throw new Error("copy drafts must be materially distinct");
   return copies;
 } };
 
-export const shotListSchema: StructuredSchema<Array<Record<string, string | number>>> = { parse(value) {
+export const shotListSchema: StructuredSchema<Array<Record<string, string | number>>> = { parse(value, requestedLevel) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 30) throw new Error("expected bounded shot list");
-  return value.map((entry, index) => { const item = object(entry); reference(item); if (item.order !== index + 1 || !Number.isSafeInteger(item.durationSeconds) || (item.durationSeconds as number) < 1 || (item.durationSeconds as number) > 60) throw new Error("shot order and duration must be safe integers"); return { order: item.order as number, shot: text(item.shot), durationSeconds: item.durationSeconds as number, narration: text(item.narration), productReference: text(item.productReference), goalReference: text(item.goalReference) }; });
+  return value.map((entry, index) => { const item = object(entry); reference(item); if (item.order !== index + 1 || !Number.isSafeInteger(item.durationSeconds) || (item.durationSeconds as number) < 1 || (item.durationSeconds as number) > 60) throw new Error("shot order and duration must be safe integers"); return { order: item.order as number, shot: text(item.shot), durationSeconds: item.durationSeconds as number, narration: text(item.narration), productReference: text(item.productReference), goalReference: text(item.goalReference), commercialLevel: commercialLevel(item, requestedLevel) }; });
 } };
