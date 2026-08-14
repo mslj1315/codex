@@ -77,6 +77,11 @@ export class AuthService {
 
   async resolveStoreContext(accessToken: string, storeId: string): Promise<TrustedContext> {
     const account = await this.authenticateAccessToken(accessToken);
+    // Internal service roles are authorized through their own provider/operator routes.
+    // They must never obtain a customer resource principal merely by also having a store membership.
+    if ((await this.repository.listEnabledServiceOperatorRoles(account.id)).length > 0) {
+      throw new AuthorizationError("Service operators cannot access customer resources");
+    }
     const membership = await this.repository.findEnabledMembership(account.id, storeId);
     if (!membership) throw new AuthorizationError("Store is not authorized");
     return { enterpriseId: membership.enterpriseId, storeId: membership.storeId, actorId: account.id };
