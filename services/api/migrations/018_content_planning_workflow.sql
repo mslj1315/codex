@@ -30,9 +30,18 @@ CREATE TABLE content_task_copy_versions (
 );
 CREATE TABLE content_task_generation_runs (
   id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES content_tasks(id), kind TEXT NOT NULL,
+  subject_id TEXT NOT NULL DEFAULT '',
   provider TEXT NOT NULL, model TEXT NOT NULL, prompt_version TEXT NOT NULL,
   template_snapshot_json TEXT NOT NULL, confirmed_feedback_snapshot_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'succeeded' CHECK (status IN ('succeeded','failed')),
+  usage_json TEXT, latency_ms INTEGER, failure_code TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE content_task_generation_claims (
+  task_id TEXT NOT NULL REFERENCES content_tasks(id), kind TEXT NOT NULL,
+  subject_id TEXT NOT NULL DEFAULT '',
+  claimed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (task_id, kind, subject_id)
 );
 CREATE TABLE content_task_copy_reviews (
   id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES content_tasks(id), copy_id TEXT NOT NULL REFERENCES content_task_copies(id),

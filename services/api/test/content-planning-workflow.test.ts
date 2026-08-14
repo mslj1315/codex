@@ -77,7 +77,7 @@ describe("content planning workflow", () => {
     expect(history.rows).toEqual([{ version: 1, title: "手艺版", body: "老板凌晨熬汤" }, { version: 2, title: "修改标题", body: "修改文案" }]);
   });
 
-  it("diagnoses copy persistence across a committed client transaction", async () => {
+  it("persists a copy batch across a committed client transaction", async () => {
     await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES ('diagnostic-task','ent_demo','store_demo','actor',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')");
     await pool.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES ('diagnostic-topic','diagnostic-task',1,'t','a','p','g',1)");
     const client = await pool.connect();
@@ -92,7 +92,7 @@ describe("content planning workflow", () => {
     expect((await pool.query("SELECT id FROM content_task_copy_versions WHERE copy_id='diagnostic-copy'")).rowCount).toBe(1);
   });
 
-  it("diagnoses exact route copy insert values", async () => {
+  it("persists the complete copy batch shape used by the route", async () => {
     await generator.generateStructured({ requestId: "diagnostic", promptVersion: "content-copy-v1", commercialLevel: 1, input: {}, schema: { parse: value => value as never } });
     await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES ('exact-task','ent_demo','store_demo','actor',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')");
     await Promise.all([1,2,3].map(position => pool.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,'exact-task',$2,'老板早起','手艺','招牌米线','到店',1)",[position===1?'exact-topic':randomUUID(),position])));
@@ -100,5 +100,33 @@ describe("content planning workflow", () => {
     const copyId=randomUUID(); const client=await pool.connect(); try { await client.query("BEGIN"); for(const [i, item] of [{title:'手艺版',body:'老板凌晨熬汤',strategy:'persona_story'},{title:'生活版',body:'午饭来碗热米线',strategy:'daily_life'},{title:'产品版',body:'招牌米线现煮',strategy:'product_value'}].entries()){const id=i===0?copyId:randomUUID(); const result=await client.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",[id,'exact-task','exact-topic',i+1,item.title,item.body,item.strategy,'招牌米线','到店',1]); await client.query("INSERT INTO content_task_copy_versions(id,copy_id,version,title,body) VALUES($1,$2,1,$3,$4)",[randomUUID(),id,item.title,item.body]); expect(result.rowCount).toBe(1);} expect((await client.query("SELECT id FROM content_task_copies WHERE id=$1",[copyId])).rowCount).toBe(1); await client.query("COMMIT");
     } finally { client.release(); }
     expect((await pool.query("SELECT id FROM content_task_copies WHERE id=$1",[copyId])).rowCount).toBe(1);
+  });
+
+  it("returns an existing topic batch without calling the provider again and records a run", async () => {
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    const first = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
+    const second = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
+    expect(second.statusCode).toBe(201);
+    expect(second.json()).toEqual(first.json());
+    expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledTimes(1);
+    expect((await pool.query("SELECT kind,status,provider,model,prompt_version,usage_json,latency_ms FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toMatchObject([{ kind: "topics", status: "succeeded", provider: "deepseek", model: "test", prompt_version: "content-topic-v1", latency_ms: 1 }]);
+    expect((await pool.query("SELECT * FROM content_task_generation_claims WHERE task_id=$1", [task.id])).rowCount).toBe(0);
+  });
+
+  it("does not call a provider while another request holds the generation claim", async () => {
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    await pool.query("INSERT INTO content_task_generation_claims(task_id,kind) VALUES($1,'topics')", [task.id]);
+    const response = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
+    expect(response.statusCode).toBe(409);
+    expect(vi.mocked(generator.generateStructured)).not.toHaveBeenCalled();
+  });
+
+  it("records a failed generation and releases its claim for a later retry", async () => {
+    vi.mocked(generator.generateStructured).mockRejectedValueOnce(new Error("upstream unavailable"));
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    const failed = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
+    expect(failed.statusCode).toBe(500);
+    expect((await pool.query("SELECT kind,status,provider,model,failure_code FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toMatchObject([{ kind: "topics", status: "failed", provider: "unknown", model: "unknown", failure_code: "Error" }]);
+    expect((await pool.query("SELECT * FROM content_task_generation_claims WHERE task_id=$1", [task.id])).rowCount).toBe(0);
   });
 });
