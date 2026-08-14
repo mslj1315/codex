@@ -84,6 +84,19 @@ describe("storyboard render queue", () => {
     expect(JSON.stringify(cancelled.json())).not.toMatch(/objectKey|storage|https?:\/\//i);
   });
 
+  it("lets only its customer delete a succeeded output and audits the protected cleanup", async () => {
+    const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "final" } });
+    await database.query("UPDATE storyboard_render_jobs SET state='succeeded',output_object_key=$2,output_expires_at=CURRENT_TIMESTAMP + interval '180 days',cover_candidates_json='[{\"positionSeconds\":1},{\"positionSeconds\":2},{\"positionSeconds\":3}]' WHERE id=$1", [created.json().id, `storyboard-render-output/${created.json().id}.mp4`]);
+    await storage.putProtected(`storyboard-render-output/${created.json().id}.mp4`, Buffer.from("mp4"), { contentType: "video/mp4", expiresAt: new Date() });
+    for (const context of [{ ...scope, actorRole: "provider" as const }, { ...scope, actorRole: "operator_editor" as const }, { ...scope, actorId: "other-customer" }]) {
+      const forbidden = buildServer({ database, trustedContextResolver: async () => context, videoStorage: storage });
+      expect((await forbidden.inject({ method: "DELETE", url: `${path()}/projects/${projectId}/renders/${created.json().id}`, payload: [] })).statusCode).toBe(403); await forbidden.close();
+    }
+    const removed = await app.inject({ method: "DELETE", url: `${path()}/projects/${projectId}/renders/${created.json().id}` }); expect(removed.statusCode, removed.body).toBe(204);
+    expect((await database.query("SELECT reason FROM storyboard_render_output_deletions WHERE render_job_id=$1", [created.json().id])).rows).toEqual([{ reason: "customer_deleted" }]);
+    expect((await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders` })).json().renders).toEqual([]);
+  });
+
   function path() { return `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}`; }
 });
 

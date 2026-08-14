@@ -36,7 +36,7 @@ export class InMemoryVideoStorage implements VideoStorage, ProtectedRenderStorag
   async delete(objectKey: string): Promise<void> { this.objects.delete(objectKey); }
   async put(objectKey: string, metadata: Omit<VideoObjectMetadata, "etag" | "version">): Promise<void> { if (this.closed.has(objectKey) || this.objects.has(objectKey)) throw new Error("immutable upload"); this.objects.set(objectKey, { ...metadata, etag: `etag-${objectKey}`, version: `version-${objectKey}` }); }
   async download(objectKey: string): Promise<Buffer> { if (!this.objects.has(objectKey)) throw Object.assign(new Error("source unavailable"), { code: "ENOENT" }); return Buffer.from("source"); }
-  async putProtected(objectKey: string, bytes: Buffer): Promise<void> { if (this.protectedObjects.has(objectKey)) throw new Error("immutable output"); this.protectedObjects.set(objectKey, Buffer.from(bytes)); }
+  async putProtected(objectKey: string, bytes: Buffer, _metadata?: { contentType: "video/mp4"; expiresAt: Date }): Promise<void> { if (this.protectedObjects.has(objectKey)) throw new Error("immutable output"); this.protectedObjects.set(objectKey, Buffer.from(bytes)); }
   async deleteProtected(objectKey: string): Promise<void> { this.protectedObjects.delete(objectKey); }
 }
 

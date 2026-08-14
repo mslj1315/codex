@@ -35,6 +35,15 @@ export class RenderRepository {
     const result = await this.database.query<Row>("UPDATE storyboard_render_jobs SET state='cancelled',cancelled_at=CURRENT_TIMESTAMP,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND project_id=$2 AND enterprise_id=$3 AND store_id=$4 AND task_id=$5 AND shot_list_id=$6 AND state IN ('queued','processing') RETURNING *", [input.jobId, input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId]);
     if (!result.rowCount) throw new RenderError("Render is not available for cancellation", 409); return json(result.rows[0]);
   }
+  async deleteSucceeded(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; jobId: string }, remove: (key: string) => Promise<void>): Promise<void> {
+    const owner = await this.database.query<Row>("SELECT id FROM storyboard_projects WHERE id=$1 AND actor_id=$2", [input.projectId, context.actorId]);
+    if (!owner.rowCount) throw new RenderError("Render output is not available", 404);
+    const found = await this.database.query<Row>("SELECT output_object_key FROM storyboard_render_jobs WHERE id=$1", [input.jobId]);
+    if (!found.rowCount) throw new RenderError("Render output is not available", 404);
+    await remove(String(found.rows[0].output_object_key));
+    await this.database.query("UPDATE storyboard_render_jobs SET deleted_at=CURRENT_TIMESTAMP WHERE id=$1 AND deleted_at IS NULL", [input.jobId]);
+    await this.database.query("INSERT INTO storyboard_render_output_deletions(id,render_job_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'customer_deleted')", [randomUUID(), input.jobId, context.enterpriseId, context.storeId, context.actorId]);
+  }
   workerRepository(now = () => new Date()): RenderWorkerRepository { return new DatabaseRenderWorkerRepository(this.database, now); }
 }
 class DatabaseRenderWorkerRepository implements RenderWorkerRepository {

@@ -6,12 +6,12 @@ import { AssetError, AssetRepository } from "./asset-repository.js";
 import { ProjectError, ProjectRepository } from "./project-repository.js";
 import { RenderError, RenderRepository } from "./render-repository.js";
 import { RenderService } from "./render-service.js";
-import type { VideoStorage } from "./storage.js";
+import type { ProtectedRenderStorage, VideoStorage } from "./storage.js";
 
 export async function registerVideoAssetRoutes(app: FastifyInstance, database: Database, resolve: (request: FastifyRequest) => Promise<TrustedContext | undefined>, storage: VideoStorage) {
   const assets = new AssetRepository(database, storage);
   const projects = new ProjectRepository(database);
-  const renders = new RenderService(new RenderRepository(database));
+  const renders = new RenderService(new RenderRepository(database), isProtected(storage) ? storage : undefined);
   app.addHook("onRequest", async (request, reply) => { const context = await resolve(request); if (!context) return reply.code(403).send({ error: "No trusted request context" }); if (request.url.includes("/projects/") && request.url.includes("/renders")) { if (context.actorRole !== undefined) return reply.code(403).send({ error: "Storyboard media is available only to customer actors" }); const params = request.params as Record<string, unknown>; const owner = await database.query<{ actor_id: string }>("SELECT actor_id FROM content_tasks WHERE id=$1 AND enterprise_id=$2 AND store_id=$3", [String(params.taskId ?? ""), context.enterpriseId, context.storeId]); if (!owner.rowCount || owner.rows[0].actor_id !== context.actorId) return reply.code(403).send({ error: "Content task is outside trusted customer context" }); } request.trustedContext = context; });
   const scope = (request: FastifyRequest) => {
     const context = request.trustedContext; const storeId = String((request.params as Record<string, unknown>).storeId ?? "");
@@ -46,6 +46,9 @@ export async function registerVideoAssetRoutes(app: FastifyInstance, database: D
   app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders/:renderId/cancel", async request => {
     const context = scope(request); const { taskId, shotListId } = ids(request); return renders.cancel(context, { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), jobId: String((request.params as Record<string, unknown>).renderId ?? "") });
   });
+  app.delete("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders/:renderId", async (request, reply) => {
+    const context = scope(request); const { taskId, shotListId } = ids(request); await renders.deleteSucceeded(context, { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), jobId: String((request.params as Record<string, unknown>).renderId ?? "") }); return reply.code(204).send();
+  });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ForbiddenError) return reply.code(403).send({ error: error.message });
     if (error instanceof AssetError) return reply.code(error.status).send({ error: error.message });
@@ -55,3 +58,4 @@ export async function registerVideoAssetRoutes(app: FastifyInstance, database: D
   });
 }
 function record(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new AssetError("Request body must be an object", 422); return value as Record<string, unknown>; }
+function isProtected(storage: VideoStorage): storage is VideoStorage & ProtectedRenderStorage { return "deleteProtected" in storage; }
