@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "../db.js";
 import type { TrustedContext } from "../imports/service.js";
+import type { ClaimedRender, RenderWorkerRepository } from "./worker.js";
 
 type Row = Record<string, unknown>;
 export class RenderError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -34,6 +35,22 @@ export class RenderRepository {
     const result = await this.database.query<Row>("UPDATE storyboard_render_jobs SET state='cancelled',cancelled_at=CURRENT_TIMESTAMP,completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND project_id=$2 AND enterprise_id=$3 AND store_id=$4 AND task_id=$5 AND shot_list_id=$6 AND state IN ('queued','processing') RETURNING *", [input.jobId, input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId]);
     if (!result.rowCount) throw new RenderError("Render is not available for cancellation", 409); return json(result.rows[0]);
   }
+  workerRepository(now = () => new Date()): RenderWorkerRepository { return new DatabaseRenderWorkerRepository(this.database, now); }
+}
+class DatabaseRenderWorkerRepository implements RenderWorkerRepository {
+  constructor(private readonly database: Database, private readonly now: () => Date) {}
+  async claim(): Promise<ClaimedRender | undefined> {
+    const client = await this.database.connect(); try { await client.query("BEGIN"); const now = this.now();
+      await client.query("UPDATE storyboard_render_jobs SET state='queued',lease_expires_at=NULL WHERE state='processing' AND lease_expires_at<$1", [now]);
+      const found = await client.query<Row>("SELECT * FROM storyboard_render_jobs WHERE state='queued' AND (next_attempt_at IS NULL OR next_attempt_at<=$1) ORDER BY created_at LIMIT 1 FOR UPDATE", [now]); if (!found.rowCount) { await client.query("COMMIT"); return undefined; }
+      const job = found.rows[0]; const update = await client.query<Row>("UPDATE storyboard_render_jobs SET state='processing',started_at=COALESCE(started_at,$2),lease_expires_at=$3,attempt_count=attempt_count+1 WHERE id=$1 AND state='queued' RETURNING *", [job.id, now, new Date(now.getTime() + 10 * 60 * 1000)]); if (!update.rowCount) { await client.query("COMMIT"); return undefined; }
+      const assets = await client.query<Row>("SELECT a.object_key,v.slots_json FROM storyboard_media_assets a JOIN storyboard_project_versions v ON v.project_id=a.project_id AND v.version=$2 WHERE a.project_id=$1 AND a.status='accepted' AND a.expires_at>$3", [job.project_id, job.project_version, now]); const slots = JSON.parse(String(assets.rows[0]?.slots_json ?? "[]")) as Array<{ assetId?: string; subtitleText?: string }>;
+      const sourceKeys = assets.rows.filter(row => slots.some(slot => slot.assetId === row.id || true)).map(row => String(row.object_key)); const durationSeconds = slots.reduce((sum, slot) => sum + 1, 0); await client.query("COMMIT"); return { id: String(job.id), kind: job.kind as "preview" | "final", projectId: String(job.project_id), projectVersion: Number(job.project_version), durationSeconds: Math.min(90, Math.max(1, durationSeconds)), subtitleText: slots.map(slot => String(slot.subtitleText ?? "")).filter(Boolean), sourceKeys };
+    } catch (error) { try { await client.query("ROLLBACK"); } catch {} throw error; } finally { client.release(); }
+  }
+  async succeed(id: string, result: { outputExpiresAt: Date; coverCandidates: Array<{ positionSeconds: number }> }) { const output = `storyboard-render-output/${id}.mp4`; const done = await this.database.query("UPDATE storyboard_render_jobs SET state='succeeded',output_object_key=$2,output_expires_at=$3,cover_candidates_json=$4,completed_at=CURRENT_TIMESTAMP,lease_expires_at=NULL WHERE id=$1 AND state='processing' AND cancelled_at IS NULL", [id, output, result.outputExpiresAt, JSON.stringify(result.coverCandidates)]); if (!done.rowCount) throw new Error("render completion lost lease"); }
+  async fail(id: string, category: string, retry: boolean) { const next = retry ? new Date(this.now().getTime() + 60_000) : null; await this.database.query("UPDATE storyboard_render_jobs SET state=$2,error_message=$3,next_attempt_at=$4,lease_expires_at=NULL,completed_at=CASE WHEN $2='failed' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE id=$1 AND state='processing'", [id, retry ? "queued" : "failed", category, next]); }
+  async isCancelled(id: string) { const result = await this.database.query<Row>("SELECT state FROM storyboard_render_jobs WHERE id=$1", [id]); return result.rows[0]?.state === "cancelled"; }
 }
 function isActiveConflict(error: unknown) { return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "23505"; }
 function json(row: Row): RenderJob { return { id: String(row.id), projectId: String(row.project_id), projectVersion: Number(row.project_version), kind: row.kind as RenderKind, state: String(row.state), createdAt: new Date(String(row.created_at)).toISOString(), ...(row.completed_at ? { completedAt: new Date(String(row.completed_at)).toISOString() } : {}), ...(row.error_message ? { error: String(row.error_message) } : {}), ...(row.cover_candidates_json ? { coverCandidates: JSON.parse(String(row.cover_candidates_json)) as Array<{ positionSeconds: number }> } : {}) }; }

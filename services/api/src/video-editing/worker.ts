@@ -19,7 +19,7 @@ export class StoryboardRenderWorker {
       validateResult(result, job.durationSeconds);
       if (await this.repository.isCancelled(job.id)) return true;
       const expiresAt = new Date(this.now().getTime() + (job.kind === "final" ? 180 : 7) * 24 * 60 * 60 * 1000);
-      await this.storage.putProtected(`storyboard-render/${job.projectId}/${job.projectVersion}/${job.id}.mp4`, result.output, { contentType: "video/mp4", expiresAt });
+      await this.storage.putProtected(`storyboard-render-output/${job.id}.mp4`, result.output, { contentType: "video/mp4", expiresAt });
       await this.repository.succeed(job.id, { outputExpiresAt: expiresAt, coverCandidates: result.coverFrames.map(frame => ({ positionSeconds: frame.positionSeconds })) });
     } catch (error) { await this.repository.fail(job.id, category(error), retryable(error)); }
     finally { await this.workspace.remove(path); }
