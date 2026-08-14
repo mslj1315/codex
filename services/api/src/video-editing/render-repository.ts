@@ -54,7 +54,7 @@ class DatabaseArtifactCleanupRepository implements ArtifactCleanupRepository {
   async markDeleted(id: string) { await this.database.query("UPDATE storyboard_render_artifacts SET deleted_at=CURRENT_TIMESTAMP,cleanup_lease_expires_at=NULL,next_cleanup_attempt_at=NULL,last_cleanup_error=NULL WHERE id=$1", [id]); }
   async retry(id: string) { await this.database.query("UPDATE storyboard_render_artifacts SET cleanup_lease_expires_at=NULL,next_cleanup_attempt_at=$2,last_cleanup_error='storage_unavailable' WHERE id=$1", [id, new Date(this.now().getTime() + 60_000)]); }
 }
-class DatabaseRenderWorkerRepository implements RenderWorkerRepository {
+export class DatabaseRenderWorkerRepository implements RenderWorkerRepository {
   constructor(private readonly database: Database, private readonly now: () => Date) {}
   async claim(): Promise<ClaimedRender | undefined> {
     const client = await this.database.connect(); try { await client.query("BEGIN"); const now = this.now();
