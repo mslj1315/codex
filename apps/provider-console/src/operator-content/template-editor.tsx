@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { emptyTemplate, type Template, type TemplateInput } from './types';
+import { OperatorApiError } from '../api';
 
 export function TemplateEditor({ template, onSave, onPublish, onDisable }: { template?: Template; onSave(id: string | undefined, input: TemplateInput): Promise<unknown>; onPublish(id: string, version: number): Promise<unknown>; onDisable(id: string, version: number): Promise<unknown> }) {
   const [value, setValue] = useState<TemplateInput>(template ?? emptyTemplate());
@@ -9,7 +10,7 @@ export function TemplateEditor({ template, onSave, onPublish, onDisable }: { tem
   useEffect(() => setValue(template ?? emptyTemplate()), [template]);
   const field = (group: 'content' | 'constraints', key: string, label: string, textarea = true) => <label>{label}{textarea ? <textarea disabled={locked} value={String(value[group][key] ?? '')} onChange={(event) => setValue({ ...value, [group]: { ...value[group], [key]: event.target.value } })} /> : <input disabled={locked} value={String(value[group][key] ?? '')} onChange={(event) => setValue({ ...value, [group]: { ...value[group], [key]: event.target.value } })} />}</label>;
   const list = (group: 'content' | 'constraints', key: string, label: string) => <label>{label}<textarea disabled={locked} value={Array.isArray(value[group][key]) ? (value[group][key] as string[]).join('\n') : ''} onChange={(event) => setValue({ ...value, [group]: { ...value[group], [key]: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean) } })} /></label>;
-  async function run(action: () => Promise<unknown>) { setBusy(true); setError(undefined); try { await action(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Request failed.'); } finally { setBusy(false); } }
+  async function run(action: () => Promise<unknown>) { setBusy(true); setError(undefined); try { await action(); } catch (cause) { setError(cause instanceof OperatorApiError && cause.status === 409 ? 'This version changed on the server. Your draft remains here; refresh version history before retrying.' : cause instanceof Error ? cause.message : 'Request failed.'); } finally { setBusy(false); } }
   function valid() { return value.name.trim() && ['hook', 'story', 'value', 'productAppearance', 'cta', 'shotRhythm', 'captionVoiceRequirements'].every((key) => String(value.content[key] ?? '').trim()) && Array.isArray(value.content.prohibitedExpressions) && value.content.prohibitedExpressions.length && ['industryCode', 'categoryCode', 'persona', 'contentType', 'style', 'riskLevel'].every((key) => String(value.constraints[key] ?? '').trim()) && Array.isArray(value.constraints.priceDiscountEffectRestrictions) && value.constraints.priceDiscountEffectRestrictions.length; }
   return <section className="editor" aria-label="Template editor">
     {locked && <p className="notice">Published versions are immutable. Saving creates the next draft version.</p>}

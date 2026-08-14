@@ -36,6 +36,17 @@ describe('operator API client', () => {
     }));
   });
 
+  it.each(['/v1/operator-content/templates', '/v1/operator-content/rules'])('allows a fixed create endpoint %s', async (path) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const session = createSessionStore();
+    session.set({ csrfToken: 'csrf', capabilities: { operatorAdmin: true } });
+
+    await createOperatorApi(session).request('POST', path, { name: 'draft' });
+
+    expect(fetchMock).toHaveBeenCalledWith(path, expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'csrf' }) }));
+  });
+
   it('rejects arbitrary URLs and caller supplied authorization', async () => {
     const api = createOperatorApi(createSessionStore());
 
@@ -54,6 +65,20 @@ describe('operator API client', () => {
 
     await expect(api.request('POST', '/v1/operator-content/templates', { name: 'test' })).rejects.toMatchObject({ status: 403 });
 
+    expect(session.current()).toBeUndefined();
+    expect(expired).toHaveBeenCalledOnce();
+  });
+
+  it('clears session and notifies the shell on an unauthorized protected request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Forbidden' }), { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const session = createSessionStore();
+    session.set({ csrfToken: 'csrf', capabilities: { operatorAdmin: true } });
+    const api = createOperatorApi(session);
+    const expired = vi.fn();
+    api.onSessionExpired(expired);
+
+    await expect(api.request('GET', '/v1/operator-content/templates')).rejects.toMatchObject({ status: 401 });
     expect(session.current()).toBeUndefined();
     expect(expired).toHaveBeenCalledOnce();
   });

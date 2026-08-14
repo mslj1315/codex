@@ -22,10 +22,12 @@ const allowedRequests: ReadonlyArray<{ method: OperatorMethod; path: RegExp }> =
   { method: 'GET', path: /^\/v1\/operator-auth\/session$/ },
   { method: 'POST', path: /^\/v1\/operator-auth\/(login|logout)$/ },
   { method: 'GET', path: new RegExp(`^/v1/operator-content/templates(?:/${logicalId}/(?:versions(?:/${version})?|history))?$`) },
-  { method: 'POST', path: new RegExp(`^/v1/operator-content/templates(?:/${logicalId}/versions/${version}/(?:publish|disable))?$`) },
+  { method: 'POST', path: /^\/v1\/operator-content\/templates$/ },
+  { method: 'POST', path: new RegExp(`^/v1/operator-content/templates/${logicalId}/versions/${version}/(?:publish|disable)$`) },
   { method: 'PUT', path: new RegExp(`^/v1/operator-content/templates/${logicalId}/draft$`) },
   { method: 'GET', path: new RegExp(`^/v1/operator-content/rules(?:/(?:active|${logicalId}/(?:versions(?:/${version})?|history)))?$`) },
-  { method: 'POST', path: new RegExp(`^/v1/operator-content/rules(?:/(?:preview|${logicalId}/versions/${version}/(?:publish|disable)))?$`) },
+  { method: 'POST', path: /^\/v1\/operator-content\/rules$/ },
+  { method: 'POST', path: new RegExp(`^/v1/operator-content/rules/(?:preview|${logicalId}/versions/${version}/(?:publish|disable))$`) },
   { method: 'PUT', path: new RegExp(`^/v1/operator-content/rules/${logicalId}/draft$`) }
 ];
 
@@ -52,7 +54,7 @@ export function createOperatorApi(sessionStore: SessionStore): OperatorApi {
     });
     if (!response.ok) {
       const error = new OperatorApiError(response.status, await errorMessage(response));
-      if (path !== '/v1/operator-auth/login' && response.status === 403) expireSession();
+      if (path !== '/v1/operator-auth/login' && (response.status === 401 || response.status === 403)) expireSession();
       throw error;
     }
     if (response.status === 204) return undefined;

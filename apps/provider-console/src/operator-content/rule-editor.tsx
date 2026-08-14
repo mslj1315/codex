@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { emptyRule, type Rule, type RuleInput } from './types';
+import { OperatorApiError } from '../api';
 
 export function RuleEditor({ rule, onSave, onPublish, onDisable, onPreview }: { rule?: Rule; onSave(id: string | undefined, input: RuleInput): Promise<unknown>; onPublish(id: string, version: number): Promise<unknown>; onDisable(id: string, version: number): Promise<unknown>; onPreview(input: RuleInput, text: string): Promise<{ matches?: Array<{ pattern: string; guidance: string }> }> }) {
   const [value, setValue] = useState<RuleInput>(rule ?? emptyRule()); const [previewText, setPreviewText] = useState(''); const [matches, setMatches] = useState<Array<{ pattern: string; guidance: string }>>([]); const [error, setError] = useState<string>(); const [busy, setBusy] = useState(false);
@@ -8,7 +9,7 @@ export function RuleEditor({ rule, onSave, onPublish, onDisable, onPreview }: { 
   const input = (key: keyof RuleInput, label: string, textarea = false) => <label>{label}{textarea ? <textarea disabled={locked} value={String(value[key])} onChange={(event) => setValue({ ...value, [key]: event.target.value })} /> : <input disabled={locked} value={String(value[key])} onChange={(event) => setValue({ ...value, [key]: event.target.value })} />}</label>;
   const list = (key: 'patterns' | 'semanticCategories', label: string) => <label>{label}<textarea disabled={locked} value={value[key].join('\n')} onChange={(event) => setValue({ ...value, [key]: event.target.value.split('\n').map((item) => item.trim()).filter(Boolean) })} /></label>;
   const valid = () => Boolean(value.name.trim() && value.ruleType.trim() && value.platform.trim() && value.scope.trim() && value.guidance.trim() && value.patterns.length && value.semanticCategories.length);
-  async function run(action: () => Promise<unknown>) { setBusy(true); setError(undefined); try { await action(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Request failed.'); } finally { setBusy(false); } }
+  async function run(action: () => Promise<unknown>) { setBusy(true); setError(undefined); try { await action(); } catch (cause) { setError(cause instanceof OperatorApiError && cause.status === 409 ? 'This version changed on the server. Your draft remains here; refresh version history before retrying.' : cause instanceof Error ? cause.message : 'Request failed.'); } finally { setBusy(false); } }
   return <section className="editor" aria-label="Rule editor">{locked && <p className="notice">Published versions are immutable. Create the next draft to edit.</p>}
     {input('name', 'Rule name')}{input('ruleType', 'Rule type')}{list('patterns', 'Literal patterns (one per line)')}{list('semanticCategories', 'Semantic categories (one per line)')}
     <label>Severity<select disabled={locked} value={value.severity} onChange={(event) => setValue({ ...value, severity: event.target.value as RuleInput['severity'] })}>{['block', 'high', 'warning', 'notice'].map((severity) => <option key={severity}>{severity}</option>)}</select></label>

@@ -23,6 +23,9 @@ aside > button:last-child { margin-top: auto; }
 .workspace h1 { margin: 0; font-size: 24px; }
 .content-manager { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 32px; margin-top: 28px; border-top: 1px solid #d9e0e6; padding-top: 20px; }
 .library-list { min-width: 0; }
+.filters { display: grid; gap: 8px; margin: 14px 0; }
+.filters label { display: grid; font-size: 12px; gap: 4px; }
+.filters input, .filters select { border: 1px solid #aeb9c4; border-radius: 4px; min-height: 32px; padding: 5px; }
 .list-heading { align-items: center; display: flex; justify-content: space-between; gap: 12px; }
 .list-heading h2, .detail h2, .detail h3 { font-size: 17px; margin: 0; }
 .library-list ul, .detail ul { list-style: none; margin: 12px 0; padding: 0; }
