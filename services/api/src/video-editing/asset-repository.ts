@@ -58,6 +58,7 @@ export class AssetRepository {
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");
+      await assertConfirmedShotList(client, context, input.taskId, input.shotListId);
       const found = await client.query<Row>("SELECT * FROM storyboard_media_assets WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND task_id=$4 AND shot_list_id=$5 FOR UPDATE", [input.assetId, context.enterpriseId, context.storeId, input.taskId, input.shotListId]);
       if (!found.rowCount || found.rows[0].status === "deleted") throw new AssetError("Media asset not found", 404);
       await this.storage.revokeUpload(String(found.rows[0].storage_upload_id ?? found.rows[0].object_key)); await this.storage.delete(String(found.rows[0].object_key));
@@ -65,6 +66,25 @@ export class AssetRepository {
       await client.query("INSERT INTO storyboard_media_asset_deletions(id,asset_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,$6)", [randomUUID(), input.assetId, context.enterpriseId, context.storeId, context.actorId, input.reason ?? "customer_deleted"]);
       await client.query("COMMIT");
     } catch (error) { await rollback(client); throw error; } finally { client.release(); }
+  }
+
+  async expirePendingUploads(now = new Date()): Promise<number> {
+    const pending = await this.database.query<Row>("SELECT a.* FROM storyboard_media_assets a JOIN storyboard_media_upload_grants g ON g.asset_id=a.id WHERE a.status='upload_pending' AND g.expires_at <= $1", [now]);
+    let reclaimed = 0;
+    for (const asset of pending.rows) {
+      const client = await this.database.connect();
+      try {
+        await client.query("BEGIN");
+        const locked = await client.query<Row>("SELECT a.* FROM storyboard_media_assets a JOIN storyboard_media_upload_grants g ON g.asset_id=a.id WHERE a.id=$1 AND a.status='upload_pending' AND g.expires_at <= $2 FOR UPDATE", [asset.id, now]);
+        if (!locked.rowCount) { await client.query("COMMIT"); continue; }
+        const current = locked.rows[0]; await this.storage.revokeUpload(String(current.storage_upload_id ?? current.object_key)); await this.storage.delete(String(current.object_key));
+        await client.query("UPDATE storyboard_media_assets SET status='deleted',deleted_at=CURRENT_TIMESTAMP WHERE id=$1", [current.id]);
+        await client.query("UPDATE storyboard_media_upload_grants SET consumed_at=CURRENT_TIMESTAMP WHERE asset_id=$1 AND consumed_at IS NULL", [current.id]);
+        await client.query("INSERT INTO storyboard_media_asset_deletions(id,asset_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,'system_grant_expiry','retention_expired')", [randomUUID(), current.id, current.enterprise_id, current.store_id]);
+        await client.query("COMMIT"); reclaimed++;
+      } catch (error) { await rollback(client); throw error; } finally { client.release(); }
+    }
+    return reclaimed;
   }
 
   /** Called by a server-side retention job; it never returns object locations. */

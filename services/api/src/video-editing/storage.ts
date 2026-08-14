@@ -34,5 +34,16 @@ export class InMemoryVideoStorage implements VideoStorage {
 export function createConfiguredVideoStorage(environment: Record<string, string | undefined>): VideoStorage | undefined {
   const mode = environment.VIDEO_STORAGE_MODE;
   if (!mode || mode === "disabled") return undefined;
-  throw new Error("VIDEO_STORAGE_MODE requires a server-side immutable object-storage signer; no credential-bearing client mode is supported");
+  if (mode !== "internal_signer" || !environment.VIDEO_STORAGE_SIGNER_URL || !environment.VIDEO_STORAGE_SIGNER_TOKEN) throw new Error("VIDEO_STORAGE_MODE requires internal_signer plus VIDEO_STORAGE_SIGNER_URL and VIDEO_STORAGE_SIGNER_TOKEN");
+  return new InternalSignerVideoStorage(environment.VIDEO_STORAGE_SIGNER_URL, environment.VIDEO_STORAGE_SIGNER_TOKEN);
+}
+
+class InternalSignerVideoStorage implements VideoStorage {
+  constructor(private readonly endpoint: string, private readonly token: string) { const url = new URL(endpoint); if (!url.hostname) throw new Error("VIDEO_STORAGE_SIGNER_URL must be absolute"); }
+  async createDirectUpload(objectKey: string, contentType: string, expiresAt: Date) { return this.call<DirectUploadTarget>("create", { objectKey, contentType, expiresAt: expiresAt.toISOString() }); }
+  async inspect(objectKey: string) { return this.call<VideoObjectMetadata | undefined>("inspect", { objectKey }); }
+  async finalizeUpload(objectKey: string) { return this.call<VideoObjectMetadata | undefined>("finalize", { objectKey }); }
+  async revokeUpload(objectKey: string) { await this.call<void>("revoke", { objectKey }); }
+  async delete(objectKey: string) { await this.call<void>("delete", { objectKey }); }
+  private async call<T>(action: string, body: unknown): Promise<T> { const response = await fetch(`${this.endpoint.replace(/\/$/, "")}/${action}`, { method: "POST", headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" }, body: JSON.stringify(body) }); if (!response.ok) throw new Error("video storage signer request failed"); return response.status === 204 ? undefined as T : await response.json() as T; }
 }

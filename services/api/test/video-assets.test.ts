@@ -67,6 +67,14 @@ describe("storyboard media assets", () => {
     await otherCustomer.close();
   });
 
+  it("denies another customer from deleting an asset in the same enterprise and store", async () => {
+    const grant = await requestGrant();
+    const otherCustomer = buildServer({ database, trustedContextResolver: async () => ({ ...scope, actorId: "other-customer" }), videoStorage: storage });
+    expect((await otherCustomer.inject({ method: "DELETE", url: `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}/assets/${grant.json().assetId}` })).statusCode).toBe(403);
+    expect((await database.query("SELECT status FROM storyboard_media_assets WHERE id=$1", [grant.json().assetId])).rows).toEqual([{ status: "upload_pending" }]);
+    await otherCustomer.close();
+  });
+
   it("enforces project scope, 20 files, 500MB per file, and ten minutes of verified total duration", async () => {
     expect((await requestGrant({ expectedSizeBytes: maxAssetBytes + 1 })).statusCode).toBe(422);
     const first = await requestGrant(); const serverProjectId = first.json().projectId;
@@ -97,6 +105,14 @@ describe("storyboard media assets", () => {
     expect(await repository.expireSources(new Date())).toBe(1);
     expect(await storage.inspect(accepted.json().objectKey)).toBeUndefined();
     expect((await database.query("SELECT reason FROM storyboard_media_asset_deletions WHERE asset_id=$1", [accepted.json().assetId])).rows).toEqual([{ reason: "retention_expired" }]);
+  });
+
+  it("reclaims all grant-expired pending uploads before enforcing the next project quota", async () => {
+    const grants = await Promise.all(Array.from({ length: 20 }, () => requestGrant()));
+    for (const grant of grants) await database.query("UPDATE storyboard_media_upload_grants SET expires_at=$1 WHERE asset_id=$2", [new Date(Date.now() - 1_000), grant.json().assetId]);
+    const repository = new (await import("../src/video-editing/asset-repository.js")).AssetRepository(database, storage);
+    expect(await repository.expirePendingUploads(new Date())).toBe(20);
+    expect((await requestGrant()).statusCode).toBe(201);
   });
 
   it("prevents overwriting the object after the customer has completed an upload", async () => {
