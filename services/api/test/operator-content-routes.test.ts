@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { hash } from "bcryptjs";
+import type { InjectOptions, Response } from "light-my-request";
 import { newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
@@ -17,9 +19,27 @@ describe("operator content templates and review rules", () => {
     pool = new Pool();
     const migration = await readFile(new URL("../migrations/014_content_templates_rules.sql", import.meta.url), "utf8");
     await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    const authMigration = await readFile(new URL("../migrations/015_operator_accounts_sessions.sql", import.meta.url), "utf8");
+    await pool.query(authMigration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
+    await pool.query("INSERT INTO operator_accounts (account_id, password_hash, role) VALUES ($1,$2,'operator_admin')", ["op-1", await hash("correct horse", 4)]);
   });
 
-  function appFor(context: TrustedContext) { return buildServer({ database: pool, trustedContextResolver: async () => context }); }
+  function appFor(context: TrustedContext) {
+    const app = buildServer({ database: pool, trustedContextResolver: async () => context });
+    const rawInject = app.inject.bind(app);
+    let sessionHeaders: Record<string, string> | undefined;
+    return {
+      inject: async (options: InjectOptions): Promise<Response> => {
+        if (!["POST", "PUT", "PATCH", "DELETE"].includes(String(options.method).toUpperCase())) return rawInject(options);
+        if (!sessionHeaders) {
+          const login = await rawInject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+          const setCookie = login.headers["set-cookie"];
+          sessionHeaders = { cookie: Array.isArray(setCookie) ? setCookie[0] : setCookie!, host: "localhost", origin: "http://localhost", "x-csrf-token": login.json().csrfToken };
+        }
+        return rawInject({ ...options, headers: { ...sessionHeaders, ...options.headers } });
+      }
+    };
+  }
   const template = {
     name: "面馆老板日常", content: { hook: "今天后厨有点忙", story: "一碗面的坚持", value: "现熬骨汤", productAppearance: "自然带出招牌面", cta: "路过来坐坐", shotRhythm: "快节奏", captionVoiceRequirements: "口播自然" },
     constraints: { industryCode: "fast_food", categoryCode: "rice_noodle", persona: "owner", contentType: "store_story", commercialLevel: 1, style: "sincere", priceDiscountEffectRestrictions: ["no_absolute_claim"] },

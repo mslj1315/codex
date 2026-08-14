@@ -4,6 +4,8 @@ import { newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
+import { OperatorAuthRepository, operatorCookieSecure, sessionCookie } from "../src/operator-auth/repository.js";
+import type { TrustedContext } from "../src/imports/service.js";
 
 describe("operator authentication", () => {
   let pool: Database;
@@ -12,6 +14,8 @@ describe("operator authentication", () => {
     const memory = newDb({ noAstCoverageCheck: true });
     const { Pool } = memory.adapters.createPg();
     pool = new Pool();
+    const contentMigration = await readFile(new URL("../migrations/014_content_templates_rules.sql", import.meta.url), "utf8");
+    await pool.query(contentMigration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
     const migration = await readFile(new URL("../migrations/015_operator_accounts_sessions.sql", import.meta.url), "utf8");
     await pool.query(migration.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, ""));
     await pool.query(
@@ -20,16 +24,20 @@ describe("operator authentication", () => {
     );
   });
 
-  it("returns neutral failures for incorrect and disabled operator accounts", async () => {
+  it("returns neutral failures for incorrect operator credentials", async () => {
     const app = buildServer({ database: pool });
     const wrongPassword = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "wrong" } });
     expect(wrongPassword.statusCode).toBe(403);
     expect(wrongPassword.json()).toEqual({ error: "Forbidden" });
 
-    await pool.query("UPDATE operator_accounts SET enabled = false, disabled_at = now() WHERE account_id = 'op-1'");
-    const disabled = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
-    expect(disabled.statusCode).toBe(403);
-    expect(disabled.json()).toEqual({ error: "Forbidden" });
+  });
+
+  it("disables an account atomically, revokes its session, and audits the action", async () => {
+    const repository = new OperatorAuthRepository(pool);
+    const created = await repository.createSession("op-1");
+    expect(await repository.disableAccount("op-1")).toBe(true);
+    expect(await repository.authenticateSession(created.cookieValue)).toBeUndefined();
+    expect((await pool.query("SELECT event_type FROM operator_auth_audit_events WHERE account_id='op-1' ORDER BY occurred_at DESC")).rows).toContainEqual({ event_type: "account_disabled" });
   });
 
   it("revokes a session on logout and requires CSRF plus same-origin for operator writes", async () => {
@@ -64,5 +72,27 @@ describe("operator authentication", () => {
       csrfToken: expect.any(String),
       capabilities: { operatorAdmin: true }
     });
+  });
+
+  it("never accepts a legacy trusted role without a session and accepts a valid admin session at the protected write gate", async () => {
+    const legacyEditor: TrustedContext = { enterpriseId: "platform", storeId: "operator", actorId: "legacy-editor", actorRole: "operator_editor" };
+    const app = buildServer({ database: pool, trustedContextResolver: async () => legacyEditor });
+    const payload = { name: "template", content: { hook: "hook", story: "story", value: "value", productAppearance: "product", cta: "cta", shotRhythm: "rhythm", captionVoiceRequirements: "voice" }, constraints: {}, fallbackScope: {} };
+    const legacy = await app.inject({ method: "POST", url: "/v1/operator-content/templates", payload });
+    expect(legacy.statusCode).toBe(403);
+    expect(legacy.json()).toEqual({ error: "Forbidden" });
+
+    const login = await app.inject({ method: "POST", url: "/v1/operator-auth/login", payload: { accountId: "op-1", password: "correct horse" } });
+    const allowed = await app.inject({ method: "POST", url: "/v1/operator-content/templates", headers: { cookie: login.headers["set-cookie"]!, host: "localhost", origin: "http://localhost", "x-csrf-token": login.json().csrfToken }, payload });
+    expect(allowed.statusCode).toBe(201);
+    const invalidCsrf = await app.inject({ method: "POST", url: "/v1/operator-content/templates", headers: { cookie: login.headers["set-cookie"]!, host: "localhost", origin: "http://localhost", "x-csrf-token": "wrong" }, payload });
+    expect(invalidCsrf.statusCode).toBe(403);
+  });
+
+  it("uses Secure cookies in production or when explicitly configured", () => {
+    expect(operatorCookieSecure({ NODE_ENV: "production" })).toBe(true);
+    expect(operatorCookieSecure({ NODE_ENV: "development" })).toBe(false);
+    expect(operatorCookieSecure({ NODE_ENV: "development", OPERATOR_COOKIE_SECURE: "true" })).toBe(true);
+    expect(sessionCookie("opaque", new Date("2026-01-01T00:00:00.000Z"), true)).toContain("Secure");
   });
 });

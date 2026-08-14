@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { compare, hash } from "bcryptjs";
-import type { Queryable } from "../db.js";
+import type { Database, Queryable } from "../db.js";
 
 export const OPERATOR_SESSION_COOKIE = "operator_session";
 export const OPERATOR_ADMIN_ROLE = "operator_admin" as const;
@@ -14,7 +14,7 @@ export interface OperatorSession {
 type Row = Record<string, unknown>;
 
 export class OperatorAuthRepository {
-  constructor(private readonly database: Queryable, private readonly sessionTtlMs = 8 * 60 * 60 * 1000) {}
+  constructor(private readonly database: Database, private readonly sessionTtlMs = 8 * 60 * 60 * 1000) {}
 
   async verifyPassword(accountId: string, password: string): Promise<boolean> {
     const result = await this.database.query<Row>("SELECT password_hash, enabled, role FROM operator_accounts WHERE account_id=$1", [accountId]);
@@ -65,13 +65,29 @@ export class OperatorAuthRepository {
     return true;
   }
 
+  async disableAccount(accountId: string): Promise<boolean> {
+    const client = await this.database.connect();
+    try {
+      await client.query("BEGIN");
+      const disabled = await client.query<Row>("UPDATE operator_accounts SET enabled=FALSE, disabled_at=now() WHERE account_id=$1 AND enabled=TRUE RETURNING account_id", [accountId]);
+      if (disabled.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
+      await client.query("UPDATE operator_sessions SET revoked_at=now() WHERE account_id=$1 AND revoked_at IS NULL", [accountId]);
+      await client.query("INSERT INTO operator_auth_audit_events (id, account_id, event_type) VALUES ($1,$2,'account_disabled')", [randomUUID(), accountId]);
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  }
+
   private audit(accountId: string, eventType: "account_provisioned" | "session_created" | "session_revoked"): Promise<unknown> {
     return this.database.query("INSERT INTO operator_auth_audit_events (id, account_id, event_type) VALUES ($1,$2,$3)", [randomUUID(), accountId, eventType]);
   }
 }
 
-export function sessionCookie(value: string, expiresAt: Date): string {
-  return `${OPERATOR_SESSION_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict; Expires=${expiresAt.toUTCString()}`;
+export function sessionCookie(value: string, expiresAt: Date, secure = operatorCookieSecure()): string {
+  return `${OPERATOR_SESSION_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict;${secure ? " Secure;" : ""} Expires=${expiresAt.toUTCString()}`;
 }
 
 export function clearSessionCookie(): string {
@@ -87,3 +103,8 @@ export function readSessionCookie(cookieHeader: string | undefined): string | un
 
 function randomToken(): string { return randomBytes(32).toString("base64url"); }
 function sha256(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+export function operatorCookieSecure(environment: Record<string, string | undefined> = process.env): boolean {
+  if (environment.OPERATOR_COOKIE_SECURE === "true") return true;
+  if (environment.OPERATOR_COOKIE_SECURE === "false") return false;
+  return environment.NODE_ENV === "production";
+}

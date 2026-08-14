@@ -28,7 +28,7 @@ export function buildServer(options: ServerOptions = {}) {
         : undefined
   );
   if (database) {
-    registerOperatorAuthRoutes(app, database, contextResolver);
+    registerOperatorAuthRoutes(app, database);
   }
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, database, contextResolver));

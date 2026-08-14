@@ -1,28 +1,19 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Database } from "../db.js";
-import type { TrustedContext } from "../imports/service.js";
 import { clearSessionCookie, OperatorAuthRepository, readSessionCookie, sessionCookie } from "./repository.js";
 
 declare module "fastify" {
   interface FastifyRequest { operatorSession?: Awaited<ReturnType<OperatorAuthRepository["authenticateSession"]>>; }
 }
 
-export function registerOperatorAuthRoutes(app: FastifyInstance, database: Database, legacyContextResolver?: (request: FastifyRequest) => Promise<TrustedContext | undefined>): void {
+export function registerOperatorAuthRoutes(app: FastifyInstance, database: Database): void {
   const repository = new OperatorAuthRepository(database, sessionTtl());
   app.decorateRequest("operatorSession", undefined);
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/v1/operator-content/") || !isStateChange(request.method)) return;
     const session = await repository.authenticateSession(readSessionCookie(request.headers.cookie));
-    if (session) {
-      if (!isSameOrigin(request) || request.headers["x-csrf-token"] !== session.csrfToken) return reply.code(403).send({ error: "Forbidden" });
-      request.operatorSession = session;
-      return;
-    }
-    // The existing prototype is kept runnable until Task 2 replaces its
-    // trusted-context authorization with the new session capability.
-    const legacyContext = legacyContextResolver ? await legacyContextResolver(request) : undefined;
-    if (legacyContext?.actorRole === "operator_editor" || legacyContext?.actorRole === "operator_reviewer") return;
-    return reply.code(403).send({ error: "Forbidden" });
+    if (!session || !isSameOrigin(request) || request.headers["x-csrf-token"] !== session.csrfToken) return reply.code(403).send({ error: "Forbidden" });
+    request.operatorSession = session;
   });
 
   app.post("/v1/operator-auth/login", async (request, reply) => {

@@ -5,6 +5,7 @@
   "scripts": {
     "migrate": "tsx src/migrate.ts",
     "provision:operator": "tsx src/operator-auth/provision.ts",
+    "disable:operator": "tsx src/operator-auth/provision.ts --disable",
     "start": "tsx src/server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
