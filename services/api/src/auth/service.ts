@@ -17,6 +17,7 @@ export interface ProviderCapabilities {
   providerFeedbackViewer: boolean;
   metricCatalogOperator: boolean;
   providerCustomerMetadataEditor: boolean;
+  modelPricingOperator: boolean;
 }
 
 export class AuthorizationError extends Error {}
@@ -71,6 +72,7 @@ export class AuthService {
         providerFeedbackViewer: roles.has("provider_feedback_viewer"),
         metricCatalogOperator: roles.has("metric_catalog_operator"),
         providerCustomerMetadataEditor: roles.has("provider_customer_metadata_editor")
+        ,modelPricingOperator: roles.has("model_pricing_operator")
       }
     };
   }

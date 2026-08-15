@@ -137,7 +137,7 @@ function AuthenticatedShell({
   onLogout(): Promise<void>;
 }) {
   const { account, capabilities } = providerSession;
-  const hasProviderRole = capabilities.providerFeedbackViewer || capabilities.metricCatalogOperator;
+  const hasProviderRole = capabilities.providerFeedbackViewer || capabilities.metricCatalogOperator || capabilities.modelPricingOperator;
 
   return (
     <div className="app-shell">
@@ -163,10 +163,18 @@ function AuthenticatedShell({
             />
           )}
           {capabilities.metricCatalogOperator && <CatalogInformation />}
+          {capabilities.modelPricingOperator && <ModelPricing api={feedbackApi} />}
         </main>
       )}
     </div>
   );
+}
+
+function ModelPricing({ api }: { api: ProviderApiClient }) {
+  const [items, setItems] = useState<Array<{ id: string; provider: string; model: string; inputCnyPerMillionTokens: number; outputCnyPerMillionTokens: number; status: string }>>([]);
+  const [error, setError] = useState(false);
+  useEffect(() => { let active = true; api.fetch("/v1/provider-model-pricing/versions").then(async (response) => { if (!response.ok) throw new Error(); return response.json() as Promise<{items: typeof items}>; }).then((value) => { if (active) setItems(value.items); }).catch(() => { if (active) setError(true); }); return () => { active = false; }; }, [api]);
+  return <section className="catalog-panel" aria-labelledby="model-pricing-title"><h2 id="model-pricing-title">Model token pricing</h2><p>Published prices use CNY per one million input or output tokens.</p>{error ? <p role="alert">Model pricing is unavailable for this account.</p> : <ul>{items.map((item) => <li key={item.id}>{item.provider} / {item.model}: input {item.inputCnyPerMillionTokens}, output {item.outputCnyPerMillionTokens} ({item.status})</li>)}</ul>}</section>;
 }
 
 function CatalogInformation() {

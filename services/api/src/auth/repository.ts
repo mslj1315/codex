@@ -5,7 +5,8 @@ export type StoreRole = "owner" | "operator";
 export type ServiceOperatorRole =
   | "metric_catalog_operator"
   | "provider_feedback_viewer"
-  | "provider_customer_metadata_editor";
+  | "provider_customer_metadata_editor"
+  | "model_pricing_operator";
 
 export interface AuthAccount {
   id: string;

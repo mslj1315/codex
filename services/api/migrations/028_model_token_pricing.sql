@@ -33,6 +33,7 @@ CREATE INDEX model_token_price_versions_current_idx
   ON model_token_price_versions(provider, model, effective_from DESC)
   WHERE status = 'published';
 
+-- PostgreSQL append-only guards
 CREATE OR REPLACE FUNCTION reject_model_token_price_history_mutation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN

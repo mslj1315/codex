@@ -41,8 +41,9 @@ export function createProviderApiClient(
       const target = new URL(path, window.location.origin);
       const method = (init.method ?? "GET").toUpperCase();
       const metadataRoute = /^\/v1\/provider-customers\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/metadata$/;
-      const isList = method === "GET" && target.pathname === "/v1/provider-customers";
-      const isMutation = method === "PUT" && metadataRoute.test(target.pathname) && target.search === "";
+      const isList = method === "GET" && (target.pathname === "/v1/provider-customers" || target.pathname === "/v1/provider-model-pricing/versions" || target.pathname === "/v1/provider-model-pricing/usage");
+      const priceMutation = /^\/v1\/provider-model-pricing\/versions(?:\/[A-Za-z0-9-]+(?:\/(?:publish|retire))?)?$/.test(target.pathname) && ["POST", "PUT"].includes(method);
+      const isMutation = (method === "PUT" && metadataRoute.test(target.pathname) && target.search === "") || priceMutation;
       if (
         !path.startsWith("/")
         || path.startsWith("//")
@@ -50,7 +51,7 @@ export function createProviderApiClient(
         || target.hash !== ""
         || (!isList && !isMutation)
       ) {
-        throw new Error("Provider API client only supports customer routes");
+        throw new Error("Provider API client only supports approved provider routes");
       }
       const normalizedPath = target.pathname + target.search;
       const initialToken = session.accessToken();

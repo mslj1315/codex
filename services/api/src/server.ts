@@ -22,6 +22,7 @@ import { createConfiguredGenerationService, type ModelGenerationService } from "
 import { registerVideoAssetRoutes } from "./video-editing/routes.js";
 import { createConfiguredVideoStorage, type VideoStorage } from "./video-editing/storage.js";
 import { registerStoryboardContextRoutes } from "./video-editing/storyboard-context-routes.js";
+import { registerModelPricingRoutes } from "./model-pricing/routes.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -79,6 +80,7 @@ export function buildServer(options: ServerOptions = {}) {
     const providerOptions = { auth, database, now: options.now ?? (() => new Date()) };
     app.register((instance) => registerProviderFeedbackRoutes(instance, providerOptions));
     app.register((instance) => registerProviderCustomerRoutes(instance, providerOptions));
+    app.register((instance) => registerModelPricingRoutes(instance, providerOptions));
   }
   if (database) {
     registerOperatorAuthRoutes(app, database);

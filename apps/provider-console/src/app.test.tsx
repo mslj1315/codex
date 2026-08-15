@@ -177,6 +177,15 @@ describe("provider console application shell", () => {
     expect(feedbackApi.fetch).not.toHaveBeenCalled();
   });
 
+  it("shows model pricing only for the dedicated capability without loading customer feedback", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sessionWithCapabilities(false, false, false, true)));
+    const api = feedbackApiResponse(jsonResponse({ items: [] }));
+    render(<App session={createSessionClient(fetcher)} feedbackApi={api} />);
+    expect(await screen.findByRole("heading", { name: "Model token pricing" })).toBeVisible();
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions");
+    expect(screen.queryByRole("heading", { name: "Customer Feedback" })).not.toBeInTheDocument();
+  });
+
   it("shows feedback and catalog information for an account with both capabilities", async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValue(jsonResponse(sessionWithCapabilities(true, true)));
@@ -221,11 +230,12 @@ describe("provider console application shell", () => {
 function sessionWithCapabilities(
   providerFeedbackViewer: boolean,
   metricCatalogOperator: boolean,
-  providerCustomerMetadataEditor = false
+  providerCustomerMetadataEditor = false,
+  modelPricingOperator = false
 ): ProviderSession {
   return {
     ...viewerSession,
-    capabilities: { providerFeedbackViewer, providerCustomerMetadataEditor, metricCatalogOperator }
+    capabilities: { providerFeedbackViewer, providerCustomerMetadataEditor, metricCatalogOperator, modelPricingOperator }
   };
 }
 

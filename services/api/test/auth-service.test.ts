@@ -93,7 +93,7 @@ describe("auth service", () => {
 
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: false, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: false, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
 
     await database.query(
@@ -101,7 +101,7 @@ describe("auth service", () => {
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
 
     await database.query(
@@ -112,7 +112,7 @@ describe("auth service", () => {
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: true, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: true, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
 
     await database.query(
@@ -121,14 +121,14 @@ describe("auth service", () => {
     const providerSession = await service.providerSession(login.accessToken);
     expect(providerSession).toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
     await database.query(
       "INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'provider_customer_metadata_editor')"
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: true }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: true, modelPricingOperator: false }
     });
     expect(JSON.stringify(providerSession)).not.toMatch(/loginName|passwordHash|refreshToken|sessionId|store_demo/);
   });
