@@ -33,12 +33,13 @@ function responsesUrl(baseUrl: string): string {
 
 async function parseResponsesResponse(response: { status: number; json(): Promise<unknown> }): Promise<ProviderResponse> {
   if (response.status < 200 || response.status >= 300) throw new ModelProviderHttpError(response.status);
-  let payload: ResponsesPayload;
+  let payload: unknown;
   try {
-    payload = await response.json() as ResponsesPayload;
+    payload = await response.json();
   } catch {
     throw new ModelProviderResponseError("model provider returned invalid JSON");
   }
+  if (!isObject(payload)) throw new ModelProviderResponseError("model provider returned invalid response");
   if (payload.status !== "completed") throw new ModelProviderResponseError("model provider response has no structured content");
   const content = finalOutputText(payload.output);
   if (content === undefined) throw new ModelProviderResponseError("model provider response has no structured content");
@@ -46,21 +47,15 @@ async function parseResponsesResponse(response: { status: number; json(): Promis
     return {
       output: JSON.parse(content),
       usage: {
-        inputTokens: nonNegativeInteger(payload.usage?.input_tokens),
-        outputTokens: nonNegativeInteger(payload.usage?.output_tokens),
-        totalTokens: nonNegativeInteger(payload.usage?.total_tokens)
+        inputTokens: usageInteger(payload.usage, "input_tokens"),
+        outputTokens: usageInteger(payload.usage, "output_tokens"),
+        totalTokens: usageInteger(payload.usage, "total_tokens")
       }
     };
   } catch (error) {
     if (error instanceof SyntaxError) throw new ModelProviderResponseError("model provider returned invalid JSON");
     throw error;
   }
-}
-
-interface ResponsesPayload {
-  status?: unknown;
-  output?: unknown;
-  usage?: { input_tokens?: unknown; output_tokens?: unknown; total_tokens?: unknown };
 }
 
 function finalOutputText(value: unknown): string | undefined {
@@ -83,4 +78,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function nonNegativeInteger(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new ModelProviderResponseError("model provider returned invalid usage");
   return value;
+}
+
+function usageInteger(usage: unknown, field: string): number {
+  return nonNegativeInteger(isObject(usage) ? usage[field] : undefined);
 }

@@ -86,7 +86,7 @@ function baseUrlFromEnv(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   try {
     const url = new URL(value);
-    if (url.protocol !== "https:" || !url.hostname) throw new Error();
+    if (url.protocol !== "https:" || !url.hostname || url.search || url.hash) throw new Error();
     return url.toString();
   } catch {
     throw new Error("MODEL_BASE_URL must be a non-empty absolute HTTPS URL");
