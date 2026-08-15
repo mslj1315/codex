@@ -180,6 +180,17 @@ describe("storyboard render queue", () => {
     expect((await database.query("SELECT state,error_message FROM storyboard_render_jobs WHERE id='job-terminal'")).rows[0]).toMatchObject({ state: "failed", error_message: "render_validation_failed" });
   });
 
+  it("uses one transaction for the lease-guarded success transition and artifacts", async () => {
+    await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state,lease_token,lease_expires_at) VALUES('atomic-fail',$1,$2,$3,$4,$5,1,'final','processing','lease','2099-01-01T00:00:00.000Z')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]);
+    const repository = new DatabaseRenderWorkerRepository(database, () => new Date("2026-08-15T00:00:00.000Z"));
+    const queries: string[] = [];
+    const originalQuery = database.query.bind(database);
+    database.query = (async (...args: Parameters<typeof database.query>) => { queries.push(String(args[0])); return originalQuery(...args); }) as typeof database.query;
+    await expect(repository.succeed("atomic-fail", { outputExpiresAt: new Date("2027-02-11T00:00:00.000Z"), coverCandidates: [{ positionSeconds: 1 }, { positionSeconds: 2 }, { positionSeconds: 3 }], artifacts: [{ objectKey: "duplicate", kind: "video" }, { objectKey: "duplicate", kind: "cover" }] }, "lease")).rejects.toThrow();
+    expect(queries).toEqual(expect.arrayContaining(["BEGIN", "ROLLBACK"]));
+    expect(queries.find(query => query.startsWith("UPDATE storyboard_render_jobs"))).toContain("lease_token=$5");
+  });
+
   function path() { return `/v1/stores/${scope.storeId}/content-tasks/${taskId}/shot-lists/${shotListId}`; }
 });
 
