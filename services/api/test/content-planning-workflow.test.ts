@@ -81,7 +81,7 @@ describe("content planning workflow", () => {
       id: seeded.taskId,
       status: "copy_confirmed",
       topics: [{ id: seeded.firstTopicId, title: "first topic", angle: "angle one", productReference: "product one", goalReference: "goal one", commercialLevel: 1 }, { id: seeded.secondTopicId, title: "second topic" }],
-      copies: [{ id: seeded.confirmedCopyId, title: "confirmed copy", version: 1, status: "confirmed" }, { id: seeded.draftCopyId, title: "draft copy", body: "draft body", strategy: "story", version: 2, status: "draft" }],
+      copies: [{ id: seeded.confirmedCopyId, topicId: seeded.firstTopicId, title: "confirmed copy", version: 1, status: "confirmed" }, { id: seeded.draftCopyId, topicId: seeded.secondTopicId, title: "draft copy", body: "draft body", strategy: "story", version: 2, status: "draft" }],
       reviewFindings: [{ copyId: seeded.draftCopyId, pattern: "needs correction", severity: "block", guidance: "make this factual", source: "semantic" }],
       shotList: { id: seeded.shotListId, copyId: seeded.confirmedCopyId, status: "draft", shots: [{ order: 1, shot: "wide", durationSeconds: 3 }] }
     });

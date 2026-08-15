@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
@@ -9,6 +10,20 @@ const migration = {
 };
 
 describe("runMigrations", () => {
+  it("declares and executes the customer content task queue index migration", async () => {
+    const id = "025_content_task_customer_queue_index.sql";
+    const sql = await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8");
+    expect(sql.trim()).toBe("CREATE INDEX content_tasks_customer_queue_idx ON content_tasks(enterprise_id, store_id, actor_id, created_at DESC);");
+
+    const memory = newDb({ noAstCoverageCheck: true });
+    memory.public.registerFunction({ name: "pg_advisory_xact_lock", args: [DataType.bigint], returns: DataType.bool, implementation: () => true });
+    const pool = new (memory.adapters.createPg().Pool)();
+    await pool.query("CREATE TABLE content_tasks (enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, actor_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL)");
+
+    expect(await runMigrations(pool, [{ id, sql }])).toEqual([id]);
+    expect((await pool.query("SELECT migration_id FROM schema_migrations")).rows).toEqual([{ migration_id: id }]);
+  });
+
   it("records a migration and skips it on the next run", async () => {
     const memory = newDb({ noAstCoverageCheck: true });
     memory.public.registerFunction({
