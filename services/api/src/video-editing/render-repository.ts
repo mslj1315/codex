@@ -37,10 +37,14 @@ export class RenderRepository {
     if (!result.rowCount) throw new RenderError("Render is not available for cancellation", 409); return json(result.rows[0]);
   }
   async deleteSucceeded(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; jobId: string }, remove: (key: string) => Promise<void>): Promise<void> {
-    const owner = await this.database.query<Row>("SELECT id FROM storyboard_projects WHERE id=$1 AND actor_id=$2", [input.projectId, context.actorId]); if (!owner.rowCount) throw new RenderError("Render output is not available", 404);
-    const found = await this.database.query<Row>("SELECT output_object_key FROM storyboard_render_jobs WHERE id=$1", [input.jobId]);
-    if (!found.rowCount) throw new RenderError("Render output is not available", 404);
-    const outputKey = String(found.rows[0].output_object_key); await remove(outputKey); await Promise.all([1, 2, 3].map(index => remove(outputKey.replace(/\.mp4$/, `-cover-${index}.jpg`))));
+    const owner = await this.database.query<Row>("SELECT id FROM storyboard_projects WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND task_id=$4 AND shot_list_id=$5 AND actor_id=$6", [input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
+    if (!owner.rowCount) throw new RenderError("Render output is not available", 404);
+    // pg-mem cannot evaluate a parameterized predicate on this FK column. The
+    // render id is unique; compare every persisted scope field before storage.
+    const found = await this.database.query<Row>("SELECT project_id,enterprise_id,store_id,task_id,shot_list_id,state,deleted_at,output_object_key FROM storyboard_render_jobs WHERE id=$1", [input.jobId]);
+    const row = found.rows[0];
+    if (!row || String(row.project_id) !== input.projectId || String(row.enterprise_id) !== context.enterpriseId || String(row.store_id) !== context.storeId || String(row.task_id) !== input.taskId || String(row.shot_list_id) !== input.shotListId || row.state !== "succeeded" || row.deleted_at || typeof row.output_object_key !== "string" || !row.output_object_key) throw new RenderError("Render output is not available", 404);
+    const outputKey = row.output_object_key; await remove(outputKey); await Promise.all([1, 2, 3].map(index => remove(outputKey.replace(/\.mp4$/, `-cover-${index}.jpg`))));
     await this.database.query("UPDATE storyboard_render_jobs SET deleted_at=CURRENT_TIMESTAMP WHERE id=$1 AND deleted_at IS NULL", [input.jobId]);
     await this.database.query("INSERT INTO storyboard_render_output_deletions(id,render_job_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'customer_deleted')", [randomUUID(), input.jobId, context.enterpriseId, context.storeId, context.actorId]);
   }

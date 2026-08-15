@@ -100,6 +100,19 @@ describe("storyboard render queue", () => {
     expect((await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders` })).json().renders).toEqual([]);
   });
 
+  it("does not delete another project render through a customer-owned project path", async () => {
+    await database.query("INSERT INTO storyboard_projects(id,enterprise_id,store_id,task_id,shot_list_id,actor_id) VALUES('other-project',$1,$2,$3,$4,'other-customer')", [scope.enterpriseId, scope.storeId, taskId, shotListId]);
+    await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state,output_object_key,output_expires_at,cover_candidates_json) VALUES('other-render',$1,$2,$3,$4,'other-project',1,'final','succeeded','other-output',CURRENT_TIMESTAMP + interval '180 days','[]')", [scope.enterpriseId, scope.storeId, taskId, shotListId]);
+    const response = await app.inject({ method: "DELETE", url: `${path()}/projects/${projectId}/renders/other-render` });
+    expect(response.statusCode, response.body).toBe(404);
+    expect((await database.query("SELECT deleted_at FROM storyboard_render_jobs WHERE id='other-render'")).rows[0].deleted_at).toBeNull();
+  });
+
+  it("does not delete a non-succeeded render", async () => {
+    const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "final" } });
+    expect((await app.inject({ method: "DELETE", url: `${path()}/projects/${projectId}/renders/${created.json().id}` })).statusCode).toBe(404);
+  });
+
   it("persists render artifacts separately so cleanup does not derive customer-visible storage identifiers", async () => {
     const columns = await database.query("SELECT column_name FROM information_schema.columns WHERE table_name='storyboard_render_artifacts'");
     expect(columns.rows.map(row => row.column_name)).toEqual(expect.arrayContaining(["render_job_id", "object_key", "kind", "deleted_at", "next_cleanup_attempt_at"]));
