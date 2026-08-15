@@ -86,6 +86,52 @@ class ContentCreationViewModelTest {
         assertEquals(2, repository.createCalls)
     }
 
+    @Test fun topicRetryUsesTheCreatedTaskWithoutCreatingAnotherTask() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository(
+            ContentTaskDetail("created-task", "draft", emptyList(), emptyList(), emptyList(), null)
+        ).apply {
+            createdTaskId = "created-task"
+            topicFailures += IllegalStateException("first topic failure")
+            generatedTopics = listOf(topic("topic-1"), topic("topic-2"), topic("topic-3"))
+        }
+        val viewModel = ContentCreationViewModel(repository)
+        viewModel.openCreationSheet()
+        viewModel.updateCreationInput(ContentCreationInput("persona", "video", "style", 1))
+
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+        assertEquals("created-task", viewModel.state.value.pendingTopicGenerationTaskId)
+        assertEquals("created-task", viewModel.state.value.task?.id)
+        assertEquals(1, repository.createCalls)
+        assertEquals(listOf("created-task"), repository.generatedTopicTaskIds)
+
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+
+        assertEquals(1, repository.createCalls)
+        assertEquals(listOf("created-task", "created-task"), repository.generatedTopicTaskIds)
+        assertNull(viewModel.state.value.pendingTopicGenerationTaskId)
+        assertEquals(3, viewModel.state.value.task?.topics?.size)
+        assertEquals(ContentCreationStage.TopicSelection, viewModel.state.value.stage)
+    }
+
+    @Test fun dismissingCreationSheetExplicitlyDiscardsPendingTopicRetry() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository().apply {
+            topicFailures += IllegalStateException("topic failure")
+            createdTaskId = "created-task"
+        }
+        val viewModel = ContentCreationViewModel(repository)
+        viewModel.openCreationSheet()
+        viewModel.updateCreationInput(ContentCreationInput("persona", "video", "style", 1))
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+
+        viewModel.dismissCreationSheet()
+
+        assertNull(viewModel.state.value.pendingTopicGenerationTaskId)
+        assertFalse(viewModel.state.value.creationSheetOpen)
+    }
+
     @Test fun restoredTopicsWithoutCopiesForcesTopicSelectionWithoutPersistingChoice() = runTest(dispatcher) {
         val repository = FakeContentCreationRepository(detail(copies = emptyList()))
         val viewModel = ContentCreationViewModel(repository)
@@ -277,6 +323,9 @@ private class FakeContentCreationRepository(
     var topicGenerationCalls = 0
     var listCalls = 0
     var generatedTopics = emptyList<ContentTopic>()
+    var createdTaskId = "task"
+    val topicFailures = ArrayDeque<Throwable>()
+    val generatedTopicTaskIds = mutableListOf<String>()
     var listFailure: Throwable? = null
     val confirmedBodies = mutableListOf<String>()
     var createGate: CompletableDeferred<CreatedContentTask>? = null
@@ -293,10 +342,12 @@ private class FakeContentCreationRepository(
     override suspend fun loadTask(storeId: String, taskId: String): ContentTaskDetail { loadCalls++; return currentDetail }
     override suspend fun createTask(storeId: String, request: CreateContentTaskRequest): CreatedContentTask {
         createCalls++
-        return createGate?.await() ?: CreatedContentTask("task", 1, "goal", "draft")
+        return createGate?.await() ?: CreatedContentTask(createdTaskId, 1, "goal", "draft")
     }
     override suspend fun generateTopics(storeId: String, taskId: String): List<ContentTopic> {
         topicGenerationCalls++
+        generatedTopicTaskIds += taskId
+        if (topicFailures.isNotEmpty()) throw topicFailures.removeFirst()
         return generatedTopics.also { topics -> currentDetail = currentDetail.copy(topics = topics) }
     }
     override suspend fun generateCopies(storeId: String, taskId: String, topicId: String): List<ContentCopy> {

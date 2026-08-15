@@ -27,6 +27,7 @@ data class ContentCreationState(
     val storyboardHandoff: ContentStoryboardHandoff? = null,
     val creationSheetOpen: Boolean = false,
     val creationInput: ContentCreationInput = ContentCreationInput(),
+    val pendingTopicGenerationTaskId: String? = null,
     val dirtyCopyId: String? = null,
     val stage: ContentCreationStage = ContentCreationStage.Idle,
     val finalizing: Boolean = false,
@@ -76,16 +77,25 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
     }
 
     fun dismissCreationSheet() {
-        if (!mutableState.value.finalizing) mutableState.value = mutableState.value.copy(creationSheetOpen = false)
+        if (!mutableState.value.finalizing) mutableState.value = mutableState.value.copy(creationSheetOpen = false, pendingTopicGenerationTaskId = null)
     }
 
     fun createAndGenerateTopics(storeId: String) = perform {
-        val created = repository.createTask(storeId, mutableState.value.creationInput.request())
-        val topics = repository.generateTopics(storeId, created.id)
-        if (topics.size != 3) throw ContentCreationRequestException("Generated topic options are invalid")
-        refreshQueue(storeId)
-        restoreTask(storeId, created.id)
-        mutableState.value = mutableState.value.copy(creationSheetOpen = false)
+        val taskId = mutableState.value.pendingTopicGenerationTaskId ?: repository.createTask(storeId, mutableState.value.creationInput.request()).id.also { id ->
+            mutableState.value = mutableState.value.copy(pendingTopicGenerationTaskId = id)
+        }
+        try {
+            val topics = repository.generateTopics(storeId, taskId)
+            if (topics.size != 3) throw ContentCreationRequestException("Generated topic options are invalid")
+            refreshQueue(storeId)
+            restoreTask(storeId, taskId)
+            mutableState.value = mutableState.value.copy(creationSheetOpen = false, pendingTopicGenerationTaskId = null)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            recoverPendingTask(storeId, taskId)
+            throw error
+        }
     }
 
     fun generateTopics(storeId: String) = withTask { task ->
@@ -233,6 +243,16 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
 
     private suspend fun refreshQueue(storeId: String) {
         mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId))
+    }
+
+    private suspend fun recoverPendingTask(storeId: String, taskId: String) {
+        try {
+            refreshQueue(storeId)
+            restoreTask(storeId, taskId)
+            mutableState.value = mutableState.value.copy(pendingTopicGenerationTaskId = taskId, creationSheetOpen = true)
+        } catch (_: Exception) {
+            mutableState.value = mutableState.value.copy(pendingTopicGenerationTaskId = taskId)
+        }
     }
 
 }
