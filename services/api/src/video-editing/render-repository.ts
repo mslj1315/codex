@@ -7,7 +7,7 @@ import type { ArtifactCleanupRepository, ClaimedArtifact } from "./render-cleanu
 type Row = Record<string, unknown>;
 export class RenderError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 export type RenderKind = "preview" | "final";
-export type RenderJob = { id: string; projectId: string; projectVersion: number; kind: RenderKind; state: string; createdAt: string; completedAt?: string; error?: string; coverCandidates?: Array<{ positionSeconds: number }> };
+export type RenderJob = { id: string; projectId: string; projectVersion: number; kind: RenderKind; state: string; createdAt: string; completedAt?: string; error?: string; coverCandidates?: Array<{ id: string; positionSeconds: number }> };
 
 export class RenderRepository {
   constructor(private readonly database: Database) {}
@@ -28,7 +28,13 @@ export class RenderRepository {
   }
   async list(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string }) {
     const result = await this.database.query<Row>("SELECT j.* FROM storyboard_render_jobs j JOIN storyboard_projects p ON p.id=j.project_id WHERE j.project_id=$1 AND j.enterprise_id=$2 AND j.store_id=$3 AND j.task_id=$4 AND j.shot_list_id=$5 AND p.actor_id=$6 AND j.deleted_at IS NULL ORDER BY j.created_at DESC", [input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
-    return { renders: result.rows.map(json) };
+    const renders = await Promise.all(result.rows.map(async row => {
+      const item = json(row); const positions = Array.isArray(item.coverCandidates) ? item.coverCandidates.map(candidate => candidate.positionSeconds) : [];
+      if (!positions.length) return item;
+      const artifacts = await this.database.query<Row>("SELECT id FROM storyboard_render_artifacts WHERE render_job_id=$1 AND kind='cover' AND deleted_at IS NULL ORDER BY created_at,id", [row.id]);
+      return { ...item, coverCandidates: positions.map((positionSeconds, index) => ({ id: String(artifacts.rows[index]?.id ?? ""), positionSeconds })).filter(candidate => candidate.id) };
+    }));
+    return { renders };
   }
   async cancel(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; jobId: string }): Promise<RenderJob> {
     const owner = await this.database.query<Row>("SELECT id FROM storyboard_projects WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND task_id=$4 AND shot_list_id=$5 AND actor_id=$6", [input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
@@ -47,6 +53,23 @@ export class RenderRepository {
     const outputKey = row.output_object_key; await remove(outputKey); await Promise.all([1, 2, 3].map(index => remove(outputKey.replace(/\.mp4$/, `-cover-${index}.jpg`))));
     await this.database.query("UPDATE storyboard_render_jobs SET deleted_at=CURRENT_TIMESTAMP WHERE id=$1 AND deleted_at IS NULL", [input.jobId]);
     await this.database.query("INSERT INTO storyboard_render_output_deletions(id,render_job_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'customer_deleted')", [randomUUID(), input.jobId, context.enterpriseId, context.storeId, context.actorId]);
+  }
+  async delivery(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; jobId: string; artifactId?: string }) {
+    const found = await this.database.query<Row>("SELECT j.* FROM storyboard_render_jobs j JOIN storyboard_projects p ON p.id=j.project_id WHERE j.id=$1 AND j.project_id=$2 AND j.enterprise_id=$3 AND j.store_id=$4 AND j.task_id=$5 AND j.shot_list_id=$6 AND p.actor_id=$7", [input.jobId, input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
+    const row = found.rows[0];
+    if (!row || row.state !== "succeeded" || row.deleted_at || !row.output_expires_at || new Date(String(row.output_expires_at)) <= new Date()) throw new RenderError("Render output is not available", 404);
+    const artifact = input.artifactId ? (await this.database.query<Row>("SELECT object_key,kind FROM storyboard_render_artifacts WHERE id=$1 AND render_job_id=$2 AND kind='cover' AND deleted_at IS NULL", [input.artifactId, input.jobId])).rows[0] : undefined;
+    if (input.artifactId && !artifact) throw new RenderError("Render output is not available", 404);
+    const key = input.artifactId ? artifact!.object_key : row.output_object_key;
+    if (typeof key !== "string" || !key) throw new RenderError("Render output is not available", 404);
+    return { objectKey: key, contentType: input.artifactId ? "image/jpeg" as const : "video/mp4" as const };
+  }
+  async selectCover(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; jobId: string; artifactId: unknown; title: unknown }) {
+    if (typeof input.artifactId !== "string" || !input.artifactId || typeof input.title !== "string" || input.title.trim().length > 120) throw new RenderError("Cover selection is invalid", 422);
+    const row = await this.database.query<Row>("SELECT j.project_version FROM storyboard_render_jobs j JOIN storyboard_projects p ON p.id=j.project_id JOIN storyboard_render_artifacts a ON a.id=$7 AND a.render_job_id=j.id AND a.kind='cover' AND a.deleted_at IS NULL WHERE j.id=$1 AND j.project_id=$2 AND j.enterprise_id=$3 AND j.store_id=$4 AND j.task_id=$5 AND j.shot_list_id=$6 AND p.actor_id=$8 AND j.kind='final' AND j.state='succeeded' AND j.deleted_at IS NULL AND j.output_expires_at>$9", [input.jobId, input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId, input.artifactId, context.actorId, new Date()]);
+    if (!row.rowCount) throw new RenderError("Cover candidate is not available", 404);
+    await this.database.query("INSERT INTO storyboard_render_cover_selections(project_id,project_version,render_job_id,artifact_id,title) VALUES($1,$2,$3,$4,$5) ON CONFLICT(project_id,project_version) DO UPDATE SET render_job_id=EXCLUDED.render_job_id,artifact_id=EXCLUDED.artifact_id,title=EXCLUDED.title", [input.projectId, row.rows[0].project_version, input.jobId, input.artifactId, input.title.trim()]);
+    return { selectedCoverCandidateId: input.artifactId, selectedCoverTitle: input.title.trim() };
   }
   workerRepository(now = () => new Date()): RenderWorkerRepository { return new DatabaseRenderWorkerRepository(this.database, now); }
   cleanupRepository(now = () => new Date()): ArtifactCleanupRepository { return new DatabaseArtifactCleanupRepository(this.database, now); }
@@ -94,4 +117,5 @@ export class DatabaseRenderWorkerRepository implements RenderWorkerRepository {
 }
 function isActiveConflict(error: unknown) { return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "23505"; }
 function slotsArray(value: unknown): Array<{ assetId?: string; subtitleText?: string; subtitleEnabled?: boolean; trimStartSeconds?: number; trimEndSeconds?: number; order?: number; muted?: boolean }> { const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value ?? []; if (!Array.isArray(parsed)) throw new Error("Stored storyboard slots are invalid"); return parsed as Array<{ assetId?: string; subtitleText?: string; subtitleEnabled?: boolean; trimStartSeconds?: number; trimEndSeconds?: number; order?: number; muted?: boolean }>; }
-function json(row: Row): RenderJob { return { id: String(row.id), projectId: String(row.project_id), projectVersion: Number(row.project_version), kind: row.kind as RenderKind, state: String(row.state), createdAt: new Date(String(row.created_at)).toISOString(), ...(row.completed_at ? { completedAt: new Date(String(row.completed_at)).toISOString() } : {}), ...(row.error_message ? { error: String(row.error_message) } : {}), ...(row.cover_candidates_json ? { coverCandidates: JSON.parse(String(row.cover_candidates_json)) as Array<{ positionSeconds: number }> } : {}) }; }
+function json(row: Row): RenderJob { return { id: String(row.id), projectId: String(row.project_id), projectVersion: Number(row.project_version), kind: row.kind as RenderKind, state: String(row.state), createdAt: new Date(String(row.created_at)).toISOString(), ...(row.completed_at ? { completedAt: new Date(String(row.completed_at)).toISOString() } : {}), ...(row.error_message ? { error: String(row.error_message) } : {}), ...(row.cover_candidates_json ? { coverCandidates: jsonValue(row.cover_candidates_json) as Array<{ id: string; positionSeconds: number }> } : {}) }; }
+function jsonValue(value: unknown): unknown { return typeof value === "string" ? JSON.parse(value) : value; }

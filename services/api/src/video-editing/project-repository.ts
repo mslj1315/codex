@@ -54,7 +54,9 @@ export class ProjectRepository {
     const project = await this.database.query<Row>("SELECT id FROM storyboard_projects WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND task_id=$4 AND shot_list_id=$5 AND actor_id=$6", [projectIdValue, context.enterpriseId, context.storeId, taskId, shotListId, context.actorId]);
     if (!project.rowCount) throw new ProjectError("Storyboard project not found", 404);
     const versions = await this.database.query<Row>("SELECT * FROM storyboard_project_versions WHERE project_id=$1 ORDER BY version", [projectIdValue]);
-    return { id: projectIdValue, versions: versions.rows.map(row => versionJson(projectIdValue, row)) };
+    const selections = await this.database.query<Row>("SELECT project_version,artifact_id,title FROM storyboard_render_cover_selections WHERE project_id=$1", [projectIdValue]);
+    const byVersion = new Map(selections.rows.map(row => [Number(row.project_version), row]));
+    return { id: projectIdValue, versions: versions.rows.map(row => { const version = versionJson(projectIdValue, row); const selection = byVersion.get(version.version); return selection ? { ...version, selectedCoverCandidateId: String(selection.artifact_id), selectedCoverTitle: String(selection.title) } : version; }) };
   }
 }
 

@@ -24,7 +24,7 @@ describe("storyboard render queue", () => {
     const memory = newDb({ noAstCoverageCheck: true });
     memory.public.registerFunction({ name: "jsonb_typeof", args: [DataType.jsonb], returns: DataType.text, implementation: value => Array.isArray(value) ? "array" : typeof value === "object" && value !== null ? "object" : typeof value });
     const { Pool } = memory.adapters.createPg(); database = new Pool();
-    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql", "024_storyboard_render_artifacts.sql", "025_storyboard_render_leases.sql"]) {
+    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql", "024_storyboard_render_artifacts.sql", "025_storyboard_render_leases.sql", "026_storyboard_render_delivery.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
       await database.query(sql.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     }
@@ -155,6 +155,32 @@ describe("storyboard render queue", () => {
     const removed = await app.inject({ method: "DELETE", url: `${path()}/projects/${projectId}/renders/${created.json().id}` }); expect(removed.statusCode, removed.body).toBe(204);
     expect((await database.query("SELECT reason FROM storyboard_render_output_deletions WHERE render_job_id=$1", [created.json().id])).rows).toEqual([{ reason: "customer_deleted" }]);
     expect((await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders` })).json().renders).toEqual([]);
+  });
+
+  it("streams only a scoped, unexpired succeeded output and opaque cover candidate bytes", async () => {
+    const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "final" } });
+    const id = created.json().id;
+    await database.query("UPDATE storyboard_render_jobs SET state='succeeded',output_object_key=$2,output_expires_at='2099-01-01T00:00:00.000Z',cover_candidates_json='[{\"positionSeconds\":1},{\"positionSeconds\":2},{\"positionSeconds\":3}]' WHERE id=$1", [id, `storyboard-render-output/${id}.mp4`]);
+    await database.query("INSERT INTO storyboard_render_artifacts(id,render_job_id,object_key,kind) VALUES('output-artifact',$1,$2,'video'),('cover-one',$1,$3,'cover'),('cover-two',$1,$4,'cover'),('cover-three',$1,$5,'cover')", [id, `storyboard-render-output/${id}.mp4`, `storyboard-render-output/${id}-cover-1.jpg`, `storyboard-render-output/${id}-cover-2.jpg`, `storyboard-render-output/${id}-cover-3.jpg`]);
+    await storage.putProtectedFile(`storyboard-render-output/${id}.mp4`, "fixture.mp4", { contentType: "video/mp4", expiresAt: new Date() });
+    await storage.putProtectedFile(`storyboard-render-output/${id}-cover-1.jpg`, "fixture.jpg", { contentType: "image/jpeg", expiresAt: new Date() });
+    const output = await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders/${id}/output` });
+    expect(output.statusCode, output.body).toBe(200);
+    expect(output.headers["content-type"]).toContain("video/mp4");
+    expect(output.headers["content-disposition"]).toContain("attachment");
+    expect(output.body).toBe("protected");
+    const cover = await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders/${id}/cover-candidates/cover-one` });
+    expect(cover.statusCode).toBe(200); expect(cover.headers["content-type"]).toContain("image/jpeg"); expect(cover.body).toBe("protected");
+  });
+
+  it("rejects delivery before storage for malformed, expired, foreign, and provider requests", async () => {
+    const calls: string[] = []; const guarded = Object.assign(storage, { streamProtected: async (key: string) => { calls.push(key); throw new Error("must not stream"); } });
+    const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "preview" } });
+    await database.query("UPDATE storyboard_render_jobs SET state='succeeded',output_object_key='x',output_expires_at=CURRENT_TIMESTAMP - interval '1 second',cover_candidates_json='[]' WHERE id=$1", [created.json().id]);
+    const expiredApp = buildServer({ database, trustedContextResolver: async () => scope, videoStorage: guarded });
+    expect((await expiredApp.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders/${created.json().id}/output` })).statusCode).toBe(404); await expiredApp.close();
+    for (const context of [{ ...scope, actorRole: "provider" as const }, { ...scope, actorId: "other-customer" }]) { const forbidden = buildServer({ database, trustedContextResolver: async () => context, videoStorage: guarded }); expect((await forbidden.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders/not-a-real-id/output` })).statusCode).toBe(403); await forbidden.close(); }
+    expect(calls).toEqual([]);
   });
 
   it("does not delete another project render through a customer-owned project path", async () => {

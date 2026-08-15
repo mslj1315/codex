@@ -49,6 +49,18 @@ export async function registerVideoAssetRoutes(app: FastifyInstance, database: D
   app.delete("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders/:renderId", async (request, reply) => {
     const context = scope(request); const { taskId, shotListId } = ids(request); await renders.deleteSucceeded(context, { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), jobId: String((request.params as Record<string, unknown>).renderId ?? "") }); return reply.code(204).send();
   });
+  app.get("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders/:renderId/output", async (request, reply) => {
+    const context = scope(request); const { taskId, shotListId } = ids(request); const item = await renders.delivery(context, { taskId, shotListId, projectId: String((request.params as Record<string, unknown>).projectId ?? ""), jobId: String((request.params as Record<string, unknown>).renderId ?? "") });
+    return reply.header("content-type", item.contentType).header("content-disposition", `attachment; filename=storyboard-render-${String((request.params as Record<string, unknown>).renderId ?? "")}.mp4`).send(item.body);
+  });
+  app.get("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders/:renderId/cover-candidates/:candidateId", async (request, reply) => {
+    const context = scope(request); const { taskId, shotListId } = ids(request); const params = request.params as Record<string, unknown>; const item = await renders.delivery(context, { taskId, shotListId, projectId: String(params.projectId ?? ""), jobId: String(params.renderId ?? ""), artifactId: String(params.candidateId ?? "") });
+    return reply.header("content-type", item.contentType).send(item.body);
+  });
+  app.post("/v1/stores/:storeId/content-tasks/:taskId/shot-lists/:shotListId/projects/:projectId/renders/:renderId/cover-selection", async request => {
+    const context = scope(request); const { taskId, shotListId } = ids(request); const params = request.params as Record<string, unknown>; const body = record(request.body);
+    return renders.selectCover(context, { taskId, shotListId, projectId: String(params.projectId ?? ""), jobId: String(params.renderId ?? ""), artifactId: body.candidateId, title: body.title });
+  });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ForbiddenError) return reply.code(403).send({ error: error.message });
     if (error instanceof AssetError) return reply.code(error.status).send({ error: error.message });

@@ -29,11 +29,12 @@ export interface ProtectedRenderStorage {
   downloadToFile(objectKey: string, destinationPath: string): Promise<void>;
   putProtectedFile(objectKey: string, sourcePath: string, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void>;
   deleteProtected(objectKey: string): Promise<void>;
+  streamProtected(objectKey: string): Promise<{ body: Readable; contentType: "video/mp4" | "image/jpeg" }>;
 }
 
 export class InMemoryVideoStorage implements VideoStorage, ProtectedRenderStorage {
   private readonly objects = new Map<string, VideoObjectMetadata>(); private readonly closed = new Set<string>();
-  private readonly protectedObjects = new Set<string>();
+  private readonly protectedObjects = new Map<string, "video/mp4" | "image/jpeg">();
   async createDirectUpload(objectKey: string): Promise<DirectUploadTarget> { return { method: "PUT", url: `memory-upload://${encodeURIComponent(objectKey)}` }; }
   async inspect(objectKey: string): Promise<VideoObjectMetadata | undefined> { return this.objects.get(objectKey); }
   async finalizeUpload(objectKey: string): Promise<VideoObjectMetadata | undefined> { const object = this.objects.get(objectKey); if (object) this.closed.add(objectKey); return object; }
@@ -41,8 +42,9 @@ export class InMemoryVideoStorage implements VideoStorage, ProtectedRenderStorag
   async delete(objectKey: string): Promise<void> { this.objects.delete(objectKey); }
   async put(objectKey: string, metadata: Omit<VideoObjectMetadata, "etag" | "version">): Promise<void> { if (this.closed.has(objectKey) || this.objects.has(objectKey)) throw new Error("immutable upload"); this.objects.set(objectKey, { ...metadata, etag: `etag-${objectKey}`, version: `version-${objectKey}` }); }
   async downloadToFile(objectKey: string, destinationPath: string): Promise<void> { if (!this.objects.has(objectKey)) throw Object.assign(new Error("source unavailable"), { code: "ENOENT" }); await writeFile(destinationPath, "source"); }
-  async putProtectedFile(objectKey: string, _sourcePath: string, _metadata?: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void> { if (this.protectedObjects.has(objectKey)) throw new Error("immutable output"); this.protectedObjects.add(objectKey); }
+  async putProtectedFile(objectKey: string, _sourcePath: string, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void> { if (this.protectedObjects.has(objectKey)) throw new Error("immutable output"); this.protectedObjects.set(objectKey, metadata.contentType); }
   async deleteProtected(objectKey: string): Promise<void> { this.protectedObjects.delete(objectKey); }
+  async streamProtected(objectKey: string) { const contentType = this.protectedObjects.get(objectKey); if (!contentType) throw Object.assign(new Error("protected output unavailable"), { code: "ENOENT" }); return { body: Readable.from(["protected"]), contentType }; }
 }
 
 /** Video routes are fail-closed until a server-side object-storage signer is installed. */
@@ -63,6 +65,7 @@ class InternalSignerVideoStorage implements VideoStorage, ProtectedRenderStorage
   async downloadToFile(objectKey: string, destinationPath: string) { const response = await this.callResponse("worker-download", { objectKey }); if (!response.body) throw Object.assign(new Error("video storage signer request failed"), { code: "ETIMEDOUT" }); await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), createWriteStream(destinationPath)); }
   async putProtectedFile(objectKey: string, sourcePath: string, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }) { await this.call<void>("worker-put-protected", { objectKey, contentType: metadata.contentType, expiresAt: metadata.expiresAt.toISOString() }, createReadStream(sourcePath)); }
   async deleteProtected(objectKey: string) { await this.call<void>("worker-delete-protected", { objectKey }); }
+  async streamProtected(objectKey: string) { const response = await this.callResponse("delivery-stream", { objectKey }); if (!response.body) throw Object.assign(new Error("video storage signer request failed"), { code: "ETIMEDOUT" }); const contentType = response.headers.get("content-type"); if (contentType !== "video/mp4" && contentType !== "image/jpeg") throw new Error("invalid protected content type"); return { body: Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), contentType: contentType as "video/mp4" | "image/jpeg" }; }
   private async call<T>(action: string, body: unknown, file?: ReturnType<typeof createReadStream>): Promise<T> { const response = await this.callResponse(action, body, file); return response.status === 204 ? undefined as T : await response.json() as T; }
   private async callResponse(action: string, body: unknown, file?: ReturnType<typeof createReadStream>): Promise<Response> { let response: Response; try { const request = file ? { method: "POST", headers: { authorization: `Bearer ${this.token}`, "x-object-key": String((body as { objectKey: string }).objectKey), "x-content-type": String((body as { contentType: string }).contentType), "x-expires-at": String((body as { expiresAt: string }).expiresAt) }, body: file as unknown as ReadableStream, duplex: "half" } as RequestInit : { method: "POST", headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" }, body: JSON.stringify(body) }; response = await fetch(`${this.endpoint.replace(/\/$/, "")}/${action}`, request); } catch { throw Object.assign(new Error("video storage signer request failed"), { code: "ECONNRESET" }); } if (!response.ok) throw Object.assign(new Error("video storage signer request failed"), { code: "ETIMEDOUT" }); return response; }
 }
