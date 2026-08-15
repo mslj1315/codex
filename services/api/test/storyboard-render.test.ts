@@ -135,6 +135,7 @@ describe("storyboard render queue", () => {
     await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state) VALUES('job-success',$1,$2,$3,$4,$5,1,'final','queued')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]);
     const claimed = await repository.claim();
     expect(claimed?.id).toBe("job-success");
+    expect(claimed?.slots).toEqual([{ sourceKey: "source-object", trimStartSeconds: 0, trimEndSeconds: 5, muted: false, subtitleText: "subtitle", subtitleEnabled: true }]);
     expect((await database.query("SELECT state,attempt_count FROM storyboard_render_jobs WHERE id='job-success'")).rows).toEqual([{ state: "processing", attempt_count: 1 }]);
     await repository.succeed("job-success", { outputExpiresAt: new Date("2027-02-11T00:00:00.000Z"), coverCandidates: [{ positionSeconds: 1 }, { positionSeconds: 2 }, { positionSeconds: 3 }], artifacts: [{ objectKey: "output", kind: "video" }, { objectKey: "cover-1", kind: "cover" }, { objectKey: "cover-2", kind: "cover" }, { objectKey: "cover-3", kind: "cover" }] });
     expect((await database.query("SELECT kind FROM storyboard_render_artifacts WHERE render_job_id='job-success' ORDER BY kind")).rows).toHaveLength(4);

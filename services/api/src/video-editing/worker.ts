@@ -1,7 +1,7 @@
-export type RenderManifest = { width: 1080; height: 1920; fps: 30; durationSeconds: number; subtitles: string[]; sources: Buffer[] };
+export type RenderManifest = { width: 1080; height: 1920; fps: 30; durationSeconds: number; subtitles: string[]; sources: Buffer[]; workspacePath?: string; slots?: Array<{ sourceIndex: number; trimStartSeconds: number; trimEndSeconds: number; muted: boolean; subtitleText?: string; subtitleEnabled: boolean }> };
 export type RunnerResult = { output: Buffer; metadata: { width: number; height: number; fps: number; durationSeconds: number; contentType: string }; coverFrames: Array<{ positionSeconds: number; bytes: Buffer }> };
 export interface RenderRunner { render(manifest: RenderManifest): Promise<RunnerResult>; }
-export interface ClaimedRender { id: string; kind: "preview" | "final"; projectId: string; projectVersion: number; durationSeconds: number; subtitleText: string[]; sourceKeys: string[]; }
+export interface ClaimedRender { id: string; kind: "preview" | "final"; projectId: string; projectVersion: number; durationSeconds: number; subtitleText: string[]; sourceKeys: string[]; slots?: Array<{ sourceKey: string; trimStartSeconds: number; trimEndSeconds: number; muted: boolean; subtitleText?: string; subtitleEnabled: boolean }>; }
 export interface RenderWorkerRepository { claim(): Promise<ClaimedRender | undefined>; succeed(id: string, result: { outputExpiresAt: Date; coverCandidates: Array<{ positionSeconds: number }>; artifacts?: Array<{ objectKey: string; kind: "video" | "cover" }> }): Promise<void>; fail(id: string, category: string, retryable: boolean): Promise<void>; isCancelled(id: string): Promise<boolean>; }
 export interface WorkerStorage { download(key: string): Promise<Buffer>; putProtected(key: string, bytes: Buffer, metadata: { contentType: "video/mp4" | "image/jpeg"; expiresAt: Date }): Promise<void>; }
 export interface TemporaryWorkspace { create(jobId: string): Promise<string>; remove(path: string): Promise<void>; }
@@ -14,8 +14,9 @@ export class StoryboardRenderWorker {
     try {
       if (await this.repository.isCancelled(job.id)) return true;
       validateRenderManifest({ width: 1080, height: 1920, fps: 30, durationSeconds: job.durationSeconds });
-      const sources = await Promise.all(job.sourceKeys.map(key => this.storage.download(key)));
-      const result = await this.runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: job.durationSeconds, subtitles: job.subtitleText, sources });
+      const sourceKeys = job.slots?.map(slot => slot.sourceKey) ?? job.sourceKeys;
+      const uniqueSourceKeys = [...new Set(sourceKeys)]; const sources = await Promise.all(uniqueSourceKeys.map(key => this.storage.download(key)));
+      const result = await this.runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: job.durationSeconds, subtitles: job.subtitleText, sources, workspacePath: path, slots: job.slots?.map(slot => ({ ...slot, sourceIndex: uniqueSourceKeys.indexOf(slot.sourceKey) })) });
       validateResult(result, job.durationSeconds);
       if (await this.repository.isCancelled(job.id)) return true;
       const expiresAt = new Date(this.now().getTime() + (job.kind === "final" ? 180 : 7) * 24 * 60 * 60 * 1000);

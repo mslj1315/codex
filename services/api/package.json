@@ -5,6 +5,7 @@
   "scripts": {
     "cleanup:imports": "tsx src/cleanup-import-files.ts",
     "cleanup:storyboard-renders": "tsx src/cleanup-storyboard-render-artifacts.ts",
+    "render:storyboard": "tsx src/render-storyboard-worker.ts",
     "reconcile:imports": "tsx src/reconcile-import-objects.ts",
     "maintenance:status": "tsx src/import-maintenance-status.ts",
     "publish:metric-catalog": "tsx src/publish-metric-catalog.ts",
