@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 const productionCompose = new URL("../../../deploy/production/compose.yml", import.meta.url);
 const productionEnvironment = new URL("../../../deploy/production/.env.example", import.meta.url);
 const nginxConfiguration = new URL("../../../deploy/production/nginx/app.msljkj.cn.conf", import.meta.url);
+const deploymentScript = new URL("../../../deploy/production/scripts/deploy.sh", import.meta.url);
+const productionRunbook = new URL("../../../docs/operations/production-cloud-deployment.md", import.meta.url);
 const execFileAsync = promisify(execFile);
 
 describe("production deployment topology", () => {
@@ -78,6 +80,49 @@ describe("production deployment topology", () => {
     const config = JSON.parse(output) as { services: Record<string, { ports?: Array<{ host_ip?: string; published?: string; target?: number }> }> };
     expect(config.services.postgres.ports).toBeUndefined();
     expect(config.services.api.ports).toEqual([{ mode: "ingress", host_ip: "127.0.0.1", target: 3000, published: "3000", protocol: "tcp" }]);
+  });
+
+  it("uses a guarded local release script without printing or creating secrets", async () => {
+    const script = await readFile(deploymentScript, "utf8");
+
+    expect(script).toContain("set -eu");
+    expect(script).toContain("[ ! -f .env ]");
+    expect(script).toContain("AUTH_TOKEN_SECRET");
+    expect(script).toContain("POSTGRES_DB");
+    expect(script).toContain("POSTGRES_USER");
+    expect(script).toContain("POSTGRES_PASSWORD");
+    expect(script).toContain("DATABASE_URL");
+    expect(script).toContain('MODEL_PROVIDER:-');
+    expect(script).toContain("MODEL_MODEL");
+    expect(script).toContain("MODEL_API_KEY");
+    expect(script).toContain("MODEL_BASE_URL");
+    expect(script).toContain("docker compose --env-file .env -f compose.yml up -d --build");
+    expect(script).toContain("http://127.0.0.1:3000/health");
+    expect(script).not.toContain("cat .env");
+    expect(script).not.toContain("curl | sh");
+    expect(script).not.toContain("--privileged");
+    expect(script).not.toContain("docker system prune");
+  });
+
+  it("documents root-only secrets, controlled onboarding, recovery, and disabled video", async () => {
+    const runbook = await readFile(productionRunbook, "utf8");
+
+    expect(runbook).toContain("/opt/restaurant-ops");
+    expect(runbook).toContain("umask 077");
+    expect(runbook).toContain("chmod 600 .env");
+    expect(runbook).toContain("openssl rand -hex 48");
+    expect(runbook).toContain("DATABASE_URL");
+    expect(runbook).toContain("bot.msljkj.cn");
+    expect(runbook).toContain("app.msljkj.cn");
+    expect(runbook).toContain("certbot");
+    expect(runbook).toContain("provision:account");
+    expect(runbook).toContain("model_pricing_operator");
+    expect(runbook).toContain("grant:service-role");
+    expect(runbook).toContain("backup");
+    expect(runbook).toContain("rollback");
+    expect(runbook).toContain("VIDEO_STORAGE_MODE=disabled");
+    expect(runbook).toContain("does not publish to Douyin automatically");
+    expect(runbook).not.toContain("MODEL_API_KEY=sk-");
   });
 });
 
