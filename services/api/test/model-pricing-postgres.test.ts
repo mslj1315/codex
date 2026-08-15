@@ -31,4 +31,11 @@ describe.skipIf(!url)("model token pricing PostgreSQL lifecycle", () => {
     await pool.query("UPDATE model_token_price_versions SET status='retired',effective_to='2020-02-01T00:00:00Z' WHERE id='draft'");
     await expect(pool.query("UPDATE model_token_price_versions SET effective_to='2020-03-01T00:00:00Z' WHERE id='draft'")).rejects.toThrow("model token price history is immutable");
   });
+
+  it("keeps a scheduled retirement applicable until its effective end", async () => {
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,effective_to,status) VALUES('scheduled','provider','model',1,2,CURRENT_TIMESTAMP - INTERVAL '1 minute',CURRENT_TIMESTAMP + INTERVAL '1 day','retired')");
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,effective_to,status) VALUES('expired','provider','model',1,2,'2020-01-01','2020-01-02','retired')");
+    const current = await pool.query("SELECT id FROM model_token_price_versions WHERE provider='provider' AND model='model' AND effective_from <= CURRENT_TIMESTAMP AND status IN ('published','retired') AND (status='published' OR effective_to > CURRENT_TIMESTAMP)");
+    expect(current.rows).toEqual([{ id: "scheduled" }]);
+  });
 });

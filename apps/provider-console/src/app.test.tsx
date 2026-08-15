@@ -211,7 +211,7 @@ describe("provider console application shell", () => {
     expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions/price-1", expect.objectContaining({ method: "PUT" }));
     await user.click(screen.getByRole("button", { name: "Publish" }));
     expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions/price-1/publish", expect.objectContaining({ method: "POST" }));
-    await user.type(screen.getByLabelText("Effective to"), "2026-09-01T00:00:00.000Z");
+    await user.type(screen.getByLabelText("Scheduled effective to"), "2026-09-01T00:00:00.000Z");
     await user.click(screen.getByRole("button", { name: "Retire" }));
     expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions/price-1/retire", expect.objectContaining({ method: "POST", body: JSON.stringify({ effectiveTo: "2026-09-01T00:00:00.000Z" }) }));
     expect(api.fetch).not.toHaveBeenCalledWith("/v1/provider-customers?limit=50");

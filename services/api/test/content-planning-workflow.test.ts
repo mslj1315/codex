@@ -354,6 +354,14 @@ describe("content planning workflow", () => {
     }]);
   });
 
+  it.skip("pg-mem does not evaluate a retired-price timestamp predicate reliably; REAL_POSTGRES_TEST_URL covers this lifecycle", async () => {
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,effective_to,status) VALUES('scheduled-retirement','deepseek','test',8,32,CURRENT_TIMESTAMP - INTERVAL '1 minute',CURRENT_TIMESTAMP + INTERVAL '1 day','retired')");
+    vi.mocked(generator.generateStructured).mockResolvedValueOnce({ provider: "deepseek", model: "test", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, latencyMs: 1, output: [{ title: "one", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }] });
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
+    expect((await pool.query("SELECT price_version_id FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows[0].price_version_id).toBe("scheduled-retirement");
+  });
+
   it("rejects a partial priced snapshot rather than accepting unknown cost fields", async () => {
     const { taskId } = await seedDraftCopy();
     await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-current','deepseek','test',8,32,CURRENT_TIMESTAMP - INTERVAL '1 minute','published')");

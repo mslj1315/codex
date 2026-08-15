@@ -245,7 +245,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
 
 async function recordRun(client: PoolClient, item: Row, kind: GenerationKind, subjectId: string, output: { provider: string; model: string; usage: GenerationResult<unknown>["usage"]; latencyMs: number }, status: "succeeded" | "failed", promptVersion?: string, failure?: string): Promise<void> {
   const price = status === "succeeded"
-    ? (await client.query<Row>("SELECT id,input_cny_per_million_tokens,output_cny_per_million_tokens FROM model_token_price_versions WHERE provider=$1 AND model=$2 AND status='published' AND effective_from <= CURRENT_TIMESTAMP::timestamptz ORDER BY effective_from DESC LIMIT 1", [output.provider, output.model])).rows[0]
+    ? (await client.query<Row>("SELECT id,input_cny_per_million_tokens,output_cny_per_million_tokens FROM model_token_price_versions WHERE provider=$1 AND model=$2 AND effective_from <= CURRENT_TIMESTAMP::timestamptz AND status IN ('published','retired') AND (status='published' OR effective_to > CURRENT_TIMESTAMP::timestamptz) ORDER BY effective_from DESC LIMIT 1", [output.provider, output.model])).rows[0]
     : undefined;
   const fields = [randomUUID(), item.id, kind, subjectId, output.provider, output.model, promptVersion ?? ({ topics: "content-topic-v1", copies: "content-copy-v1", shots: "content-shots-v1" } as const)[kind], item.template_snapshot_json, status, JSON.stringify(output.usage), output.latencyMs, failure ?? null];
   if (!price) {
