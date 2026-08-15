@@ -80,16 +80,7 @@ export class AuthService {
 
   async resolveStoreContext(accessToken: string, storeId: string): Promise<TrustedContext> {
     const account = await this.authenticateAccessToken(accessToken);
-    const internalPermissions = new InternalPermissionRepository(this.repository.databaseConnection());
-    const [serviceOperatorRoles, isInternalAccount] = await Promise.all([
-      this.repository.listEnabledServiceOperatorRoles(account.id),
-      internalPermissions.hasEnabledInternalRole(account.id)
-    ]);
-    // Internal users are authorized only through internal management routes. They must never
-    // obtain a customer resource principal merely by also having a store membership.
-    if (serviceOperatorRoles.length > 0 || isInternalAccount) {
-      throw new AuthorizationError("Service operators cannot access customer resources");
-    }
+    await this.requireCustomerResourcePrincipal(account);
     const membership = await this.repository.findEnabledMembership(account.id, storeId);
     if (!membership) throw new AuthorizationError("Store is not authorized");
     return { enterpriseId: membership.enterpriseId, storeId: membership.storeId, actorId: account.id };
@@ -97,6 +88,7 @@ export class AuthService {
 
   async listStores(accessToken: string): Promise<StoreMembership[]> {
     const account = await this.authenticateAccessToken(accessToken);
+    await this.requireCustomerResourcePrincipal(account);
     return this.repository.listEnabledMemberships(account.id);
   }
 
@@ -146,6 +138,19 @@ export class AuthService {
       expiresAt: new Date(now.getTime() + REFRESH_TOKEN_TTL_MS)
     });
     return this.tokensFor(account, refreshToken, now, sessionId);
+  }
+
+  private async requireCustomerResourcePrincipal(account: { id: string }): Promise<void> {
+    const internalPermissions = new InternalPermissionRepository(this.repository.databaseConnection());
+    const [serviceOperatorRoles, isInternalAccount] = await Promise.all([
+      this.repository.listEnabledServiceOperatorRoles(account.id),
+      internalPermissions.hasEnabledInternalRole(account.id)
+    ]);
+    // Internal users are authorized only through internal management routes. They must never
+    // obtain a customer resource principal merely by also having a store membership.
+    if (serviceOperatorRoles.length > 0 || isInternalAccount) {
+      throw new AuthorizationError("Service operators cannot access customer resources");
+    }
   }
 
   private tokensFor(account: { id: string; displayName: string }, refreshToken: string, now: Date, sessionId = randomUUID()): AuthTokens {

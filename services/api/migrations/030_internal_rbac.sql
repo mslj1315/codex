@@ -80,3 +80,19 @@ $$;
 CREATE TRIGGER internal_audit_events_append_only
 BEFORE UPDATE OR DELETE ON internal_audit_events
 FOR EACH ROW EXECUTE FUNCTION reject_internal_audit_event_mutation();
+
+CREATE OR REPLACE FUNCTION reject_internal_role_code_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF OLD.code IS DISTINCT FROM NEW.code THEN
+    RAISE EXCEPTION 'internal role machine code is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER internal_roles_code_immutable
+BEFORE UPDATE ON internal_roles
+FOR EACH ROW EXECUTE FUNCTION reject_internal_role_code_mutation();

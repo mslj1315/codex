@@ -76,6 +76,55 @@ export async function requireInternalPermission<T>(
 
 export class InternalAuthorizationError extends Error {}
 
+type InternalAuditValue = string | number | boolean | null;
+type InternalAuditMetadataKey =
+  | "accountStatus"
+  | "assignmentMode"
+  | "enabled"
+  | "modelConfigurationId"
+  | "modelAssignmentId"
+  | "operation"
+  | "permissionCode"
+  | "priceVersionId"
+  | "previousEnabled"
+  | "reasonCode"
+  | "roleCode"
+  | "state";
+
+export type InternalAuditMetadata = Partial<Record<InternalAuditMetadataKey, InternalAuditValue>>;
+
+const INTERNAL_AUDIT_METADATA_KEYS = new Set<InternalAuditMetadataKey>([
+  "accountStatus", "assignmentMode", "enabled", "modelConfigurationId", "modelAssignmentId",
+  "operation", "permissionCode", "priceVersionId", "previousEnabled", "reasonCode", "roleCode", "state"
+]);
+
+const SENSITIVE_AUDIT_METADATA_KEY = /password|secret|key|token|prompt|content|copy|inspiration|media|object|cipher|plaintext|credential/i;
+
+export function sanitizeInternalAuditMetadata(value: Record<string, unknown>): InternalAuditMetadata {
+  const sanitized: Record<string, InternalAuditValue> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (SENSITIVE_AUDIT_METADATA_KEY.test(key)) {
+      throw new InternalAuditMetadataError("Internal audit metadata contains a sensitive field");
+    }
+    if (!INTERNAL_AUDIT_METADATA_KEYS.has(key as InternalAuditMetadataKey)) {
+      throw new InternalAuditMetadataError("Internal audit metadata contains an unsupported field");
+    }
+    if (entry !== null && typeof entry !== "string" && typeof entry !== "number" && typeof entry !== "boolean") {
+      throw new InternalAuditMetadataError("Internal audit metadata value is invalid");
+    }
+    if (typeof entry === "number" && !Number.isFinite(entry)) {
+      throw new InternalAuditMetadataError("Internal audit metadata value is invalid");
+    }
+    if (typeof entry === "string" && entry.length > 128) {
+      throw new InternalAuditMetadataError("Internal audit metadata value is invalid");
+    }
+    sanitized[key] = entry;
+  }
+  return sanitized as InternalAuditMetadata;
+}
+
+export class InternalAuditMetadataError extends Error {}
+
 function isInternalPermission(value: string): value is InternalPermission {
   return (INTERNAL_PERMISSION_CODES as readonly string[]).includes(value);
 }

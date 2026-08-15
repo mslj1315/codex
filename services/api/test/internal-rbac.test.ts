@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { readdir, readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
 import { hashPassword } from "../src/auth/credentials.js";
-import { INTERNAL_PERMISSION_CODES, effectiveInternalPermissions, InternalPermissionRepository, requireInternalPermission } from "../src/admin/rbac.js";
+import { INTERNAL_PERMISSION_CODES, effectiveInternalPermissions, InternalPermissionRepository, requireInternalPermission, sanitizeInternalAuditMetadata } from "../src/admin/rbac.js";
 import { buildServer } from "../src/server.js";
 
 describe("internal RBAC", () => {
@@ -97,6 +97,41 @@ describe("internal RBAC", () => {
     expect(response.statusCode).toBe(403);
     expect(response.body).not.toContain("store_customer");
   });
+
+  test("rejects an internal account before querying customer store memberships", async () => {
+    const { app, superAdminToken, customerMembershipQueryCount } = await authenticatedRbacApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me/stores",
+      headers: bearer(superAdminToken)
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: "Forbidden" });
+    expect(customerMembershipQueryCount()).toBe(0);
+  });
+
+  test("rejects sensitive values from internal audit metadata", () => {
+    expect(sanitizeInternalAuditMetadata({ roleCode: "super_admin", enabled: true }))
+      .toEqual({ roleCode: "super_admin", enabled: true });
+    for (const metadata of [
+      { password: "do-not-store" },
+      { apiKey: "do-not-store" },
+      { prompt: "do-not-store" },
+      { content: "do-not-store" },
+      { enabled: Number.NaN }
+    ]) {
+      expect(() => sanitizeInternalAuditMetadata(metadata)).toThrow();
+    }
+  });
+
+  test("makes internal role machine codes immutable in PostgreSQL", async () => {
+    const migration = await readFile(new URL("../migrations/030_internal_rbac.sql", import.meta.url), "utf8");
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION reject_internal_role_code_mutation()");
+    expect(migration).toContain("internal role machine code is immutable");
+    expect(migration).toContain("BEFORE UPDATE ON internal_roles");
+  });
 });
 
 async function authenticatedRbacApp() {
@@ -121,7 +156,13 @@ async function authenticatedRbacApp() {
   const app = buildServer({ database, authTokenSecret: "a sufficiently long test signing secret" });
   const superAdminToken = (await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "admin", password: "passphrase" } })).json<{ accessToken: string }>().accessToken;
   const customerToken = (await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "customer", password: "passphrase" } })).json<{ accessToken: string }>().accessToken;
-  return { app, superAdminToken, customerToken };
+  let customerMembershipQueries = 0;
+  const query = database.query.bind(database);
+  database.query = async (text: string, ...rest: unknown[]) => {
+    if (text.includes("FROM store_memberships")) customerMembershipQueries++;
+    return query(text, ...rest as []);
+  };
+  return { app, superAdminToken, customerToken, customerMembershipQueryCount: () => customerMembershipQueries };
 }
 
 function bearer(accessToken: string) { return { authorization: `Bearer ${accessToken}` }; }
