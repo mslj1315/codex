@@ -6,6 +6,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContentCreationScreenTest {
+    @Test fun idleTaskExposesGenerateTopicsActionAndDisablesItWhileFinalizing() {
+        var generated = false
+        val ready = contentCreationWorkspaceActions(ContentCreationState(stage = ContentCreationStage.Idle), onGenerateTopics = { generated = true })
+
+        assertEquals("生成选题", ready.single().label)
+        assertTrue(ready.single().enabled)
+        ready.single().invoke()
+        assertTrue(generated)
+        assertFalse(contentCreationWorkspaceActions(ContentCreationState(stage = ContentCreationStage.Idle, finalizing = true), onGenerateTopics = {}).single().enabled)
+    }
     @Test fun contentUiMapsQueueCreationReviewAndStoryboardStatesWithoutOpeningUnsafeActions() {
         assertEquals(ContentCreationScreenMode.Queue, contentCreationScreenMode(ContentCreationState()))
         assertEquals(ContentCreationScreenMode.Creating, contentCreationScreenMode(ContentCreationState(creationSheetOpen = true)))

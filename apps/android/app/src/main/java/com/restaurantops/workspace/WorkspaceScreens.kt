@@ -54,6 +54,8 @@ import com.restaurantops.content.AuthenticatedRenderDelivery
 import com.restaurantops.content.RenderDeliveryResult
 import com.restaurantops.content.ContentCreationScreen
 import com.restaurantops.content.RemoteContentCreationRequiredScreen
+import com.restaurantops.content.ContentCreationDestination
+import com.restaurantops.content.contentCreationDestination
 import com.restaurantops.content.ContentCreationViewModel
 import com.restaurantops.content.HttpContentCreationRepository
 import com.restaurantops.content.contentCreationWireApi
@@ -180,9 +182,9 @@ fun WorkspaceRoot(
                     rangeEnd = viewModel.selectedOperationsPeriod?.rangeEnd,
                     modifier = Modifier.padding(contentPadding)
                 )
-                WorkspaceTab.CONTENT_CREATION -> contentCreationViewModel?.let { contentViewModel ->
-                    ContentCreationScreen(
-                        viewModel = contentViewModel,
+                WorkspaceTab.CONTENT_CREATION -> when (contentCreationDestination(contentCreationViewModel != null)) {
+                    ContentCreationDestination.RemoteWorkflow -> ContentCreationScreen(
+                        viewModel = requireNotNull(contentCreationViewModel),
                         storeId = storeId,
                         onStoryboardHandoff = { handoff ->
                             storyboardContext = StoryboardContext(handoff.taskId, handoff.shotListId, "已确认分镜")
@@ -190,10 +192,11 @@ fun WorkspaceRoot(
                         },
                         modifier = Modifier.padding(contentPadding)
                     )
-                } ?: RemoteContentCreationRequiredScreen(
-                    onReturnToLogin = onReturnToLogin ?: onReturnToOnboarding,
-                    modifier = Modifier.padding(contentPadding)
-                )
+                    ContentCreationDestination.RemoteRequired -> RemoteContentCreationRequiredScreen(
+                        onReturnToLogin = onReturnToLogin ?: onReturnToOnboarding,
+                        modifier = Modifier.padding(contentPadding)
+                    )
+                }
                 WorkspaceTab.TASKS -> TasksScreen(
                     tasks = viewModel.tasks,
                     modifier = Modifier.padding(contentPadding)

@@ -4,6 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ContentCreationAccessTest {
+    @Test fun workspaceRoutesUnauthenticatedLocalContentToRemoteRequiredScreen() {
+        assertEquals(ContentCreationDestination.RemoteRequired, contentCreationDestination(false))
+        assertEquals(ContentCreationDestination.RemoteWorkflow, contentCreationDestination(true))
+    }
     @Test fun unauthenticatedContentCreationHasOnlyTheReturnToLoginAction() {
         assertEquals(
             listOf(ContentCreationAccessAction.ReturnToLogin),

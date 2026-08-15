@@ -29,6 +29,23 @@ import androidx.compose.ui.unit.dp
 
 enum class ContentCreationAccessAction { ReturnToLogin }
 
+enum class ContentCreationDestination { RemoteWorkflow, RemoteRequired }
+
+fun contentCreationDestination(hasAuthenticatedClient: Boolean): ContentCreationDestination =
+    if (hasAuthenticatedClient) ContentCreationDestination.RemoteWorkflow else ContentCreationDestination.RemoteRequired
+
+data class ContentCreationWorkspaceAction(val label: String, val enabled: Boolean, private val callback: () -> Unit) {
+    fun invoke() = callback()
+}
+
+fun contentCreationWorkspaceActions(
+    state: ContentCreationState,
+    onGenerateTopics: () -> Unit
+): List<ContentCreationWorkspaceAction> = when (state.stage) {
+    ContentCreationStage.Idle -> listOf(ContentCreationWorkspaceAction("生成选题", !state.finalizing, onGenerateTopics))
+    else -> emptyList()
+}
+
 data class ContentCreationRouteAction(val label: String, private val callback: () -> Unit) {
     fun invoke() = callback()
 }
@@ -102,6 +119,7 @@ fun ContentCreationScreen(
                 state = state,
                 task = task,
                 onSelectTopic = viewModel::selectTopic,
+                onGenerateTopics = { viewModel.generateTopics(storeId) },
                 onGenerateCopies = { viewModel.generateCopies(storeId) },
                 onSelectCopy = viewModel::selectCopy,
                 onDraftChanged = viewModel::updateSelectedDraft,
@@ -161,6 +179,7 @@ private fun ContentTaskWorkspace(
     state: ContentCreationState,
     task: ContentTaskDetail,
     onSelectTopic: (String) -> Unit,
+    onGenerateTopics: () -> Unit,
     onGenerateCopies: () -> Unit,
     onSelectCopy: (String) -> Unit,
     onDraftChanged: (String, String) -> Unit,
@@ -170,7 +189,12 @@ private fun ContentTaskWorkspace(
     onStoryboardHandoff: (ContentStoryboardHandoff) -> Unit
 ) {
     when (state.stage) {
-        ContentCreationStage.Idle -> Text("任务正在准备选题，请稍后刷新。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ContentCreationStage.Idle -> {
+            Text("任务尚未生成选题。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            contentCreationWorkspaceActions(state, onGenerateTopics).single().let { action ->
+                Button(onClick = action::invoke, enabled = action.enabled) { Text(action.label) }
+            }
+        }
         ContentCreationStage.TopicSelection -> TopicSelection(
             topics = task.topics,
             selectedTopicId = state.selectedTopicId,
