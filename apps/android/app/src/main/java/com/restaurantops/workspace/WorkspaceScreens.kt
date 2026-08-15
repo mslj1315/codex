@@ -53,6 +53,10 @@ import com.restaurantops.content.HttpStoryboardVideoRepository
 import com.restaurantops.content.ContentResolverDirectVideoUploader
 import com.restaurantops.content.AuthenticatedRenderDelivery
 import com.restaurantops.content.RenderDeliveryResult
+import com.restaurantops.content.ContentCreationScreen
+import com.restaurantops.content.ContentCreationViewModel
+import com.restaurantops.content.HttpContentCreationRepository
+import com.restaurantops.content.contentCreationWireApi
 import kotlinx.coroutines.launch
 import com.restaurantops.home.OperationsHomeScreen
 import com.restaurantops.home.OperationsHomeViewModel
@@ -99,6 +103,12 @@ fun WorkspaceRoot(
         operationsHomeRepository?.let { OperationsHomeViewModel(it, operationsRepository) }
     }
     val storyboardWireApi = remember(authenticatedApiClient) { authenticatedApiClient?.retrofit(BuildConfig.LOCAL_API_BASE_URL)?.create(StoryboardWireApi::class.java) }
+    val contentCreationRepository = remember(authenticatedApiClient) {
+        authenticatedApiClient?.let { HttpContentCreationRepository(contentCreationWireApi(it, BuildConfig.LOCAL_API_BASE_URL)) }
+    }
+    val contentCreationViewModel = remember(storeId, contentCreationRepository) {
+        contentCreationRepository?.let(::ContentCreationViewModel)
+    }
     val storyboardContextRepository = remember(storyboardWireApi) { storyboardWireApi?.let(::StoryboardContextRepository) }
     val storyboardViewModel = remember(storyboardWireApi, contentResolver) { storyboardWireApi?.let { StoryboardVideoViewModel(HttpStoryboardVideoRepository(RetrofitStoryboardVideoApi(it), ContentResolverDirectVideoUploader(contentResolver))) } }
     val renderDelivery = remember(authenticatedApiClient, androidContext) { authenticatedApiClient?.let { AuthenticatedRenderDelivery(androidContext, BuildConfig.LOCAL_API_BASE_URL, it.okHttpClient()) } }
@@ -182,6 +192,21 @@ fun WorkspaceRoot(
                     storeId = storeId,
                     rangeStart = viewModel.selectedOperationsPeriod?.rangeStart,
                     rangeEnd = viewModel.selectedOperationsPeriod?.rangeEnd,
+                    modifier = Modifier.padding(contentPadding)
+                )
+                WorkspaceTab.CONTENT_CREATION -> contentCreationViewModel?.let { contentViewModel ->
+                    ContentCreationScreen(
+                        viewModel = contentViewModel,
+                        storeId = storeId,
+                        onStoryboardHandoff = { handoff ->
+                            storyboardContext = StoryboardContext(handoff.taskId, handoff.shotListId, "已确认分镜")
+                            viewModel.openVideoFactory()
+                        },
+                        modifier = Modifier.padding(contentPadding)
+                    )
+                } ?: LocalPlaceholderScreen(
+                    title = "内容创作",
+                    message = "请登录客户账号后使用内容创作。",
                     modifier = Modifier.padding(contentPadding)
                 )
                 WorkspaceTab.TASKS -> TasksScreen(

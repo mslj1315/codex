@@ -3,6 +3,7 @@ package com.restaurantops.workspace
 enum class WorkspaceTab(val title: String, val wireValue: String) {
     OPERATIONS("Operations", "operations"),
     HOME("首页", "home"),
+    CONTENT_CREATION("内容创作", "content-creation"),
     TASKS("任务", "tasks"),
     MESSAGES("消息", "messages"),
     PROFILE("我的", "profile");
@@ -10,6 +11,9 @@ enum class WorkspaceTab(val title: String, val wireValue: String) {
     companion object {
         fun fromWireValue(value: String?): WorkspaceTab = entries.firstOrNull { it.wireValue == value } ?: HOME
     }
+
+    val isCustomerContentCreation: Boolean
+        get() = this == CONTENT_CREATION
 }
 
 enum class VideoFactoryStage(val title: String, val wireValue: String) {
