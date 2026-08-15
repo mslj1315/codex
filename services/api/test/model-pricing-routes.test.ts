@@ -30,6 +30,14 @@ describe("model pricing provider routes", () => {
     expect(aggregate.statusCode).toBe(200); expect(aggregate.json()).toEqual({ items: [] });
     expect(aggregate.body).not.toMatch(/enterprise|store|actor|task|prompt|content|media|object/i);
   });
+
+  it("requires the provider marker and dedicated role before reading price versions", async () => {
+    const price = await login("price"); const viewer = await login("viewer");
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: bearer(price) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(viewer) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(price) })).statusCode).toBe(200);
+  });
 });
 let activeApp: ReturnType<typeof buildServer>;
 async function login(loginName: string) { const r = await activeApp.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName, password: "passphrase" } }); return r.json<{accessToken:string}>().accessToken; }

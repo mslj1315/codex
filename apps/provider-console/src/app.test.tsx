@@ -191,12 +191,14 @@ describe("provider console application shell", () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sessionWithCapabilities(false, false, false, true)));
     const draft = { id: "price-1", provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00.000Z", effectiveTo: null, status: "draft" };
     const api = feedbackApiResponses(
-      jsonResponse({ items: [] }), jsonResponse(draft), jsonResponse({ ...draft, inputCnyPerMillionTokens: 9 }),
+      jsonResponse({ items: [] }), jsonResponse({ items: [{ date: "2026-08-15", provider: "openai_responses", model: "gpt", inputTokens: 12, outputTokens: 3, totalTokens: 15, inputCostCny: 1, outputCostCny: 2, totalCostCny: 3, callCount: 1, successCount: 1 }] }), jsonResponse(draft), jsonResponse({ ...draft, inputCnyPerMillionTokens: 9 }),
       jsonResponse({ ...draft, inputCnyPerMillionTokens: 9, status: "published" }),
       jsonResponse({ ...draft, inputCnyPerMillionTokens: 9, status: "retired", effectiveTo: "2026-09-01T00:00:00.000Z" })
     );
     render(<App session={createSessionClient(fetcher)} feedbackApi={api} />);
     await screen.findByRole("heading", { name: "Model token pricing" });
+    expect(await screen.findByText(/2026-08-15.*openai_responses.*gpt/)).toBeVisible();
+    expect(api.fetch).toHaveBeenCalledWith(expect.stringMatching(/^\/v1\/provider-model-pricing\/usage\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}$/));
     await user.type(screen.getByLabelText("Provider"), "openai_responses");
     await user.type(screen.getByLabelText("Model"), "gpt");
     await user.type(screen.getByLabelText("Input CNY per 1M tokens"), "8");
