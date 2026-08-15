@@ -26,7 +26,7 @@ describe("model pricing provider routes", () => {
     expect(denied.statusCode).toBe(403);
     const created = await app.inject({ method: "POST", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(price), payload: { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" } });
     expect(created.statusCode).toBe(201); expect(created.json()).toMatchObject({ status: "draft", currency: "CNY", provider: "openai_responses", model: "gpt" });
-    const aggregate = await app.inject({ method: "GET", url: "/v1/provider-model-pricing/usage?from=2026-08-01&to=2026-08-31", headers: bearer(price) });
+    const aggregate = await app.inject({ method: "GET", url: "/v1/provider-model-pricing/usage?from=2026-08-01&to=2026-08-31", headers: providerHeaders(price) });
     expect(aggregate.statusCode).toBe(200); expect(aggregate.json()).toEqual({ items: [] });
     expect(aggregate.body).not.toMatch(/enterprise|store|actor|task|prompt|content|media|object/i);
   });
@@ -37,6 +37,14 @@ describe("model pricing provider routes", () => {
     expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: bearer(price) })).statusCode).toBe(403);
     expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(viewer) })).statusCode).toBe(403);
     expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(price) })).statusCode).toBe(200);
+  });
+
+  it("requires the provider marker and dedicated role before reading usage", async () => {
+    const price = await login("price"); const viewer = await login("viewer"); const url = "/v1/provider-model-pricing/usage?from=2026-08-01&to=2026-08-31";
+    expect((await app.inject({ method: "GET", url })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url, headers: bearer(price) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url, headers: providerHeaders(viewer) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url, headers: providerHeaders(price) })).statusCode).toBe(200);
   });
 });
 let activeApp: ReturnType<typeof buildServer>;

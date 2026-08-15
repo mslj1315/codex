@@ -52,7 +52,7 @@ export function createProviderApiClient(
         || target.hash !== ""
         || (!isList && !isMutation)
       ) {
-        throw new Error("Provider API client only supports approved provider routes");
+        throw new Error("Provider API client only supports customer routes");
       }
       const normalizedPath = target.pathname + target.search;
       const initialToken = session.accessToken();
