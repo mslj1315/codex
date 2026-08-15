@@ -9,6 +9,7 @@ import okhttp3.ResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -134,6 +135,11 @@ class ContentCreationApiTest {
             assertEquals("noodles", shots.shots.first().productReference)
             assertEquals("visits", shots.shots.first().goalReference)
             assertEquals(1, shots.shots.first().commercialLevel)
+            val serialized = Gson().toJson(detail)
+            listOf(
+                "objectKey", "url", "prompt", "token", "provider", "model", "audit",
+                "task-secret-token", "copy-secret-object", "review-secret-prompt", "shot-secret-url", "slot-secret-model"
+            ).forEach { forbidden -> assertFalse("Restored state leaked $forbidden: $serialized", serialized.contains(forbidden)) }
             assertRequest(server, "GET", "/v1/stores/store-1/content-tasks/task-1")
         }
     }
@@ -229,9 +235,9 @@ private suspend fun assertContentError(block: suspend () -> Unit): ContentCreati
 private fun topicJson(id: String) = "{\"id\":\"$id\",\"title\":\"Dinner feature\",\"angle\":\"fresh\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1}"
 private fun copyJson(id: String, strategy: String) = "{\"id\":\"$id\",\"topicId\":\"topic-1\",\"title\":\"Dinner feature\",\"body\":\"Try tonight\",\"strategy\":\"$strategy\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"version\":1,\"status\":\"draft\"}"
 private fun detailJson() = "{\"id\":\"task-1\",\"status\":\"topic_draft\",\"topics\":[${topicJson("topic-1")}],\"copies\":[],\"reviewFindings\":[],\"shotList\":null}"
-private fun shotListJson() = "{\"id\":\"shots-1\",\"copyId\":\"copy-1\",\"status\":\"draft\",\"shots\":[{\"order\":1,\"shot\":\"open\",\"durationSeconds\":3,\"narration\":\"start\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1},{\"order\":2,\"shot\":\"serve\",\"durationSeconds\":3,\"narration\":\"middle\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1},{\"order\":3,\"shot\":\"close\",\"durationSeconds\":3,\"narration\":\"end\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1}]}"
-private fun restorationDetailJson() = "{\"id\":\"task-1\",\"status\":\"copy_draft\",\"topics\":[${topicJson("topic-1")}],\"copies\":[${copyJsonWithVersion("copy-1", "strategy-one", 2)},${copyJsonWithVersion("copy-2", "strategy-two", 1)},${copyJsonWithVersion("copy-3", "strategy-three", 1)}],\"reviewFindings\":[{\"copyId\":\"copy-1\",\"pattern\":\"unsupported claim\",\"severity\":\"high\",\"guidance\":\"Use verifiable wording\",\"source\":\"semantic\"}],\"shotList\":${shotListJson()}}"
-private fun copyJsonWithVersion(id: String, strategy: String, version: Int) = "{\"id\":\"$id\",\"topicId\":\"topic-1\",\"title\":\"Dinner feature\",\"body\":\"Try tonight\",\"strategy\":\"$strategy\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"version\":$version,\"status\":\"draft\"}"
+private fun shotListJson() = "{\"id\":\"shots-1\",\"copyId\":\"copy-1\",\"status\":\"draft\",\"objectKey\":\"shot-secret-object\",\"url\":\"shot-secret-url\",\"audit\":\"shot-secret-audit\",\"shots\":[{\"order\":1,\"shot\":\"open\",\"durationSeconds\":3,\"narration\":\"start\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"model\":\"slot-secret-model\"},{\"order\":2,\"shot\":\"serve\",\"durationSeconds\":3,\"narration\":\"middle\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1},{\"order\":3,\"shot\":\"close\",\"durationSeconds\":3,\"narration\":\"end\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1}]}"
+private fun restorationDetailJson() = "{\"id\":\"task-1\",\"status\":\"copy_draft\",\"token\":\"task-secret-token\",\"prompt\":\"task-secret-prompt\",\"provider\":\"task-secret-provider\",\"topics\":[${topicJson("topic-1")}],\"copies\":[${copyJsonWithVersion("copy-1", "strategy-one", 2)},${copyJsonWithVersion("copy-2", "strategy-two", 1)},${copyJsonWithVersion("copy-3", "strategy-three", 1)}],\"reviewFindings\":[{\"copyId\":\"copy-1\",\"pattern\":\"unsupported claim\",\"severity\":\"high\",\"guidance\":\"Use verifiable wording\",\"source\":\"semantic\",\"prompt\":\"review-secret-prompt\",\"audit\":\"review-secret-audit\"}],\"shotList\":${shotListJson()}}"
+private fun copyJsonWithVersion(id: String, strategy: String, version: Int) = "{\"id\":\"$id\",\"topicId\":\"topic-1\",\"title\":\"Dinner feature\",\"body\":\"Try tonight\",\"strategy\":\"$strategy\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"version\":$version,\"status\":\"draft\",\"objectKey\":\"copy-secret-object\",\"provider\":\"copy-secret-provider\"}"
 
 private fun copy(id: String, strategy: String) = ContentCopyWireDto(
     id = id, topicId = "topic-1", title = "Title", body = "Body", strategy = strategy,
