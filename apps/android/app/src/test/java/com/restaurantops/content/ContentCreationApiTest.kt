@@ -19,6 +19,21 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 class ContentCreationApiTest {
+    @Test fun mapsSafeCurrentMonthUsageSummaryAndKeepsTheQueueLabelAggregateOnly() {
+        val summary = customerUsageSummaryFrom(
+            CustomerUsageSummaryWireDto(
+                periodStart = "2026-08-01T00:00:00.000Z", periodEnd = "2026-09-01T00:00:00.000Z",
+                inputTokens = 10, outputTokens = 5, totalTokens = 15, estimatedCostCny = 0.000015,
+                callCount = 2, successCount = 2, unpricedCallCount = 1
+            )
+        )
+
+        assertEquals(15, summary.totalTokens)
+        assertEquals(0.000015, summary.estimatedCostCny, 0.0)
+        assertEquals("本月 15 Token · 2 次成功调用 · 预估 ¥0.00", customerUsageSummaryLabel(summary))
+        assertFalse(customerUsageSummaryLabel(summary).contains("provider", ignoreCase = true))
+    }
+
     @Test fun parsesAnEmptyTaskEnvelope() {
         val dto = Gson().fromJson("{\"tasks\":[]}", ContentTaskListWireDto::class.java)
         assertEquals(emptyList<ContentTaskSummary>(), contentTaskListFrom(dto))
@@ -91,7 +106,8 @@ class ContentCreationApiTest {
                 "[${copyJson("copy-1", "strategy-one")},${copyJson("copy-2", "strategy-two")},${copyJson("copy-3", "strategy-three")} ]",
                 copyJson("copy-1", "strategy-one"),
                 copyJson("copy-1", "strategy-one"),
-                shotListJson()
+                shotListJson(),
+                "{\"periodStart\":\"2026-08-01T00:00:00.000Z\",\"periodEnd\":\"2026-09-01T00:00:00.000Z\",\"inputTokens\":10,\"outputTokens\":5,\"totalTokens\":15,\"estimatedCostCny\":0.000015,\"callCount\":2,\"successCount\":2,\"unpricedCallCount\":1}"
             ).forEach { body -> server.enqueue(MockResponse().setResponseCode(200).setBody(body)) }
             val repository = HttpContentCreationRepository(realWireApi(server))
 
@@ -103,6 +119,7 @@ class ContentCreationApiTest {
             assertEquals("copy-1", repository.updateCopy("store-1", "task-1", "copy-1", UpdateContentCopyRequest("Edited", "Edited body")).id)
             assertTrue(repository.confirmCopy("store-1", "task-1", "copy-1") is CopyConfirmationResult.Confirmed)
             assertEquals(3, repository.generateShots("store-1", "task-1").shots.size)
+            assertEquals(15, repository.loadUsageSummary("store-1").totalTokens)
 
             assertRequest(server, "GET", "/v1/stores/store-1/content-tasks")
             assertRequest(server, "GET", "/v1/stores/store-1/content-tasks/task-1")
@@ -112,6 +129,7 @@ class ContentCreationApiTest {
             assertRequest(server, "PUT", "/v1/stores/store-1/content-tasks/task-1/copies/copy-1", "\"title\":\"Edited\"", "\"body\":\"Edited body\"")
             assertRequest(server, "POST", "/v1/stores/store-1/content-tasks/task-1/copies/copy-1/confirm")
             assertRequest(server, "POST", "/v1/stores/store-1/content-tasks/task-1/shots/generate")
+            assertRequest(server, "GET", "/v1/stores/store-1/content-tasks/usage-summary")
         }
     }
 
@@ -280,6 +298,7 @@ private class FakeContentCreationWireApi : ContentCreationWireApi {
         listFailure?.let { throw it }
         return ContentTaskListWireDto(emptyList())
     }
+    override suspend fun loadUsageSummary(storeId: String) = error("not used")
     override suspend fun loadTask(storeId: String, taskId: String) = error("not used")
     override suspend fun createTask(storeId: String, request: CreateContentTaskWireRequest) = error("not used")
     override suspend fun generateTopics(storeId: String, taskId: String) = error("not used")

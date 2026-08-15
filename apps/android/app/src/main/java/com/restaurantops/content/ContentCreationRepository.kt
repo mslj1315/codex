@@ -6,6 +6,7 @@ import retrofit2.HttpException
 
 interface ContentCreationApi {
     suspend fun listTasks(storeId: String): List<ContentTaskSummary>
+    suspend fun loadUsageSummary(storeId: String): CustomerUsageSummary
     suspend fun loadTask(storeId: String, taskId: String): ContentTaskDetail
     suspend fun createTask(storeId: String, request: CreateContentTaskRequest): CreatedContentTask
     suspend fun generateTopics(storeId: String, taskId: String): List<ContentTopic>
@@ -17,6 +18,7 @@ interface ContentCreationApi {
 
 class HttpContentCreationRepository(private val wire: ContentCreationWireApi) : ContentCreationApi {
     override suspend fun listTasks(storeId: String) = call { contentTaskListFrom(wire.listTasks(requiredId(storeId))) }
+    override suspend fun loadUsageSummary(storeId: String) = call { customerUsageSummaryFrom(wire.loadUsageSummary(requiredId(storeId))) }
     override suspend fun loadTask(storeId: String, taskId: String) = call { contentTaskDetailFrom(wire.loadTask(requiredId(storeId), requiredId(taskId))) }
     override suspend fun createTask(storeId: String, request: CreateContentTaskRequest) = call {
         validateCreateRequest(request)

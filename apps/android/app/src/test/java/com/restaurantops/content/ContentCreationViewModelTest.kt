@@ -402,6 +402,7 @@ private class FakeContentCreationRepository(
         if (currentDetail.topics.isEmpty() && currentDetail.copies.isEmpty()) return emptyList()
         return listOf(ContentTaskSummary("task", currentDetail.copies.firstOrNull { it.status == "confirmed" }?.let { "confirmed" } ?: "draft", currentDetail.copies.firstOrNull { it.status == "confirmed" }?.id, "now"))
     }
+    override suspend fun loadUsageSummary(storeId: String) = CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 0, 0, 0, 0.0, 0, 0, 0)
     override suspend fun loadTask(storeId: String, taskId: String): ContentTaskDetail { loadCalls++; return currentDetail }
     override suspend fun createTask(storeId: String, request: CreateContentTaskRequest): CreatedContentTask {
         createCalls++

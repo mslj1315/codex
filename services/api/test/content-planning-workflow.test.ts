@@ -88,6 +88,44 @@ describe("content planning workflow", () => {
     expect(JSON.stringify(response.json())).not.toMatch(/prompt|token|objectKey|url|model|audit|snapshot|template|media/i);
   });
 
+  it("returns only the current customer's current-month aggregate model usage without run details", async () => {
+    const ownedTask = (await seedReadableTask()).taskId;
+    const otherTask = randomUUID();
+    const priceVersionId = randomUUID();
+    await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES($1,'ent_demo','store_demo','other-actor',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')", [otherTask]);
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES($1,'private-provider','private-model',1,1,CURRENT_TIMESTAMP,'published')", [priceVersionId]);
+    await pool.query("INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms,price_version_id,currency,input_unit_price,output_unit_price,input_cost,output_cost,total_cost) VALUES($1,$2,'topics','subject','private-provider','private-model','private-prompt','{}','succeeded',$3,1,$4,'CNY',1,1,1,2,3),($5,$2,'copies','subject','private-provider','private-model','private-prompt','{}','succeeded',$6,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),($7,$8,'topics','subject','other-provider','other-model','other-prompt','{}','succeeded',$9,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),($10,$2,'shots','subject','private-provider','private-model','private-prompt','{}','failed',$11,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL)", [randomUUID(), ownedTask, JSON.stringify({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }), priceVersionId, randomUUID(), JSON.stringify({ inputTokens: 4, outputTokens: 2, totalTokens: 6 }), randomUUID(), otherTask, JSON.stringify({ inputTokens: 99, outputTokens: 99, totalTokens: 198 }), randomUUID(), JSON.stringify({ inputTokens: 100, outputTokens: 100, totalTokens: 200 })]);
+
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks/usage-summary" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      periodStart: expect.stringMatching(/^\d{4}-\d{2}-01T00:00:00\.000Z$/),
+      periodEnd: expect.any(String),
+      inputTokens: 14,
+      outputTokens: 7,
+      totalTokens: 21,
+      estimatedCostCny: 3,
+      callCount: 2,
+      successCount: 2,
+      unpricedCallCount: 1
+    });
+    expect(JSON.stringify(response.json())).not.toMatch(/task|run|provider|model|prompt|timestamp|content|review|storyboard|media|key|object|address/i);
+  });
+
+  it("returns a stable zero customer usage summary and denies service roles before queries", async () => {
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks/usage-summary" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostCny: 0, callCount: 0, successCount: 0, unpricedCallCount: 0 });
+
+    const privilegedApp = buildServer({ database: pool, trustedContextResolver: async () => ({ ...scope, actorRole: "provider" }), modelGenerationService: generator });
+    const querySpy = vi.spyOn(pool, "query");
+    expect((await privilegedApp.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks/usage-summary" })).statusCode).toBe(403);
+    expect(querySpy).not.toHaveBeenCalled();
+    querySpy.mockRestore();
+    await privilegedApp.close();
+  });
+
   it("returns an actor-scoped task detail with ordered editable state and no internal fields", async () => {
     const seeded = await seedReadableTask();
 

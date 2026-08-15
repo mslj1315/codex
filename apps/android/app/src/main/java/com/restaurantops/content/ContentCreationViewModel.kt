@@ -19,6 +19,7 @@ enum class ContentCreationStage {
 
 data class ContentCreationState(
     val tasks: List<ContentTaskSummary> = emptyList(),
+    val usageSummary: CustomerUsageSummary? = null,
     val task: ContentTaskDetail? = null,
     val selectedTopicId: String? = null,
     val selectedCopyId: String? = null,
@@ -56,7 +57,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
     val state: StateFlow<ContentCreationState> = mutableState.asStateFlow()
 
     fun load(storeId: String) = perform {
-        mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId), loaded = true)
+        mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId), usageSummary = repository.loadUsageSummary(storeId), loaded = true)
     }
 
     fun restore(storeId: String, taskId: String) = perform {

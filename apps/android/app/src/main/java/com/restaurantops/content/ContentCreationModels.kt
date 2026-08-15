@@ -7,6 +7,18 @@ data class ContentTaskSummary(
     val createdAt: String
 )
 
+data class CustomerUsageSummary(
+    val periodStart: String,
+    val periodEnd: String,
+    val inputTokens: Int,
+    val outputTokens: Int,
+    val totalTokens: Int,
+    val estimatedCostCny: Double,
+    val callCount: Int,
+    val successCount: Int,
+    val unpricedCallCount: Int
+)
+
 data class CreatedContentTask(
     val id: String,
     val profileVersion: Int,

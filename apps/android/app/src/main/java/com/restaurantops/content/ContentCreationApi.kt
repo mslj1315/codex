@@ -13,6 +13,9 @@ interface ContentCreationWireApi {
     @GET("v1/stores/{store}/content-tasks")
     suspend fun listTasks(@Path("store") storeId: String): ContentTaskListWireDto
 
+    @GET("v1/stores/{store}/content-tasks/usage-summary")
+    suspend fun loadUsageSummary(@Path("store") storeId: String): CustomerUsageSummaryWireDto
+
     @GET("v1/stores/{store}/content-tasks/{task}")
     suspend fun loadTask(@Path("store") storeId: String, @Path("task") taskId: String): ContentTaskDetailWireDto
 
@@ -40,6 +43,10 @@ fun contentCreationWireApi(client: AuthenticatedApiClient, baseUrl: String): Con
 
 data class ContentTaskListWireDto(val tasks: List<ContentTaskSummaryWireDto>?)
 data class ContentTaskSummaryWireDto(val id: String?, val status: String?, val confirmedCopyId: String?, val createdAt: String?)
+data class CustomerUsageSummaryWireDto(
+    val periodStart: String?, val periodEnd: String?, val inputTokens: Int?, val outputTokens: Int?, val totalTokens: Int?,
+    val estimatedCostCny: Double?, val callCount: Int?, val successCount: Int?, val unpricedCallCount: Int?
+)
 data class CreatedContentTaskWireDto(val id: String?, val profileVersion: Int?, val primaryGoal: String?, val status: String?)
 data class ContentTaskDetailWireDto(
     val id: String?, val status: String?, val topics: List<ContentTopicWireDto>?, val copies: List<ContentCopyWireDto>?,
@@ -64,6 +71,13 @@ private data class ConfirmationFailureWireDto(val findings: List<ContentReviewFi
 
 fun contentTaskListFrom(dto: ContentTaskListWireDto): List<ContentTaskSummary> =
     dto.tasks?.map(::contentTaskSummaryFrom) ?: throw invalidContentResponse()
+
+fun customerUsageSummaryFrom(dto: CustomerUsageSummaryWireDto) = CustomerUsageSummary(
+    periodStart = requiredContentText(dto.periodStart), periodEnd = requiredContentText(dto.periodEnd),
+    inputTokens = nonnegativeCount(dto.inputTokens), outputTokens = nonnegativeCount(dto.outputTokens), totalTokens = nonnegativeCount(dto.totalTokens),
+    estimatedCostCny = dto.estimatedCostCny?.takeIf { it.isFinite() && it >= 0 } ?: throw invalidContentResponse(),
+    callCount = nonnegativeCount(dto.callCount), successCount = nonnegativeCount(dto.successCount), unpricedCallCount = nonnegativeCount(dto.unpricedCallCount)
+)
 
 fun contentTaskDetailFrom(dto: ContentTaskDetailWireDto): ContentTaskDetail {
     val topics = dto.topics?.map(::contentTopicFrom) ?: throw invalidContentResponse()
@@ -142,6 +156,7 @@ private fun contentShotFrom(dto: ContentShotWireDto) = ContentShot(
     requiredContentText(dto.productReference), requiredContentText(dto.goalReference), commercialLevelFrom(dto.commercialLevel)
 )
 private fun commercialLevelFrom(value: Int?) = value?.takeIf { it in 0..3 } ?: throw invalidContentResponse()
+private fun nonnegativeCount(value: Int?) = value?.takeIf { it >= 0 } ?: throw invalidContentResponse()
 private fun requiredContentId(value: String?) = value?.trim()?.takeIf { it.isNotEmpty() } ?: throw invalidContentResponse()
 private fun requiredContentText(value: String?) = value?.trim()?.takeIf { it.isNotEmpty() } ?: throw invalidContentResponse()
 private fun invalidContentResponse() = ContentCreationRequestException("Content response is invalid")

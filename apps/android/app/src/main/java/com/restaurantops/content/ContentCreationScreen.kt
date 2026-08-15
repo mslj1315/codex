@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 
 enum class ContentCreationAccessAction { ReturnToLogin }
 
@@ -109,6 +110,7 @@ fun ContentCreationScreen(
         }
         ContentQueue(
             tasks = state.tasks,
+            usageSummary = state.usageSummary,
             enabled = !state.finalizing,
             onSelect = { task -> viewModel.restore(storeId, task.id) },
             onCreate = viewModel::openCreationSheet
@@ -146,6 +148,7 @@ fun ContentCreationScreen(
 @Composable
 private fun ContentQueue(
     tasks: List<ContentTaskSummary>,
+    usageSummary: CustomerUsageSummary?,
     enabled: Boolean,
     onSelect: (ContentTaskSummary) -> Unit,
     onCreate: () -> Unit
@@ -153,6 +156,9 @@ private fun ContentQueue(
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text("进行中的任务", style = MaterialTheme.typography.titleMedium)
         Button(onClick = onCreate, enabled = enabled) { Text("新建") }
+    }
+    usageSummary?.let { summary ->
+        Text(customerUsageSummaryLabel(summary), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
     }
     if (tasks.isEmpty()) {
         Text("暂无内容任务，创建一个任务开始生成选题。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -173,6 +179,9 @@ private fun ContentQueue(
         }
     }
 }
+
+fun customerUsageSummaryLabel(summary: CustomerUsageSummary): String =
+    "本月 ${summary.totalTokens} Token · ${summary.successCount} 次成功调用 · 预估 ¥${String.format(Locale.US, "%.2f", summary.estimatedCostCny)}"
 
 @Composable
 private fun ContentTaskWorkspace(

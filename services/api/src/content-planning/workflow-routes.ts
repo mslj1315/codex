@@ -46,6 +46,16 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     return { tasks: tasks.rows.map(taskSummaryJson) };
   });
 
+  app.get("/v1/stores/:storeId/content-tasks/usage-summary", async request => {
+    const context = scoped(request);
+    const { start, end } = currentMonthRange();
+    const runs = await database.query<Row>(
+      "SELECT r.usage_json,r.total_cost FROM content_task_generation_runs r JOIN content_tasks t ON t.id=r.task_id WHERE t.enterprise_id=$1 AND t.store_id=$2 AND t.actor_id=$3 AND r.status='succeeded' AND r.created_at >= $4 AND r.created_at < $5",
+      [context.enterpriseId, context.storeId, context.actorId, start, end]
+    );
+    return customerUsageSummaryJson(runs.rows, start, end);
+  });
+
   app.get("/v1/stores/:storeId/content-tasks/:id", async request => {
     const context = scoped(request);
     const id = String((request.params as Row).id ?? "");
@@ -265,6 +275,24 @@ function optional(value: unknown) { return typeof value === "string" && value.tr
 function generationInput(item: Row) { return { profile: JSON.parse(String(item.profile_snapshot_json)), stage: JSON.parse(String(item.stage_snapshot_json)), templates: JSON.parse(String(item.template_snapshot_json)), inspiration: item.inspiration }; }
 function taskJson(row: Row) { const stage = JSON.parse(String(row.stage_snapshot_json)); return { id: row.id, profileVersion: Number(row.profile_version), primaryGoal: stage.primary_goal, status: row.status }; }
 function taskSummaryJson(row: Row) { return { id: row.id, status: row.status, confirmedCopyId: row.confirmed_copy_id ?? null, createdAt: new Date(String(row.created_at)).toISOString() }; }
+function currentMonthRange(now = new Date()) {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return { start, end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)) };
+}
+function customerUsageSummaryJson(rows: Row[], start: Date, end: Date) {
+  let inputTokens = 0; let outputTokens = 0; let totalTokens = 0; let estimatedCostCny = 0; let unpricedCallCount = 0;
+  for (const row of rows) {
+    const usage = JSON.parse(String(row.usage_json)) as Row;
+    inputTokens += nonnegativeInteger(usage.inputTokens);
+    outputTokens += nonnegativeInteger(usage.outputTokens);
+    totalTokens += nonnegativeInteger(usage.totalTokens);
+    if (row.total_cost === null || row.total_cost === undefined) unpricedCallCount += 1;
+    else estimatedCostCny += nonnegativeNumber(row.total_cost);
+  }
+  return { periodStart: start.toISOString(), periodEnd: end.toISOString(), inputTokens, outputTokens, totalTokens, estimatedCostCny: Number(estimatedCostCny.toFixed(6)), callCount: rows.length, successCount: rows.length, unpricedCallCount };
+}
+function nonnegativeInteger(value: unknown) { return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0; }
+function nonnegativeNumber(value: unknown) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0; }
 function topicJson(row: Row) { return { id: row.id, title: row.title, angle: row.angle, productReference: row.product_reference, goalReference: row.goal_reference, commercialLevel: Number(row.commercial_level) }; }
 function copyJson(row: Row) { return { id: row.id, topicId: row.topic_id, title: row.title, body: row.body, strategy: row.strategy, productReference: row.product_reference, goalReference: row.goal_reference, commercialLevel: Number(row.commercial_level), version: Number(row.version), status: row.status }; }
 function shotsJson(row: Row) { try { return { id: row.id, copyId: row.copy_id, status: row.status, shots: shotListSchema.parse(JSON.parse(String(row.shots_json)), 3) }; } catch { throw new WorkflowError("Stored shot list is invalid", 422); } }
