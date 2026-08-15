@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuthService } from "./service.js";
 import { AuthenticationError } from "./tokens.js";
+import { AuthorizationError } from "./service.js";
 
 export async function registerAuthRoutes(app: FastifyInstance, service: AuthService): Promise<void> {
   app.post("/v1/auth/login", async (request, reply) => {
@@ -37,10 +38,19 @@ export async function registerAuthRoutes(app: FastifyInstance, service: AuthServ
       return authenticationFailure(error, reply);
     }
   });
+
+  app.get("/v1/auth/me/internal-permissions", async (request, reply) => {
+    try {
+      return await service.internalPermissions(requireBearer(request));
+    } catch (error) {
+      return authenticationFailure(error, reply);
+    }
+  });
 }
 
 function authenticationFailure(error: unknown, reply: { code(statusCode: number): { send(value: unknown): unknown } }) {
   if (error instanceof AuthenticationError) return reply.code(401).send({ error: "Authentication required" });
+  if (error instanceof AuthorizationError) return reply.code(403).send({ error: "Forbidden" });
   throw error;
 }
 

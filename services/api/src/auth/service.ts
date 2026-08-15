@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { TrustedContext } from "../imports/service.js";
 import { verifyPassword } from "./credentials.js";
 import { AuthRepository, type ServiceOperatorRole, type StoreMembership } from "./repository.js";
+import { InternalAuthorizationError, InternalPermissionRepository, requireInternalPermission, type InternalPermission } from "../admin/rbac.js";
 import { AuthenticationError, createRefreshToken, hashRefreshToken, issueAccessToken, parseAccessToken } from "./tokens.js";
 
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -79,9 +80,14 @@ export class AuthService {
 
   async resolveStoreContext(accessToken: string, storeId: string): Promise<TrustedContext> {
     const account = await this.authenticateAccessToken(accessToken);
-    // Internal service roles are authorized through their own provider/operator routes.
-    // They must never obtain a customer resource principal merely by also having a store membership.
-    if ((await this.repository.listEnabledServiceOperatorRoles(account.id)).length > 0) {
+    const internalPermissions = new InternalPermissionRepository(this.repository.databaseConnection());
+    const [serviceOperatorRoles, isInternalAccount] = await Promise.all([
+      this.repository.listEnabledServiceOperatorRoles(account.id),
+      internalPermissions.hasEnabledInternalRole(account.id)
+    ]);
+    // Internal users are authorized only through internal management routes. They must never
+    // obtain a customer resource principal merely by also having a store membership.
+    if (serviceOperatorRoles.length > 0 || isInternalAccount) {
       throw new AuthorizationError("Service operators cannot access customer resources");
     }
     const membership = await this.repository.findEnabledMembership(account.id, storeId);
@@ -105,6 +111,30 @@ export class AuthService {
       throw new AuthorizationError("Service role is not authorized");
     }
     return account;
+  }
+
+  async internalPermissions(accessToken: string): Promise<{ account: { id: string; displayName: string }; permissions: string[] }> {
+    const account = await this.authenticateAccessToken(accessToken);
+    const permissions = await new InternalPermissionRepository(this.repository.databaseConnection()).permissionsFor(account.id);
+    if (permissions.size === 0) throw new AuthorizationError("Internal account is not authorized");
+    return { account, permissions: [...permissions].sort() };
+  }
+
+  async requireInternalPermission<T>(
+    accessToken: string,
+    permission: InternalPermission,
+    protectedWork: (account: { id: string; displayName: string }) => Promise<T> | T
+  ): Promise<T> {
+    const account = await this.authenticateAccessToken(accessToken);
+    const permissions = await new InternalPermissionRepository(this.repository.databaseConnection()).permissionsFor(account.id);
+    try {
+      return await requireInternalPermission(permissions, permission, () => protectedWork(account));
+    } catch (error) {
+      if (error instanceof InternalAuthorizationError) {
+        throw new AuthorizationError("Internal account is not authorized");
+      }
+      throw error;
+    }
   }
 
   private async createTokens(account: { id: string; displayName: string }): Promise<AuthTokens> {

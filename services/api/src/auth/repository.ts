@@ -106,6 +106,10 @@ export class AuthRepository {
     return result.rows.map((row) => row.role as ServiceOperatorRole);
   }
 
+  databaseConnection(): Database {
+    return this.database;
+  }
+
   async grantServiceOperatorRole(accountId: string, role: ServiceOperatorRole): Promise<boolean> {
     return this.transaction(async (client) => {
       const account = await client.query(
