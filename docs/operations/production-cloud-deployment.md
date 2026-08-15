@@ -90,22 +90,40 @@ Record the reviewed Git revision, image digest, migration output, service status
 
 ## Initial Accounts And Model Pricing
 
-Provision a customer only using the API's controlled account command with credentials supplied through server-local environment variables. Do not place passwords in shell history or source files. Set `CUSTOMER_PASSWORD` in the current protected shell, run the command, then unset it.
+Provision a customer only using the API's controlled account command with credentials supplied through server-local environment variables. Do not place passwords in shell history or source files. Set `CUSTOMER_PASSWORD` in the current protected shell, choose that customer's existing enterprise and store identifiers, run the command, then unset it.
 
 ```sh
 cd /opt/restaurant-ops/deploy/production
 docker compose --env-file .env -f compose.yml exec -T \
-  -e ACCOUNT_ID=customer_test -e ACCOUNT_PASSWORD="$CUSTOMER_PASSWORD" \
+  -e PROVISION_LOGIN_NAME=customer_test \
+  -e PROVISION_DISPLAY_NAME='Customer Test' \
+  -e PROVISION_PASSWORD="$CUSTOMER_PASSWORD" \
+  -e PROVISION_ENTERPRISE_ID="$CUSTOMER_ENTERPRISE_ID" \
+  -e PROVISION_STORE_ID="$CUSTOMER_STORE_ID" \
+  -e PROVISION_STORE_ROLE=owner \
   api npm run provision:account
 unset CUSTOMER_PASSWORD
 ```
 
-Grant the narrowly scoped `model_pricing_operator` role only to a dedicated internal service-provider operator, after provisioning that separate account. The role is for aggregate price and usage administration; it must not grant customer content, inspirations, drafts, review records, storyboards, raw media, source URLs, or object-address access.
+Grant the narrowly scoped `model_pricing_operator` role only to a dedicated internal service-provider operator. Bootstrap that distinct account with the same provision command using the explicit internal-only membership `PROVISION_ENTERPRISE_ID=internal_service_enterprise` and `PROVISION_STORE_ID=internal_service_store` with `PROVISION_STORE_ROLE=operator`; these identifiers are reserved for internal service operations and are not a real customer enterprise or store. Use a separate `PROVISION_LOGIN_NAME`, `PROVISION_DISPLAY_NAME`, and `PROVISION_PASSWORD` for this account. The account must never receive a membership for any customer enterprise or store.
+
+After the provisioning command returns its `accountId`, set that returned identifier only in the current protected shell and grant the role. The role is for aggregate price and usage administration; it must not grant customer content, inspirations, drafts, review records, storyboards, raw media, source URLs, or object-address access.
 
 ```sh
 docker compose --env-file .env -f compose.yml exec -T \
-  -e ACCOUNT_ID=pricing_operator -e SERVICE_ROLE=model_pricing_operator \
+  -e PROVISION_LOGIN_NAME=pricing_operator \
+  -e PROVISION_DISPLAY_NAME='Model Pricing Operator' \
+  -e PROVISION_PASSWORD="$PRICING_OPERATOR_PASSWORD" \
+  -e PROVISION_ENTERPRISE_ID=internal_service_enterprise \
+  -e PROVISION_STORE_ID=internal_service_store \
+  -e PROVISION_STORE_ROLE=operator \
+  api npm run provision:account
+
+docker compose --env-file .env -f compose.yml exec -T \
+  -e GRANT_ACCOUNT_ID="$PRICING_OPERATOR_ACCOUNT_ID" \
+  -e GRANT_SERVICE_OPERATOR_ROLE=model_pricing_operator \
   api npm run grant:service-role
+unset PRICING_OPERATOR_PASSWORD PRICING_OPERATOR_ACCOUNT_ID
 ```
 
 Sign in to the provider console as that dedicated operator, create a price draft with CNY per one million input and output tokens, review it, then publish it. Published prices remain historical snapshots; later changes need a new draft. The provider console may display only authorized aggregate feedback and aggregate model-pricing data, never customer-level activity.
