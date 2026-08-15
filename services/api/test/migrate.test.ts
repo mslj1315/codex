@@ -10,6 +10,21 @@ const migration = {
 };
 
 describe("runMigrations", () => {
+  it("declares immutable CNY-per-million-token price versions and nullable run cost snapshots", async () => {
+    const id = "028_model_token_pricing.sql";
+    const sql = await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8");
+
+    expect(sql).toContain("CREATE TABLE model_token_price_versions");
+    expect(sql).toContain("input_cny_per_million_tokens NUMERIC");
+    expect(sql).toContain("output_cny_per_million_tokens NUMERIC");
+    expect(sql).toContain("CHECK (input_cny_per_million_tokens >= 0)");
+    expect(sql).toContain("CHECK (output_cny_per_million_tokens >= 0)");
+    expect(sql).toContain("ALTER TABLE content_task_generation_runs");
+    expect(sql).toContain("price_version_id");
+    expect(sql).toContain("total_cost NUMERIC");
+    expect(sql).toContain("model token price history is immutable");
+    expect(sql).toContain("CREATE TRIGGER model_token_price_versions_append_only");
+  });
   it("declares and executes the customer content task queue index migration", async () => {
     const id = "027_content_task_customer_queue_index.sql";
     const sql = await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8");

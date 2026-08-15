@@ -244,7 +244,18 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
 }
 
 async function recordRun(client: PoolClient, item: Row, kind: GenerationKind, subjectId: string, output: { provider: string; model: string; usage: GenerationResult<unknown>["usage"]; latencyMs: number }, status: "succeeded" | "failed", promptVersion?: string, failure?: string): Promise<void> {
-  await client.query("INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms,failure_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)", [randomUUID(), item.id, kind, subjectId, output.provider, output.model, promptVersion ?? ({ topics: "content-topic-v1", copies: "content-copy-v1", shots: "content-shots-v1" } as const)[kind], item.template_snapshot_json, status, JSON.stringify(output.usage), output.latencyMs, failure ?? null]);
+  const price = status === "succeeded"
+    ? (await client.query<Row>("SELECT id,input_cny_per_million_tokens,output_cny_per_million_tokens FROM model_token_price_versions WHERE provider=$1 AND model=$2 AND status='published' AND effective_from <= CURRENT_TIMESTAMP::timestamptz ORDER BY effective_from DESC LIMIT 1", [output.provider, output.model])).rows[0]
+    : undefined;
+  const fields = [randomUUID(), item.id, kind, subjectId, output.provider, output.model, promptVersion ?? ({ topics: "content-topic-v1", copies: "content-copy-v1", shots: "content-shots-v1" } as const)[kind], item.template_snapshot_json, status, JSON.stringify(output.usage), output.latencyMs, failure ?? null];
+  if (!price) {
+    await client.query("INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms,failure_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)", fields);
+    return;
+  }
+  await client.query(
+    "INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms,failure_code,price_version_id,currency,input_unit_price,output_unit_price,input_cost,output_cost,total_cost) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'CNY',$14::numeric,$15::numeric,($16::numeric * $14::numeric / 1000000)::numeric(18,6),($17::numeric * $15::numeric / 1000000)::numeric(18,6),(($16::numeric * $14::numeric / 1000000) + ($17::numeric * $15::numeric / 1000000))::numeric(18,6))",
+    [...fields, price.id, price.input_cny_per_million_tokens, price.output_cny_per_million_tokens, String(output.usage.inputTokens), String(output.usage.outputTokens)]
+  );
 }
 async function rollback(client: PoolClient): Promise<void> { try { await client.query("ROLLBACK"); } catch { /* transaction was not started or already closed */ } }
 function failureCode(error: unknown): string { return error instanceof Error ? error.constructor.name.slice(0, 120) : "UnknownError"; }

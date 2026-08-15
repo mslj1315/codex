@@ -22,7 +22,7 @@ describe("content planning workflow", () => {
       { title: "手艺版", body: "老板凌晨熬汤", strategy: "persona_story", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }, { title: "生活版", body: "午饭来碗热米线", strategy: "daily_life", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }, { title: "产品版", body: "招牌米线现煮", strategy: "product_value", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }
     ] : request.promptVersion === "content-semantic-review-v1" ? { approved: true, findings: [] } : [{ order: 1, shot: "熬汤锅", durationSeconds: 3, narration: "凌晨开始熬汤", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }] } as never));
     const memory = newDb({ noAstCoverageCheck: true }); const { Pool } = memory.adapters.createPg(); pool = new Pool();
-    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql"]) {
+    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "028_model_token_pricing.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
       await pool.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, "").replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     }
@@ -328,6 +328,41 @@ describe("content planning workflow", () => {
     expect((await pool.query("SELECT * FROM content_task_generation_claims WHERE task_id=$1", [task.id])).rowCount).toBe(0);
   });
 
+  it("freezes the applicable published CNY token price on a successful generation", async () => {
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-old','deepseek','test',4,16,CURRENT_TIMESTAMP - INTERVAL '1 day','published')");
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-current','deepseek','test',8,32,CURRENT_TIMESTAMP - INTERVAL '1 minute','published')");
+    vi.mocked(generator.generateStructured).mockResolvedValueOnce({ provider: "deepseek", model: "test", usage: { inputTokens: 1000, outputTokens: 2000, totalTokens: 3000 }, latencyMs: 1, output: [
+      { title: "one", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "two", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "three", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }
+    ] });
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).statusCode).toBe(201);
+    const run = (await pool.query("SELECT price_version_id,currency,input_unit_price,output_unit_price,input_cost,output_cost,total_cost FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows[0];
+    expect(run).toMatchObject({ price_version_id: "price-current", currency: "CNY", input_unit_price: 8, output_unit_price: 32, input_cost: 0.008, output_cost: 0.064 });
+    // pg-mem returns NUMERIC via JavaScript floating point; PostgreSQL preserves the fixed decimal value.
+    expect(Number(run.total_cost)).toBeCloseTo(0.072, 12);
+  });
+
+  it("leaves successful generations unpriced when no published model price applies", async () => {
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).statusCode).toBe(201);
+    expect((await pool.query("SELECT price_version_id,currency,input_unit_price,output_unit_price,input_cost,output_cost,total_cost FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toEqual([{
+      price_version_id: null, currency: null, input_unit_price: null, output_unit_price: null, input_cost: null, output_cost: null, total_cost: null
+    }]);
+  });
+
+  it("does not recalculate an earlier run when a later price version is published", async () => {
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-old','deepseek','test',8,32,'2020-01-01T00:00:00Z','published')");
+    vi.mocked(generator.generateStructured).mockResolvedValueOnce({ provider: "deepseek", model: "test", usage: { inputTokens: 1000, outputTokens: 2000, totalTokens: 3000 }, latencyMs: 1, output: [
+      { title: "one", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "two", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "three", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }
+    ] });
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).statusCode).toBe(201);
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-new','deepseek','test',80,320,'2099-01-01T00:00:00Z','published')");
+    const run = (await pool.query("SELECT price_version_id,total_cost FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows[0];
+    expect(run.price_version_id).toBe("price-old");
+    expect(Number(run.total_cost)).toBeCloseTo(0.072, 12);
+  });
+
   it("does not call a provider while another request holds the generation claim", async () => {
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
     await pool.query("INSERT INTO content_task_generation_claims(task_id,kind,claim_id,expires_at) VALUES($1,'topics','active-claim',$2)", [task.id, new Date(Date.now() + 60_000)]);
@@ -346,11 +381,12 @@ describe("content planning workflow", () => {
   });
 
   it("records a failed generation and releases its claim for a later retry", async () => {
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-current','deepseek','test',8,32,CURRENT_TIMESTAMP - INTERVAL '1 minute','published')");
     vi.mocked(generator.generateStructured).mockRejectedValueOnce(new Error("upstream unavailable"));
     const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
     const failed = await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
     expect(failed.statusCode).toBe(500);
-    expect((await pool.query("SELECT kind,status,provider,model,failure_code FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toMatchObject([{ kind: "topics", status: "failed", provider: "unknown", model: "unknown", failure_code: "Error" }]);
+    expect((await pool.query("SELECT kind,status,provider,model,failure_code,price_version_id,total_cost FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toMatchObject([{ kind: "topics", status: "failed", provider: "unknown", model: "unknown", failure_code: "Error", price_version_id: null, total_cost: null }]);
     expect((await pool.query("SELECT * FROM content_task_generation_claims WHERE task_id=$1", [task.id])).rowCount).toBe(0);
   });
 });
