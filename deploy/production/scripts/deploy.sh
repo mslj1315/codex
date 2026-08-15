@@ -35,7 +35,6 @@ require_env POSTGRES_DB
 require_env POSTGRES_USER
 require_env POSTGRES_PASSWORD
 require_env DATABASE_URL
-require_env MODEL_PROVIDER
 
 if [ "${MODEL_PROVIDER:-}" = "openai_responses" ]; then
   require_env MODEL_MODEL

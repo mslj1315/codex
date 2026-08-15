@@ -70,7 +70,7 @@ unset AUTH_TOKEN_SECRET_VALUE POSTGRES_PASSWORD_VALUE
 stat -c '%a %U:%G %n' .env
 ```
 
-For the approved Responses-compatible gateway, set `MODEL_PROVIDER=openai_responses`, its approved `MODEL_MODEL`, HTTPS `MODEL_BASE_URL`, and a newly rotated `MODEL_API_KEY` in this server-local file only. The API explicitly opts out of provider-side response storage. Do not put a model key in Android, either browser console, an APK, Nginx, repository files, logs, or support messages. A previous key shared outside this environment must be rotated before launch.
+The base deployment may omit every `MODEL_*` entry and still start normally; content generation routes remain unavailable until a provider is configured. For the approved Responses-compatible gateway, set all four required values together: `MODEL_PROVIDER=openai_responses`, its approved `MODEL_MODEL`, HTTPS `MODEL_BASE_URL`, and a newly rotated `MODEL_API_KEY`. The release helper rejects an `openai_responses` selection missing any of those values. The API explicitly opts out of provider-side response storage. Do not put a model key in Android, either browser console, an APK, Nginx, repository files, logs, or support messages. A previous key shared outside this environment must be rotated before launch.
 
 The Compose contract fixes `OPERATOR_PUBLIC_ORIGIN=https://app.msljkj.cn` and `OPERATOR_COOKIE_SECURE=true`; do not override either in the production `.env`. Keep `VIDEO_STORAGE_MODE=disabled`. This release does not connect a POS, does not enable object storage/FFmpeg uploads, and does not publish to Douyin automatically.
 

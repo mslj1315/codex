@@ -19,16 +19,15 @@ services:
       context: ../..
       dockerfile: services/api/Dockerfile
     restart: unless-stopped
+    # Keep optional server-only settings absent when they are omitted from .env.
+    # In particular, do not interpolate missing MODEL_* values to empty strings.
+    env_file:
+      - path: .env
+        required: false
     environment:
       PORT: "3000"
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?AUTH_TOKEN_SECRET is required}
-      MODEL_PROVIDER: ${MODEL_PROVIDER:?MODEL_PROVIDER is required}
-      MODEL_MODEL: ${MODEL_MODEL:?MODEL_MODEL is required}
-      MODEL_API_KEY: ${MODEL_API_KEY:?MODEL_API_KEY is required}
-      MODEL_BASE_URL: ${MODEL_BASE_URL:?MODEL_BASE_URL is required}
-      MODEL_TIMEOUT_MS: ${MODEL_TIMEOUT_MS:-15000}
-      MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-1}
       OPERATOR_PUBLIC_ORIGIN: https://app.msljkj.cn
       OPERATOR_COOKIE_SECURE: "true"
       VIDEO_STORAGE_MODE: disabled

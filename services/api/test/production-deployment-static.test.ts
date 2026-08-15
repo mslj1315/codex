@@ -25,10 +25,6 @@ describe("production deployment topology", () => {
     expect(compose).toContain("DATABASE_URL");
     expect(compose).toContain("DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}");
     expect(compose).not.toContain("POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres");
-    expect(compose).toContain("MODEL_PROVIDER");
-    expect(compose).toContain("MODEL_MODEL");
-    expect(compose).toContain("MODEL_API_KEY");
-    expect(compose).toContain("MODEL_BASE_URL");
     expect(compose).toContain("OPERATOR_PUBLIC_ORIGIN: https://app.msljkj.cn");
     expect(compose).toContain("OPERATOR_COOKIE_SECURE: \"true\"");
     expect(compose).not.toMatch(/^\s*-\s*["']?\d+:5432/m);
@@ -40,10 +36,10 @@ describe("production deployment topology", () => {
 
     expect(environment).toContain("AUTH_TOKEN_SECRET=REPLACE_WITH_GENERATED_SECRET");
     expect(environment).toContain("DATABASE_URL=postgresql://restaurant_ops:REPLACE_WITH_PERCENT_SAFE_DATABASE_PASSWORD@postgres:5432/restaurant_ops");
-    expect(environment).toContain("MODEL_PROVIDER=openai_responses");
-    expect(environment).toContain("MODEL_MODEL=REPLACE_WITH_APPROVED_MODEL_ID");
-    expect(environment).toContain("MODEL_API_KEY=REPLACE_WITH_SERVER_ONLY_GATEWAY_KEY");
-    expect(environment).toContain("MODEL_BASE_URL=https://gateway.example/v1");
+    expect(environment).toContain("# MODEL_PROVIDER=openai_responses");
+    expect(environment).toContain("# MODEL_MODEL=REPLACE_WITH_APPROVED_MODEL_ID");
+    expect(environment).toContain("# MODEL_API_KEY=REPLACE_WITH_SERVER_ONLY_GATEWAY_KEY");
+    expect(environment).toContain("# MODEL_BASE_URL=https://gateway.example/v1");
     expect(environment).toContain("VIDEO_STORAGE_MODE=disabled");
     expect(environment).not.toContain("OPERATOR_PUBLIC_ORIGIN=");
     expect(environment).not.toContain("OPERATOR_COOKIE_SECURE=");
@@ -93,16 +89,28 @@ describe("production deployment topology", () => {
     expect(script).toContain("POSTGRES_USER");
     expect(script).toContain("POSTGRES_PASSWORD");
     expect(script).toContain("DATABASE_URL");
-    expect(script).toContain('MODEL_PROVIDER:-');
-    expect(script).toContain("MODEL_MODEL");
-    expect(script).toContain("MODEL_API_KEY");
-    expect(script).toContain("MODEL_BASE_URL");
+    expect(script).not.toContain("require_env MODEL_PROVIDER");
+    expect(script).toContain('MODEL_PROVIDER:-}');
+    expect(script).toContain('= "openai_responses"');
+    expect(script).toContain("require_env MODEL_MODEL");
+    expect(script).toContain("require_env MODEL_API_KEY");
+    expect(script).toContain("require_env MODEL_BASE_URL");
     expect(script).toContain("docker compose --env-file .env -f compose.yml up -d --build");
     expect(script).toContain("http://127.0.0.1:3000/health");
     expect(script).not.toContain("cat .env");
     expect(script).not.toContain("curl | sh");
     expect(script).not.toContain("--privileged");
     expect(script).not.toContain("docker system prune");
+  });
+
+  it("allows a model-free base deployment without injecting empty model variables", async () => {
+    const compose = await readFile(productionCompose, "utf8");
+
+    expect(compose).toContain("env_file:\n      - path: .env\n        required: false");
+    expect(compose).not.toContain("MODEL_PROVIDER: ${MODEL_PROVIDER:?MODEL_PROVIDER is required}");
+    expect(compose).not.toContain("MODEL_MODEL: ${MODEL_MODEL:?MODEL_MODEL is required}");
+    expect(compose).not.toContain("MODEL_API_KEY: ${MODEL_API_KEY:?MODEL_API_KEY is required}");
+    expect(compose).not.toContain("MODEL_BASE_URL: ${MODEL_BASE_URL:?MODEL_BASE_URL is required}");
   });
 
   it("documents root-only secrets, controlled onboarding, recovery, and disabled video", async () => {
