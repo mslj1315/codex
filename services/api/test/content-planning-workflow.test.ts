@@ -52,7 +52,7 @@ describe("content planning workflow", () => {
     await pool.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level,version,status) VALUES($1,$2,$3,2,'confirmed copy','confirmed body','product','product one','goal one',1,1,'confirmed')", [confirmedCopyId, taskId, firstTopicId]);
     await pool.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level,version,status) VALUES($1,$2,$3,1,'draft copy','draft body','story','product two','goal two',2,2,'draft')", [draftCopyId, taskId, secondTopicId]);
     await pool.query("INSERT INTO content_task_copy_reviews(id,task_id,copy_id,copy_version,content_digest,rule_snapshot_json,provider,model,prompt_version,result_json,approved) VALUES($1,$2,$3,2,'digest','[{\"pattern\":\"hidden\"}]','hidden-provider','hidden-model','hidden-prompt',$4,false)", [randomUUID(), taskId, draftCopyId, JSON.stringify({ approved: false, findings: [{ pattern: "needs correction", severity: "block", guidance: "make this factual", source: "semantic" }] })]);
-    await pool.query("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json,status) VALUES($1,$2,$3,$4,'draft')", [shotListId, taskId, confirmedCopyId, JSON.stringify([{ order: 1, shot: "wide", durationSeconds: 3 }])]);
+    await pool.query("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json,status) VALUES($1,$2,$3,$4,'draft')", [shotListId, taskId, confirmedCopyId, JSON.stringify([{ order: 1, shot: "wide", durationSeconds: 3, narration: "opening line", productReference: "product one", goalReference: "goal one", commercialLevel: 1 }])]);
     return { taskId, firstTopicId, secondTopicId, draftCopyId, confirmedCopyId, shotListId };
   }
 
@@ -86,6 +86,37 @@ describe("content planning workflow", () => {
       shotList: { id: seeded.shotListId, copyId: seeded.confirmedCopyId, status: "draft", shots: [{ order: 1, shot: "wide", durationSeconds: 3 }] }
     });
     expect(JSON.stringify(response.json())).not.toMatch(/prompt|token|objectKey|url|model|audit|snapshot|template|media/i);
+  });
+
+  it("projects persisted shot lists onto only their customer-safe fields", async () => {
+    const seeded = await seedReadableTask();
+    await pool.query("UPDATE content_task_shot_lists SET shots_json=$2 WHERE id=$1", [seeded.shotListId, JSON.stringify([{ order: 1, shot: "wide", durationSeconds: 3, narration: "opening line", productReference: "product one", goalReference: "goal one", commercialLevel: 1, objectKey: "private/object", url: "https://private.example/object", address: "private address", media: { rawMediaRef: "private-media" } }])]);
+
+    const response = await app.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().shotList.shots).toEqual([{ order: 1, shot: "wide", durationSeconds: 3, narration: "opening line", productReference: "product one", goalReference: "goal one", commercialLevel: 1 }]);
+    expect(Object.keys(response.json().shotList.shots[0])).toEqual(["order", "shot", "durationSeconds", "narration", "productReference", "goalReference", "commercialLevel"]);
+  });
+
+  it("rejects malformed persisted shot lists without returning their raw contents", async () => {
+    const seeded = await seedReadableTask();
+    await pool.query("UPDATE content_task_shot_lists SET shots_json=$2 WHERE id=$1", [seeded.shotListId, JSON.stringify({ objectKey: "private/object", rawMediaRef: "private-media" })]);
+
+    const response = await app.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "Stored shot list is invalid" });
+  });
+
+  it("returns only the newest rejected review for each current editable draft version", async () => {
+    const seeded = await seedReadableTask();
+    await pool.query("INSERT INTO content_task_copy_reviews(id,task_id,copy_id,copy_version,content_digest,rule_snapshot_json,result_json,approved,created_at) VALUES($1,$2,$3,2,'newer-digest','[]',$4,false,'2030-01-01T00:00:00.000Z')", [randomUUID(), seeded.taskId, seeded.draftCopyId, JSON.stringify({ approved: false, findings: [{ pattern: "new finding", severity: "block", guidance: "new correction", source: "semantic" }] })]);
+
+    const response = await app.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().reviewFindings).toEqual([{ copyId: seeded.draftCopyId, pattern: "new finding", severity: "block", guidance: "new correction", source: "semantic" }]);
   });
 
   it("rejects service roles before content-task read queries and hides foreign customer tasks", async () => {

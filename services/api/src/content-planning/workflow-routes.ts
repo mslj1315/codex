@@ -54,14 +54,14 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     const item = tasks.rows[0];
     const topics = await database.query<Row>("SELECT id,title,angle,product_reference,goal_reference,commercial_level FROM content_task_topics WHERE task_id=$1 ORDER BY position", [item.id]);
     const copies = await database.query<Row>("SELECT c.id,c.title,c.body,c.strategy,c.product_reference,c.goal_reference,c.commercial_level,c.version,c.status FROM content_task_copies c JOIN content_task_topics t ON t.id=c.topic_id WHERE c.task_id=$1 ORDER BY t.position,c.position", [item.id]);
-    const reviews = await database.query<Row>("SELECT r.copy_id,r.result_json FROM content_task_copy_reviews r JOIN content_task_copies c ON c.id=r.copy_id WHERE r.task_id=$1 AND c.task_id=$1 AND c.status='draft' AND r.copy_version=c.version AND r.approved=false ORDER BY c.position,r.created_at DESC", [item.id]);
+    const reviews = await database.query<Row>("SELECT r.id,r.copy_id,r.result_json FROM content_task_copy_reviews r JOIN content_task_copies c ON c.id=r.copy_id JOIN content_task_topics t ON t.id=c.topic_id WHERE r.task_id=$1 AND c.task_id=$1 AND c.status='draft' AND r.copy_version=c.version AND r.approved=false ORDER BY t.position,c.position,r.created_at DESC,r.id DESC", [item.id]);
     const shots = item.confirmed_copy_id ? await database.query<Row>("SELECT id,copy_id,status,shots_json FROM content_task_shot_lists WHERE task_id=$1 AND copy_id=$2", [item.id, item.confirmed_copy_id]) : { rows: [] as Row[] };
     return {
       id: item.id,
       status: item.status,
       topics: topics.rows.map(topicJson),
       copies: copies.rows.map(copyJson),
-      reviewFindings: reviews.rows.flatMap(reviewFindingsJson),
+      reviewFindings: latestReviewFindings(reviews.rows),
       ...(shots.rows[0] ? { shotList: shotsJson(shots.rows[0]) } : {})
     };
   });
@@ -256,6 +256,7 @@ function taskJson(row: Row) { const stage = JSON.parse(String(row.stage_snapshot
 function taskSummaryJson(row: Row) { return { id: row.id, status: row.status, confirmedCopyId: row.confirmed_copy_id ?? null, createdAt: new Date(String(row.created_at)).toISOString() }; }
 function topicJson(row: Row) { return { id: row.id, title: row.title, angle: row.angle, productReference: row.product_reference, goalReference: row.goal_reference, commercialLevel: Number(row.commercial_level) }; }
 function copyJson(row: Row) { return { id: row.id, title: row.title, body: row.body, strategy: row.strategy, productReference: row.product_reference, goalReference: row.goal_reference, commercialLevel: Number(row.commercial_level), version: Number(row.version), status: row.status }; }
-function shotsJson(row: Row) { return { id: row.id, copyId: row.copy_id, status: row.status, shots: JSON.parse(String(row.shots_json)) }; }
+function shotsJson(row: Row) { try { return { id: row.id, copyId: row.copy_id, status: row.status, shots: shotListSchema.parse(JSON.parse(String(row.shots_json)), 3) }; } catch { throw new WorkflowError("Stored shot list is invalid", 422); } }
 function reviewFindingsJson(row: Row) { const result = JSON.parse(String(row.result_json)) as { findings?: unknown }; return Array.isArray(result.findings) ? result.findings.filter(finding => finding && typeof finding === "object" && !Array.isArray(finding)).map(finding => { const item = finding as Row; return { copyId: row.copy_id, pattern: item.pattern, severity: item.severity, guidance: item.guidance, source: item.source }; }) : []; }
+function latestReviewFindings(rows: Row[]) { const copyIds = new Set<unknown>(); return rows.flatMap(row => { if (copyIds.has(row.copy_id)) return []; copyIds.add(row.copy_id); return reviewFindingsJson(row); }); }
 function matchesTemplate(row: Row, profile: Row, input: Row) { const constraints = JSON.parse(String(row.constraints_json)) as Row; return constraints.industryCode === profile.industry_code && constraints.categoryCode === profile.category_code && constraints.persona === input.persona && constraints.contentType === input.contentType && constraints.style === input.style && Number(constraints.commercialLevel) === Number(input.commercialLevel); }
