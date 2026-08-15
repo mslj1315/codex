@@ -91,6 +91,20 @@ describe("storyboard render queue", () => {
     expect(renewals).toEqual(["lease"]);
   });
 
+  it("contains a rejected heartbeat renewal and does not write output", async () => {
+    let tick: (() => Promise<void>) | undefined; const events: string[] = [];
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "renew-fail", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"], leaseToken: "lease" }), renewLease: async () => { throw new Error("transport"); }, isCancelled: async () => false, succeed: async () => { events.push("succeed"); }, fail: async () => { events.push("fail"); } }, { create: async () => "workspace", remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async () => { events.push("put"); } }, { render: async () => { await tick!(); return { output: Buffer.from("out"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("1") }, { positionSeconds: 2, bytes: Buffer.from("2") }, { positionSeconds: 3, bytes: Buffer.from("3") }] }; } }, undefined, { start: callback => { tick = callback; return () => { events.push("stop"); }; } });
+    await worker.runOnce();
+    expect(events).toEqual(["fail", "stop"]);
+  });
+
+  it("stops the heartbeat when workspace creation fails", async () => {
+    const events: string[] = [];
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "workspace-fail", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: [], leaseToken: "lease" }), renewLease: async () => true, isCancelled: async () => false, succeed: async () => {}, fail: async () => { events.push("fail"); } }, { create: async () => { throw new Error("disk"); }, remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async () => {} }, { render: async () => { throw new Error("unreachable"); } }, undefined, { start: () => () => { events.push("stop"); } });
+    await worker.runOnce();
+    expect(events).toEqual(["fail", "stop"]);
+  });
+
   it("lets its customer list and cancel a queued render without exposing output storage", async () => {
     const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "preview" } });
     const listed = await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders` });

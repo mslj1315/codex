@@ -11,18 +11,18 @@ export class StoryboardRenderWorker {
   constructor(private readonly repository: RenderWorkerRepository, private readonly workspace: TemporaryWorkspace, private readonly storage: WorkerStorage, private readonly runner: RenderRunner, private readonly now = () => new Date(), private readonly heartbeat: LeaseHeartbeat = intervalHeartbeat) {}
   async runOnce(): Promise<boolean> {
     const job = await this.repository.claim(); if (!job) return false;
-    let leaseLost = false; const stopHeartbeat = job.leaseToken && this.repository.renewLease ? this.heartbeat.start(async () => { if (!await this.repository.renewLease!(job.id, job.leaseToken!)) leaseLost = true; }) : () => {};
-    let path: string;
-    try { path = await this.workspace.create(job.id); } catch (error) { await this.repository.fail(job.id, "infrastructure_unavailable", true, job.leaseToken); return true; }
+    let leaseLost = false; const stopHeartbeat = job.leaseToken && this.repository.renewLease ? this.heartbeat.start(async () => { try { if (!await this.repository.renewLease!(job.id, job.leaseToken!)) leaseLost = true; } catch { leaseLost = true; } }) : () => {};
+    let path: string | undefined;
     const written: string[] = [];
     try {
-      if (await this.repository.isCancelled(job.id) || leaseLost || !await this.owns(job)) return true;
+      path = await this.workspace.create(job.id);
+      if (await this.repository.isCancelled(job.id) || leaseLost || !await this.owns(job)) return leaseLost ? await this.leaseLost(job) : true;
       validateRenderManifest({ width: 1080, height: 1920, fps: 30, durationSeconds: job.durationSeconds });
       const sourceKeys = job.slots?.map(slot => slot.sourceKey) ?? job.sourceKeys;
       const uniqueSourceKeys = [...new Set(sourceKeys)]; const sources = await Promise.all(uniqueSourceKeys.map(key => this.storage.download(key)));
       const result = await this.runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: job.durationSeconds, subtitles: job.subtitleText, sources, workspacePath: path, slots: job.slots?.map(slot => ({ ...slot, sourceIndex: uniqueSourceKeys.indexOf(slot.sourceKey) })) });
       validateResult(result, job.durationSeconds);
-      if (await this.repository.isCancelled(job.id) || leaseLost || !await this.owns(job)) return true;
+      if (await this.repository.isCancelled(job.id) || leaseLost || !await this.owns(job)) return leaseLost ? await this.leaseLost(job) : true;
       const expiresAt = new Date(this.now().getTime() + (job.kind === "final" ? 180 : 7) * 24 * 60 * 60 * 1000);
       const outputKey = `storyboard-render-output/${job.id}.mp4`; const covers = result.coverFrames.map((frame, index) => ({ frame, key: `storyboard-render-output/${job.id}-cover-${index + 1}.jpg` }));
       if (leaseLost || !await this.owns(job)) return true;
@@ -34,11 +34,12 @@ export class StoryboardRenderWorker {
       }
       if (leaseLost || !await this.owns(job) || await this.repository.isCancelled(job.id)) { await this.removeWritten(written); return true; }
       await this.repository.succeed(job.id, { outputExpiresAt: expiresAt, coverCandidates: result.coverFrames.map(frame => ({ positionSeconds: frame.positionSeconds })), artifacts: [{ objectKey: outputKey, kind: "video" }, ...covers.map(({ key }) => ({ objectKey: key, kind: "cover" as const }))] }, job.leaseToken);
-    } catch (error) { await this.removeWritten(written); await this.repository.fail(job.id, category(error), retryable(error), job.leaseToken); }
-    finally { stopHeartbeat(); try { await this.workspace.remove(path); } catch {} }
+    } catch (error) { await this.removeWritten(written); await this.repository.fail(job.id, path ? category(error) : "infrastructure_unavailable", path ? retryable(error) : true, job.leaseToken); }
+    finally { stopHeartbeat(); if (path) try { await this.workspace.remove(path); } catch {} }
     return true;
   }
   private async owns(job: ClaimedRender) { return !job.leaseToken || !this.repository.ownsLease || this.repository.ownsLease(job.id, job.leaseToken); }
+  private async leaseLost(job: ClaimedRender) { await this.repository.fail(job.id, "infrastructure_unavailable", true, job.leaseToken); return true; }
   private async removeWritten(keys: string[]) { if (!this.storage.deleteProtected) return; await Promise.all(keys.map(async key => { try { await this.storage.deleteProtected!(key); } catch {} })); }
 }
 const intervalHeartbeat: LeaseHeartbeat = { start: callback => { const timer = setInterval(() => { void callback(); }, 60_000); timer.unref(); return () => clearInterval(timer); } };
