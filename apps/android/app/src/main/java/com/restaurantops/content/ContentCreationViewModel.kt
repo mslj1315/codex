@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 enum class ContentCreationStage {
     Idle,
@@ -23,6 +24,10 @@ data class ContentCreationState(
     val selectedCopyId: String? = null,
     val reviewFindings: List<ContentReviewFinding> = emptyList(),
     val shotList: ContentShotList? = null,
+    val storyboardHandoff: ContentStoryboardHandoff? = null,
+    val creationSheetOpen: Boolean = false,
+    val creationInput: ContentCreationInput = ContentCreationInput(),
+    val dirtyCopyId: String? = null,
     val stage: ContentCreationStage = ContentCreationStage.Idle,
     val finalizing: Boolean = false,
     val loaded: Boolean = false,
@@ -31,6 +36,18 @@ data class ContentCreationState(
     val canGenerateCopies: Boolean get() = selectedTopicId != null && stage == ContentCreationStage.TopicSelection
     val canSelectCopy: Boolean get() = stage == ContentCreationStage.CopyEditing && selectedCopyId != null
 }
+
+data class ContentCreationInput(
+    val persona: String = "",
+    val contentType: String = "",
+    val style: String = "",
+    val commercialLevel: Int = 1,
+    val inspiration: String = ""
+) {
+    fun request() = CreateContentTaskRequest(persona, contentType, style, commercialLevel, inspiration.takeIf { it.isNotBlank() })
+}
+
+data class ContentStoryboardHandoff(val taskId: String, val shotListId: String)
 
 class ContentCreationViewModel(private val repository: ContentCreationApi) : ViewModel() {
     private val mutableState = MutableStateFlow(ContentCreationState())
@@ -46,8 +63,29 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
 
     fun create(storeId: String, request: CreateContentTaskRequest) = perform {
         val task = repository.createTask(storeId, request)
-        mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId))
+        refreshQueue(storeId)
         restoreTask(storeId, task.id)
+    }
+
+    fun openCreationSheet() {
+        if (!mutableState.value.finalizing) mutableState.value = mutableState.value.copy(creationSheetOpen = true, error = null)
+    }
+
+    fun updateCreationInput(input: ContentCreationInput) {
+        if (!mutableState.value.finalizing) mutableState.value = mutableState.value.copy(creationInput = input, error = null)
+    }
+
+    fun dismissCreationSheet() {
+        if (!mutableState.value.finalizing) mutableState.value = mutableState.value.copy(creationSheetOpen = false)
+    }
+
+    fun createAndGenerateTopics(storeId: String) = perform {
+        val created = repository.createTask(storeId, mutableState.value.creationInput.request())
+        val topics = repository.generateTopics(storeId, created.id)
+        if (topics.size != 3) throw ContentCreationRequestException("Generated topic options are invalid")
+        refreshQueue(storeId)
+        restoreTask(storeId, created.id)
+        mutableState.value = mutableState.value.copy(creationSheetOpen = false)
     }
 
     fun generateTopics(storeId: String) = withTask { task ->
@@ -87,26 +125,33 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
         val copyId = current.selectedCopyId ?: return
         if (current.finalizing || title.isBlank() || body.isBlank()) return
         val updated = task.copies.map { copy -> if (copy.id == copyId) copy.copy(title = title, body = body) else copy }
-        mutableState.value = current.copy(task = task.copy(copies = updated), reviewFindings = emptyList(), stage = ContentCreationStage.CopyEditing, error = null)
+        mutableState.value = current.copy(task = task.copy(copies = updated), dirtyCopyId = copyId, reviewFindings = emptyList(), stage = ContentCreationStage.CopyEditing, error = null)
     }
 
     fun saveSelectedCopy(storeId: String) = withTask { task ->
         val copy = selectedCopy(task) ?: return@withTask
         repository.updateCopy(storeId, task.id, copy.id, UpdateContentCopyRequest(copy.title, copy.body))
+        refreshQueue(storeId)
         restoreTask(storeId, task.id)
     }
 
     fun confirmSelectedCopy(storeId: String) = withTask { task ->
         val copy = selectedCopy(task) ?: return@withTask
         if (mutableState.value.stage != ContentCreationStage.CopyEditing) return@withTask
+        if (mutableState.value.dirtyCopyId == copy.id) {
+            repository.updateCopy(storeId, task.id, copy.id, UpdateContentCopyRequest(copy.title, copy.body))
+        }
         when (val result = repository.confirmCopy(storeId, task.id, copy.id)) {
             is CopyConfirmationResult.Confirmed -> {
+                refreshQueue(storeId)
                 restoreTask(storeId, task.id)
             }
             is CopyConfirmationResult.RevisionRequired -> {
                 val refreshed = repository.loadTask(storeId, task.id)
+                refreshQueue(storeId)
                 mutableState.value = mutableState.value.copy(
                     task = refreshed,
+                    dirtyCopyId = null,
                     reviewFindings = result.findings,
                     stage = ContentCreationStage.RevisionRequired,
                     loaded = true,
@@ -119,6 +164,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
     fun generateShots(storeId: String) = withTask { task ->
         if (mutableState.value.stage != ContentCreationStage.Confirmed) return@withTask
         repository.generateShots(storeId, task.id)
+        refreshQueue(storeId)
         restoreTask(storeId, task.id)
     }
 
@@ -133,6 +179,8 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
         viewModelScope.launch {
             try {
                 block()
+            } catch (error: CancellationException) {
+                throw error
             } catch (_: Exception) {
                 mutableState.value = mutableState.value.copy(error = "暂时无法完成内容操作", loaded = true)
             } finally {
@@ -151,6 +199,8 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
             selectedCopyId = recovered.copyId,
             reviewFindings = task.reviewFindings.filter { finding -> finding.copyId == recovered.copyId },
             shotList = task.shotList,
+            storyboardHandoff = task.shotList?.id?.trim()?.takeIf { it.isNotEmpty() }?.let { ContentStoryboardHandoff(task.id, it) },
+            dirtyCopyId = null,
             stage = recovered.stage,
             loaded = true,
             error = null
@@ -180,4 +230,9 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
 
     private fun isValidCopyGroup(copies: List<ContentCopy>): Boolean =
         copies.size == 3 && copies.map { it.strategy.trim() }.toSet().size == 3
+
+    private suspend fun refreshQueue(storeId: String) {
+        mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId))
+    }
+
 }

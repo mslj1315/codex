@@ -49,6 +49,20 @@ class ContentCreationApiTest {
         }
     }
 
+    @Test fun generatedTopicsRequireExactlyThreeOptions() {
+        val topics = listOf("topic-1", "topic-2", "topic-3").map { id ->
+            ContentTopicWireDto(id, "title", "angle", "product", "goal", 1)
+        }
+
+        assertEquals(3, generatedTopicsFrom(topics).size)
+        try {
+            generatedTopicsFrom(topics.dropLast(1))
+            error("Expected topic validation failure")
+        } catch (error: ContentCreationRequestException) {
+            assertEquals("Generated topic options are invalid", error.message)
+        }
+    }
+
     @Test fun confirmationMaps422FindingsToRevisionRequired() = runBlocking {
         val api = FakeContentCreationWireApi().apply {
             confirmation = Response.error(
@@ -72,7 +86,7 @@ class ContentCreationApiTest {
                 "{\"tasks\":[{\"id\":\"task-1\",\"status\":\"topic_draft\",\"confirmedCopyId\":null,\"createdAt\":\"2026-08-15T00:00:00.000Z\"}]}",
                 detailJson(),
                 "{\"id\":\"task-2\",\"profileVersion\":2,\"primaryGoal\":\"increase visits\",\"status\":\"topic_draft\"}",
-                "[${topicJson("topic-1")}]",
+                "[${topicJson("topic-1")},${topicJson("topic-2")},${topicJson("topic-3")}]",
                 "[${copyJson("copy-1", "strategy-one")},${copyJson("copy-2", "strategy-two")},${copyJson("copy-3", "strategy-three")} ]",
                 copyJson("copy-1", "strategy-one"),
                 copyJson("copy-1", "strategy-one"),
@@ -83,7 +97,7 @@ class ContentCreationApiTest {
             assertEquals("task-1", repository.listTasks("store-1").single().id)
             assertNull(repository.loadTask("store-1", "task-1").shotList)
             assertEquals(2, repository.createTask("store-1", CreateContentTaskRequest("owner", "short_video", "warm", 1, "fresh idea")).profileVersion)
-            assertEquals("topic-1", repository.generateTopics("store-1", "task-1").single().id)
+            assertEquals(3, repository.generateTopics("store-1", "task-1").size)
             assertEquals(3, repository.generateCopies("store-1", "task-1", "topic-1").size)
             assertEquals("copy-1", repository.updateCopy("store-1", "task-1", "copy-1", UpdateContentCopyRequest("Edited", "Edited body")).id)
             assertTrue(repository.confirmCopy("store-1", "task-1", "copy-1") is CopyConfirmationResult.Confirmed)

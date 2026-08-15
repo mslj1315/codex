@@ -84,6 +84,12 @@ fun generatedCopiesFrom(dtos: List<ContentCopyWireDto>): List<ContentCopy> {
     return copies
 }
 
+fun generatedTopicsFrom(dtos: List<ContentTopicWireDto>): List<ContentTopic> {
+    val topics = dtos.map(::contentTopicFrom)
+    if (topics.size != 3) throw ContentCreationRequestException("Generated topic options are invalid")
+    return topics
+}
+
 private fun validateRestoredCopyGroups(topics: List<ContentTopic>, copies: List<ContentCopy>) {
     val topicIds = topics.map { it.id }.toSet()
     if (copies.any { it.topicId !in topicIds }) throw invalidContentResponse()

@@ -21,7 +21,7 @@ class HttpContentCreationRepository(private val wire: ContentCreationWireApi) : 
         validateCreateRequest(request)
         createdContentTaskFrom(wire.createTask(requiredId(storeId), CreateContentTaskWireRequest(request.persona.trim(), request.contentType.trim(), request.style.trim(), request.commercialLevel, request.inspiration?.trim()?.takeIf { it.isNotEmpty() })))
     }
-    override suspend fun generateTopics(storeId: String, taskId: String) = call { wire.generateTopics(requiredId(storeId), requiredId(taskId)).map(::contentTopicFrom) }
+    override suspend fun generateTopics(storeId: String, taskId: String) = call { generatedTopicsFrom(wire.generateTopics(requiredId(storeId), requiredId(taskId))) }
     override suspend fun generateCopies(storeId: String, taskId: String, topicId: String) = call { generatedCopiesFrom(wire.generateCopies(requiredId(storeId), requiredId(taskId), requiredId(topicId))) }
     override suspend fun updateCopy(storeId: String, taskId: String, copyId: String, request: UpdateContentCopyRequest) = call {
         if (request.title.isBlank() || request.body.isBlank()) throw ContentCreationRequestException("Content request is invalid")

@@ -1,6 +1,7 @@
 package com.restaurantops.content
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -44,6 +45,45 @@ class ContentCreationViewModelTest {
         assertEquals("task", viewModel.state.value.task?.id)
         assertEquals(1, repository.createCalls)
         assertEquals(1, repository.loadCalls)
+    }
+
+    @Test fun creationSheetOwnsSafeInputAndAtomicCreateGeneratesThreeTopics() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository().apply { generatedTopics = listOf(topic("topic-1"), topic("topic-2"), topic("topic-3")) }
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.openCreationSheet()
+        viewModel.updateCreationInput(ContentCreationInput("persona", "video", "style", 1, "idea"))
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+
+        assertFalse(viewModel.state.value.creationSheetOpen)
+        assertEquals("task", viewModel.state.value.task?.id)
+        assertEquals(1, repository.createCalls)
+        assertEquals(1, repository.topicGenerationCalls)
+        assertEquals(1, repository.listCalls)
+        assertEquals(1, repository.loadCalls)
+        assertEquals(ContentCreationStage.TopicSelection, viewModel.state.value.stage)
+    }
+
+    @Test fun atomicCreateFailureIsNeutralAllowsRetryAndDoesNotDuplicateInFlightCalls() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository().apply { createGate = CompletableDeferred() }
+        val viewModel = ContentCreationViewModel(repository)
+        viewModel.openCreationSheet()
+        viewModel.updateCreationInput(ContentCreationInput("persona", "video", "style", 1))
+
+        viewModel.createAndGenerateTopics("store")
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+        assertEquals(1, repository.createCalls)
+
+        repository.createGate!!.completeExceptionally(IllegalStateException("raw failure"))
+        advanceUntilIdle()
+        assertEquals("暂时无法完成内容操作", viewModel.state.value.error)
+        assertFalse(viewModel.state.value.finalizing)
+
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+        assertEquals(2, repository.createCalls)
     }
 
     @Test fun restoredTopicsWithoutCopiesForcesTopicSelectionWithoutPersistingChoice() = runTest(dispatcher) {
@@ -126,6 +166,28 @@ class ContentCreationViewModelTest {
         assertEquals(2, repository.loadCalls)
     }
 
+    @Test fun confirmSavesEditedDraftBeforeReviewAndRetainsItWhenRevisionIsRequired() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository(detail(copies = copies())).apply {
+            confirmation = CopyConfirmationResult.RevisionRequired(listOf(finding()))
+        }
+        val viewModel = ContentCreationViewModel(repository)
+        viewModel.restore("store", "task")
+        advanceUntilIdle()
+
+        viewModel.updateSelectedDraft("edited title", "edited body")
+        viewModel.confirmSelectedCopy("store")
+        advanceUntilIdle()
+
+        assertEquals(listOf("edited body"), repository.confirmedBodies)
+        assertEquals("edited body", viewModel.state.value.task?.copies?.first { it.id == "copy-1" }?.body)
+        assertEquals(ContentCreationStage.RevisionRequired, viewModel.state.value.stage)
+        viewModel.confirmSelectedCopy("store")
+        viewModel.generateShots("store")
+        advanceUntilIdle()
+        assertEquals(1, repository.confirmCalls)
+        assertEquals(0, repository.shotCalls)
+    }
+
     @Test fun confirmedCopyAllowsShotGenerationAndRestoresStoryboardHandoff() = runTest(dispatcher) {
         val repository = FakeContentCreationRepository(detail(copies = copies()))
         val viewModel = ContentCreationViewModel(repository)
@@ -134,12 +196,36 @@ class ContentCreationViewModelTest {
 
         viewModel.confirmSelectedCopy("store")
         advanceUntilIdle()
+        assertEquals("confirmed", viewModel.state.value.tasks.single().status)
         viewModel.generateShots("store")
         advanceUntilIdle()
 
         assertEquals(ContentCreationStage.StoryboardReady, viewModel.state.value.stage)
         assertEquals("shots", viewModel.state.value.shotList?.id)
+        assertEquals(ContentStoryboardHandoff("task", "shots"), viewModel.state.value.storyboardHandoff)
         assertEquals(1, repository.shotCalls)
+    }
+
+    @Test fun restoredShotListExposesOnlyServerSuppliedStoryboardHandoff() = runTest(dispatcher) {
+        val shotList = ContentShotList("restored-shots", "copy-1", "generated", emptyList())
+        val repository = FakeContentCreationRepository(detail(copies = copies()).copy(shotList = shotList))
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.restore("store", "task")
+        advanceUntilIdle()
+
+        assertEquals(ContentStoryboardHandoff("task", "restored-shots"), viewModel.state.value.storyboardHandoff)
+    }
+
+    @Test fun cancellationReleasesFinalizingWithoutAUserVisibleError() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository().apply { listFailure = CancellationException("cancel") }
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.load("store")
+        advanceUntilIdle()
+
+        assertFalse(viewModel.state.value.finalizing)
+        assertNull(viewModel.state.value.error)
     }
 
     @Test fun inFlightGuardPreventsDuplicateCreateAndAllowsRetryAfterFailure() = runTest(dispatcher) {
@@ -188,18 +274,31 @@ private class FakeContentCreationRepository(
     var shotCalls = 0
     var copyGenerationCalls = 0
     var updateCalls = 0
+    var topicGenerationCalls = 0
+    var listCalls = 0
+    var generatedTopics = emptyList<ContentTopic>()
+    var listFailure: Throwable? = null
+    val confirmedBodies = mutableListOf<String>()
     var createGate: CompletableDeferred<CreatedContentTask>? = null
     var confirmation: CopyConfirmationResult = CopyConfirmationResult.Confirmed(
         ContentCopy("copy-1", "topic-1", "one", "body one", "story", "product", "goal", 1, 1, "confirmed")
     )
 
-    override suspend fun listTasks(storeId: String) = emptyList<ContentTaskSummary>()
+    override suspend fun listTasks(storeId: String): List<ContentTaskSummary> {
+        listCalls++
+        listFailure?.let { throw it }
+        if (currentDetail.topics.isEmpty() && currentDetail.copies.isEmpty()) return emptyList()
+        return listOf(ContentTaskSummary("task", currentDetail.copies.firstOrNull { it.status == "confirmed" }?.let { "confirmed" } ?: "draft", currentDetail.copies.firstOrNull { it.status == "confirmed" }?.id, "now"))
+    }
     override suspend fun loadTask(storeId: String, taskId: String): ContentTaskDetail { loadCalls++; return currentDetail }
     override suspend fun createTask(storeId: String, request: CreateContentTaskRequest): CreatedContentTask {
         createCalls++
         return createGate?.await() ?: CreatedContentTask("task", 1, "goal", "draft")
     }
-    override suspend fun generateTopics(storeId: String, taskId: String) = currentDetail.topics
+    override suspend fun generateTopics(storeId: String, taskId: String): List<ContentTopic> {
+        topicGenerationCalls++
+        return generatedTopics.also { topics -> currentDetail = currentDetail.copy(topics = topics) }
+    }
     override suspend fun generateCopies(storeId: String, taskId: String, topicId: String): List<ContentCopy> {
         copyGenerationCalls++
         return copiesFor(topicId).also { generated -> currentDetail = currentDetail.copy(copies = generated) }
@@ -212,6 +311,7 @@ private class FakeContentCreationRepository(
     }
     override suspend fun confirmCopy(storeId: String, taskId: String, copyId: String): CopyConfirmationResult {
         confirmCalls++
+        confirmedBodies += currentDetail.copies.first { it.id == copyId }.body
         if (confirmation is CopyConfirmationResult.Confirmed) {
             currentDetail = currentDetail.copy(copies = currentDetail.copies.map { copy ->
                 if (copy.id == copyId) copy.copy(status = "confirmed") else copy
