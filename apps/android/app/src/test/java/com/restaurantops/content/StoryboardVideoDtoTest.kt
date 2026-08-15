@@ -9,4 +9,8 @@ class StoryboardVideoDtoTest {
         assertEquals("asset", uploadedAssetFrom(mapOf("id" to "asset")).id)
     }
     @Test fun parsesCoverSelectionDtoInsteadOfRender() { assertEquals("cover", coverSelectionFrom(mapOf("selectedCoverCandidateId" to "cover", "selectedCoverTitle" to "Lunch")).candidateId) }
+    @Test fun shotSlotsKeepImmutableShotIndexWhileSupplementalSlotsOmitIt() {
+        assertEquals(2, StoryboardSlot("shot", 1, kind = "shot", shotIndex = 2).shotIndex)
+        assertEquals(null, StoryboardSlot("extra", 2, kind = "supplemental").shotIndex)
+    }
 }

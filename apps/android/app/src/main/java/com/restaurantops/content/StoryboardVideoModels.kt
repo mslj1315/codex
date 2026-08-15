@@ -23,7 +23,7 @@ data class UploadItem(val source: GalleryVideo, val state: UploadState = UploadS
 data class StoryboardSlot(
     val id: String, val order: Int, val kind: String = "shot", val assetId: String? = null,
     val trimStartSeconds: Int = 0, val trimEndSeconds: Int = 0, val muted: Boolean = false,
-    val subtitleEnabled: Boolean = true, val subtitleText: String = ""
+    val subtitleEnabled: Boolean = true, val subtitleText: String = "", val shotIndex: Int? = null
 )
 data class StoryboardDraft(val projectId: String, val version: Int, val slots: List<StoryboardSlot>, val coverAssetId: String? = null, val coverFrameOffsetSeconds: Int? = null, val coverTitle: String = "", val status: String = "draft") {
     fun isRenderable() = slots.isNotEmpty() && slots.all { it.assetId != null && it.trimEndSeconds > it.trimStartSeconds }
