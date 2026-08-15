@@ -1,6 +1,7 @@
 package com.restaurantops.content
 
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 
 interface ContentCreationApi {
@@ -37,6 +38,8 @@ class HttpContentCreationRepository(private val wire: ContentCreationWireApi) : 
     private suspend fun <T> call(block: suspend () -> T): T = try {
         block()
     } catch (error: ContentCreationRequestException) {
+        throw error
+    } catch (error: CancellationException) {
         throw error
     } catch (error: HttpException) {
         throw ContentCreationRequestException("Unable to complete the content request", error.code())

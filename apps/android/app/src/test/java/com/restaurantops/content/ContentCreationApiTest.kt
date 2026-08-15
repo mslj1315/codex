@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.restaurantops.auth.AccessTokenSession
 import com.restaurantops.auth.AuthenticatedApiClient
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
 import okhttp3.MediaType
 import okhttp3.ResponseBody
 import okhttp3.mockwebserver.MockResponse
@@ -223,6 +224,19 @@ class ContentCreationApiTest {
             assertEquals("Unable to complete the content request", error.message)
         }
     }
+
+    @Test fun cancellationPropagatesWithoutContentErrorWrapping() = runBlocking {
+        val repository = HttpContentCreationRepository(FakeContentCreationWireApi().apply {
+            listFailure = CancellationException("cancelled")
+        })
+
+        try {
+            repository.listTasks("store-1")
+            error("Expected cancellation")
+        } catch (error: CancellationException) {
+            assertEquals("cancelled", error.message)
+        }
+    }
 }
 
 private fun realWireApi(server: MockWebServer): ContentCreationWireApi = Retrofit.Builder()
@@ -260,8 +274,12 @@ private fun copy(id: String, strategy: String) = ContentCopyWireDto(
 
 private class FakeContentCreationWireApi : ContentCreationWireApi {
     lateinit var confirmation: Response<ContentCopyWireDto>
+    var listFailure: Throwable? = null
 
-    override suspend fun listTasks(storeId: String) = ContentTaskListWireDto(emptyList())
+    override suspend fun listTasks(storeId: String): ContentTaskListWireDto {
+        listFailure?.let { throw it }
+        return ContentTaskListWireDto(emptyList())
+    }
     override suspend fun loadTask(storeId: String, taskId: String) = error("not used")
     override suspend fun createTask(storeId: String, request: CreateContentTaskWireRequest) = error("not used")
     override suspend fun generateTopics(storeId: String, taskId: String) = error("not used")

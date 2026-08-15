@@ -29,6 +29,7 @@ data class ContentCreationState(
     val creationInput: ContentCreationInput = ContentCreationInput(),
     val pendingTopicGenerationTaskId: String? = null,
     val dirtyCopyId: String? = null,
+    val needsEditAfterReview: Boolean = false,
     val stage: ContentCreationStage = ContentCreationStage.Idle,
     val finalizing: Boolean = false,
     val loaded: Boolean = false,
@@ -126,7 +127,11 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
         val task = current.task ?: return
         if (current.finalizing || !hasValidCopyGroup(task, current.selectedTopicId)) return
         if (task.copies.none { it.id == copyId && it.topicId == current.selectedTopicId }) return
-        mutableState.value = current.copy(selectedCopyId = copyId, reviewFindings = emptyList(), stage = ContentCreationStage.CopyEditing, error = null)
+        mutableState.value = if (current.needsEditAfterReview) {
+            current.copy(selectedCopyId = copyId, error = null)
+        } else {
+            current.copy(selectedCopyId = copyId, reviewFindings = emptyList(), stage = ContentCreationStage.CopyEditing, error = null)
+        }
     }
 
     fun updateSelectedDraft(title: String, body: String) {
@@ -134,8 +139,10 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
         val task = current.task ?: return
         val copyId = current.selectedCopyId ?: return
         if (current.finalizing || title.isBlank() || body.isBlank()) return
+        val existing = task.copies.firstOrNull { it.id == copyId } ?: return
+        if (existing.title == title && existing.body == body) return
         val updated = task.copies.map { copy -> if (copy.id == copyId) copy.copy(title = title, body = body) else copy }
-        mutableState.value = current.copy(task = task.copy(copies = updated), dirtyCopyId = copyId, reviewFindings = emptyList(), stage = ContentCreationStage.CopyEditing, error = null)
+        mutableState.value = current.copy(task = task.copy(copies = updated), dirtyCopyId = copyId, needsEditAfterReview = false, reviewFindings = emptyList(), stage = ContentCreationStage.CopyEditing, error = null)
     }
 
     fun saveSelectedCopy(storeId: String) = withTask { task ->
@@ -157,16 +164,22 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
                 restoreTask(storeId, task.id)
             }
             is CopyConfirmationResult.RevisionRequired -> {
-                val refreshed = repository.loadTask(storeId, task.id)
-                refreshQueue(storeId)
                 mutableState.value = mutableState.value.copy(
-                    task = refreshed,
+                    task = task,
                     dirtyCopyId = null,
+                    needsEditAfterReview = true,
                     reviewFindings = result.findings,
                     stage = ContentCreationStage.RevisionRequired,
                     loaded = true,
                     error = null
                 )
+                try {
+                    refreshQueue(storeId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    mutableState.value = mutableState.value.copy(error = "暂时无法完成内容操作")
+                }
             }
         }
     }
@@ -211,6 +224,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
             shotList = task.shotList,
             storyboardHandoff = task.shotList?.id?.trim()?.takeIf { it.isNotEmpty() }?.let { ContentStoryboardHandoff(task.id, it) },
             dirtyCopyId = null,
+            needsEditAfterReview = false,
             stage = recovered.stage,
             loaded = true,
             error = null

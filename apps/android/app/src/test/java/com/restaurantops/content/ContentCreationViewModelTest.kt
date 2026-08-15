@@ -228,7 +228,7 @@ class ContentCreationViewModelTest {
         assertEquals(listOf(finding()), viewModel.state.value.reviewFindings)
         assertEquals(1, repository.confirmCalls)
         assertEquals(0, repository.shotCalls)
-        assertEquals(2, repository.loadCalls)
+        assertEquals(1, repository.loadCalls)
     }
 
     @Test fun confirmSavesEditedDraftBeforeReviewAndRetainsItWhenRevisionIsRequired() = runTest(dispatcher) {
@@ -251,6 +251,50 @@ class ContentCreationViewModelTest {
         advanceUntilIdle()
         assertEquals(1, repository.confirmCalls)
         assertEquals(0, repository.shotCalls)
+    }
+
+    @Test fun reviewRequiredCannotBeBypassedBySelectingCopiesUntilAnActualEdit() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository(detail(copies = copies())).apply {
+            confirmation = CopyConfirmationResult.RevisionRequired(listOf(finding()))
+        }
+        val viewModel = ContentCreationViewModel(repository)
+        viewModel.restore("store", "task")
+        advanceUntilIdle()
+        viewModel.confirmSelectedCopy("store")
+        advanceUntilIdle()
+
+        viewModel.selectCopy("copy-1")
+        viewModel.selectCopy("copy-2")
+        viewModel.confirmSelectedCopy("store")
+        advanceUntilIdle()
+
+        assertEquals(ContentCreationStage.RevisionRequired, viewModel.state.value.stage)
+        assertEquals(listOf(finding()), viewModel.state.value.reviewFindings)
+        assertEquals(1, repository.confirmCalls)
+
+        viewModel.updateSelectedDraft("changed", "changed body")
+        viewModel.confirmSelectedCopy("store")
+        advanceUntilIdle()
+        assertEquals(2, repository.confirmCalls)
+    }
+
+    @Test fun reviewRequiredSurvivesQueueRefreshFailure() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository(detail(copies = copies())).apply {
+            confirmation = CopyConfirmationResult.RevisionRequired(listOf(finding()))
+        }
+        val viewModel = ContentCreationViewModel(repository)
+        viewModel.restore("store", "task")
+        advanceUntilIdle()
+        repository.listFailure = IllegalStateException("queue failure")
+
+        viewModel.confirmSelectedCopy("store")
+        advanceUntilIdle()
+        viewModel.confirmSelectedCopy("store")
+        advanceUntilIdle()
+
+        assertEquals(ContentCreationStage.RevisionRequired, viewModel.state.value.stage)
+        assertEquals(listOf(finding()), viewModel.state.value.reviewFindings)
+        assertEquals(1, repository.confirmCalls)
     }
 
     @Test fun confirmedCopyAllowsShotGenerationAndRestoresStoryboardHandoff() = runTest(dispatcher) {
