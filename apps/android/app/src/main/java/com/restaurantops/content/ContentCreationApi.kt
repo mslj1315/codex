@@ -65,13 +65,16 @@ private data class ConfirmationFailureWireDto(val findings: List<ContentReviewFi
 fun contentTaskListFrom(dto: ContentTaskListWireDto): List<ContentTaskSummary> =
     dto.tasks?.map(::contentTaskSummaryFrom) ?: throw invalidContentResponse()
 
-fun contentTaskDetailFrom(dto: ContentTaskDetailWireDto) = ContentTaskDetail(
-    id = requiredContentId(dto.id), status = requiredContentText(dto.status),
-    topics = dto.topics?.map(::contentTopicFrom) ?: throw invalidContentResponse(),
-    copies = dto.copies?.map(::contentCopyFrom) ?: throw invalidContentResponse(),
-    reviewFindings = dto.reviewFindings?.map(::contentReviewFindingFrom) ?: throw invalidContentResponse(),
-    shotList = dto.shotList?.let(::contentShotListFrom)
-)
+fun contentTaskDetailFrom(dto: ContentTaskDetailWireDto): ContentTaskDetail {
+    val topics = dto.topics?.map(::contentTopicFrom) ?: throw invalidContentResponse()
+    val copies = dto.copies?.map(::contentCopyFrom) ?: throw invalidContentResponse()
+    validateRestoredCopyGroups(topics, copies)
+    return ContentTaskDetail(
+        id = requiredContentId(dto.id), status = requiredContentText(dto.status), topics = topics, copies = copies,
+        reviewFindings = dto.reviewFindings?.map(::contentReviewFindingFrom) ?: throw invalidContentResponse(),
+        shotList = dto.shotList?.let(::contentShotListFrom)
+    )
+}
 
 fun generatedCopiesFrom(dtos: List<ContentCopyWireDto>): List<ContentCopy> {
     val copies = dtos.map(::contentCopyFrom)
@@ -79,6 +82,14 @@ fun generatedCopiesFrom(dtos: List<ContentCopyWireDto>): List<ContentCopy> {
         throw ContentCreationRequestException("Generated copy options are invalid")
     }
     return copies
+}
+
+private fun validateRestoredCopyGroups(topics: List<ContentTopic>, copies: List<ContentCopy>) {
+    val topicIds = topics.map { it.id }.toSet()
+    if (copies.any { it.topicId !in topicIds }) throw invalidContentResponse()
+    copies.groupBy { it.topicId }.values.forEach { group ->
+        if (group.size != 3 || group.map { it.strategy.trim() }.toSet().size != 3) throw invalidContentResponse()
+    }
 }
 
 internal fun confirmationResultFrom(response: Response<ContentCopyWireDto>, gson: Gson = Gson()): CopyConfirmationResult = when {

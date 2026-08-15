@@ -1,6 +1,8 @@
 package com.restaurantops.content
 
 import com.google.gson.Gson
+import com.restaurantops.auth.AccessTokenSession
+import com.restaurantops.auth.AuthenticatedApiClient
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType
 import okhttp3.ResponseBody
@@ -136,6 +138,36 @@ class ContentCreationApiTest {
         }
     }
 
+    @Test fun malformedRestoredCopyGroupDoesNotEmitEditableState() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(restorationDetailJson().replace("strategy-three", "strategy-two")))
+
+            val error = assertContentError {
+                HttpContentCreationRepository(realWireApi(server)).loadTask("store-1", "task-1")
+            }
+
+            assertEquals("Content response is invalid", error.message)
+            assertRequest(server, "GET", "/v1/stores/store-1/content-tasks/task-1")
+        }
+    }
+
+    @Test fun contentCreationFactoryUsesAuthenticatedRetrofitClient() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("{\"tasks\":[]}"))
+            val api = contentCreationWireApi(
+                AuthenticatedApiClient(TestAccessTokenSession("test-access-token")),
+                server.url("/").toString()
+            )
+
+            assertEquals(emptyList<ContentTaskSummaryWireDto>(), api.listTasks("store-1").tasks)
+
+            val request = server.takeRequest()
+            assertEquals("GET", request.method)
+            assertEquals("/v1/stores/store-1/content-tasks", request.path)
+            assertEquals("Bearer test-access-token", request.getHeader("Authorization"))
+        }
+    }
+
     @Test fun invalidLocalContentInputsRejectBeforeNetwork() = runBlocking {
         MockWebServer().use { server ->
             val repository = HttpContentCreationRepository(realWireApi(server))
@@ -196,7 +228,7 @@ private suspend fun assertContentError(block: suspend () -> Unit): ContentCreati
 
 private fun topicJson(id: String) = "{\"id\":\"$id\",\"title\":\"Dinner feature\",\"angle\":\"fresh\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1}"
 private fun copyJson(id: String, strategy: String) = "{\"id\":\"$id\",\"topicId\":\"topic-1\",\"title\":\"Dinner feature\",\"body\":\"Try tonight\",\"strategy\":\"$strategy\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"version\":1,\"status\":\"draft\"}"
-private fun detailJson() = "{\"id\":\"task-1\",\"status\":\"copy_draft\",\"topics\":[${topicJson("topic-1")}],\"copies\":[${copyJson("copy-1", "strategy-one")}],\"reviewFindings\":[],\"shotList\":null}"
+private fun detailJson() = "{\"id\":\"task-1\",\"status\":\"topic_draft\",\"topics\":[${topicJson("topic-1")}],\"copies\":[],\"reviewFindings\":[],\"shotList\":null}"
 private fun shotListJson() = "{\"id\":\"shots-1\",\"copyId\":\"copy-1\",\"status\":\"draft\",\"shots\":[{\"order\":1,\"shot\":\"open\",\"durationSeconds\":3,\"narration\":\"start\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1},{\"order\":2,\"shot\":\"serve\",\"durationSeconds\":3,\"narration\":\"middle\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1},{\"order\":3,\"shot\":\"close\",\"durationSeconds\":3,\"narration\":\"end\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1}]}"
 private fun restorationDetailJson() = "{\"id\":\"task-1\",\"status\":\"copy_draft\",\"topics\":[${topicJson("topic-1")}],\"copies\":[${copyJsonWithVersion("copy-1", "strategy-one", 2)},${copyJsonWithVersion("copy-2", "strategy-two", 1)},${copyJsonWithVersion("copy-3", "strategy-three", 1)}],\"reviewFindings\":[{\"copyId\":\"copy-1\",\"pattern\":\"unsupported claim\",\"severity\":\"high\",\"guidance\":\"Use verifiable wording\",\"source\":\"semantic\"}],\"shotList\":${shotListJson()}}"
 private fun copyJsonWithVersion(id: String, strategy: String, version: Int) = "{\"id\":\"$id\",\"topicId\":\"topic-1\",\"title\":\"Dinner feature\",\"body\":\"Try tonight\",\"strategy\":\"$strategy\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"version\":$version,\"status\":\"draft\"}"
@@ -217,4 +249,9 @@ private class FakeContentCreationWireApi : ContentCreationWireApi {
     override suspend fun updateCopy(storeId: String, taskId: String, copyId: String, request: UpdateContentCopyWireRequest) = error("not used")
     override suspend fun confirmCopy(storeId: String, taskId: String, copyId: String) = confirmation
     override suspend fun generateShots(storeId: String, taskId: String) = error("not used")
+}
+
+private class TestAccessTokenSession(override val accessToken: String?) : AccessTokenSession {
+    override suspend fun refreshAccessToken(failedAccessToken: String) = false
+    override fun clearSession() = Unit
 }
