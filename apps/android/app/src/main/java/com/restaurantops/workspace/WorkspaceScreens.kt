@@ -23,7 +23,9 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,17 +104,18 @@ fun WorkspaceRoot(
     val renderDelivery = remember(authenticatedApiClient, androidContext) { authenticatedApiClient?.let { AuthenticatedRenderDelivery(androidContext, BuildConfig.LOCAL_API_BASE_URL, it.okHttpClient()) } }
     val deliveryScope = androidx.compose.runtime.rememberCoroutineScope()
     var storyboardContext by remember { androidx.compose.runtime.mutableStateOf<StoryboardContext?>(null) }
+    val selectedStoryboardContext = storyboardContext
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
             onBack = viewModel::closeOverlay,
             onCreateTask = viewModel::createPriorityTaskAndOpenTasks
         )
-        viewModel.isVideoFactoryOpen && storyboardContext != null && storyboardViewModel != null -> StoryboardVideoScreen(
+        viewModel.isVideoFactoryOpen && selectedStoryboardContext != null && storyboardViewModel != null -> StoryboardVideoScreen(
             viewModel = storyboardViewModel,
             storeId = storeId,
-            taskId = storyboardContext!!.taskId,
-            shotListId = storyboardContext!!.shotListId,
-            onDeliver = { render, candidate -> renderDelivery?.let { delivery -> deliveryScope.launch { val result = if (candidate == null) delivery.output(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id) else delivery.cover(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id, candidate); when (result) { is RenderDeliveryResult.Ready -> delivery.open(result.file, if (candidate == null) "video/mp4" else "image/jpeg"); is RenderDeliveryResult.Unavailable -> storyboardViewModel.deliveryUnavailable(result.message) } } } }
+            taskId = selectedStoryboardContext.taskId,
+            shotListId = selectedStoryboardContext.shotListId,
+            onDeliver = { render, candidate -> renderDelivery?.let { delivery -> deliveryScope.launch { val result = if (candidate == null) delivery.output(storeId, selectedStoryboardContext.taskId, selectedStoryboardContext.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id) else delivery.cover(storeId, selectedStoryboardContext.taskId, selectedStoryboardContext.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id, candidate); when (result) { is RenderDeliveryResult.Ready -> delivery.open(result.file, if (candidate == null) "video/mp4" else "image/jpeg"); is RenderDeliveryResult.Unavailable -> storyboardViewModel.deliveryUnavailable(result.message) } } } }
         )
         viewModel.isVideoFactoryOpen && storyboardContextRepository != null -> StoryboardContextScreen(
             repository = storyboardContextRepository,
