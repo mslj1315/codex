@@ -1,4 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
+import { scrypt as nodeScrypt } from "node:crypto";
+import { promisify } from "node:util";
 import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
@@ -215,7 +217,25 @@ describe("auth service", () => {
 
     await expect(service.authenticateAccessToken(login.accessToken)).rejects.toBeInstanceOf(AuthenticationError);
   });
+
+  it("accepts a formatted customer mobile login and upgrades a verified legacy password hash", async () => {
+    const legacyHash = await legacyScryptHash("passphrase");
+    await database.query("UPDATE accounts SET login_name = '13800138000', password_hash = $1 WHERE id = 'account_owner'", [legacyHash]);
+
+    const login = await service.login({ loginName: " +86 138-0013-8000 ", password: "passphrase" });
+
+    expect(login.account).toEqual({ id: "account_owner", displayName: "Owner" });
+    await expect(database.query("SELECT password_hash FROM accounts WHERE id = 'account_owner'"))
+      .resolves.toMatchObject({ rows: [{ password_hash: expect.stringMatching(/^\$2[aby]\$/) }] });
+  });
 });
+
+async function legacyScryptHash(password: string): Promise<string> {
+  const salt = Buffer.alloc(16, 5);
+  const derive = promisify(nodeScrypt) as (value: string, salt: Buffer, length: number) => Promise<Buffer>;
+  const derived = await derive(password, salt, 32);
+  return `scrypt$v1$${salt.toString("base64url")}$${derived.toString("base64url")}`;
+}
 
 async function applyTestMigrations(database: Database): Promise<void> {
   const migrationsUrl = new URL("../migrations/", import.meta.url);

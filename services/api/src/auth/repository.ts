@@ -120,6 +120,13 @@ export class AuthRepository {
     });
   }
 
+  async upgradeLegacyPasswordHash(accountId: string, legacyHash: string, bcryptHash: string): Promise<void> {
+    await this.database.query(
+      "UPDATE accounts SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND password_hash = $3",
+      [bcryptHash, accountId, legacyHash]
+    );
+  }
+
   databaseConnection(): Database {
     return this.database;
   }

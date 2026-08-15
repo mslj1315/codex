@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { TrustedContext } from "../imports/service.js";
-import { hashPassword, verifyPassword } from "./credentials.js";
+import { hashPassword, isLegacyScryptPasswordHash, verifyPassword } from "./credentials.js";
 import { AuthRepository, type ServiceOperatorRole, type StoreMembership } from "./repository.js";
 import { InternalAuthorizationError, InternalPermissionRepository, requireInternalPermission, type InternalPermission } from "../admin/rbac.js";
 import { AuthenticationError, createRefreshToken, hashRefreshToken, issueAccessToken, parseAccessToken } from "./tokens.js";
@@ -34,6 +34,9 @@ export class AuthService {
   async login(input: { loginName: string; password: string }): Promise<AuthTokens> {
     const account = await this.repository.findAccountByLoginName(normalizeLoginName(input.loginName));
     if (!account?.enabled || !await verifyPassword(input.password, account.passwordHash)) throw new AuthenticationError("Authentication required");
+    if (isLegacyScryptPasswordHash(account.passwordHash)) {
+      await this.repository.upgradeLegacyPasswordHash(account.id, account.passwordHash, await hashPassword(input.password));
+    }
     return this.createTokens(account);
   }
 
@@ -180,6 +183,8 @@ export class AuthService {
 function normalizeLoginName(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!normalized) throw new AuthenticationError("Authentication required");
+  const compactMobile = normalized.replace(/[\s-]/g, "").replace(/^\+?86/, "");
+  if (/^1[3-9]\d{9}$/.test(compactMobile)) return compactMobile;
   return normalized;
 }
 
