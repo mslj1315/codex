@@ -22,10 +22,11 @@ export class FfmpegRenderRunner implements RenderRunner {
     if (slots.some(slot => !Number.isInteger(slot.sourceIndex) || !manifest.sources[slot.sourceIndex] || !validTrim(slot.trimStartSeconds, slot.trimEndSeconds, manifest.durationSeconds))) throw new Error("Invalid render manifest");
     for (let index = 0; index < manifest.sources.length; index++) await this.files.writeFile(join(workspacePath, `source-${index + 1}.mp4`), manifest.sources[index]!);
     await this.files.writeFile(join(workspacePath, "subtitles.srt"), subtitles(slots));
+    const sourceAudio = await Promise.all(manifest.sources.map((_, index) => this.hasAudio(workspacePath, `source-${index + 1}.mp4`)));
     const inputArgs = slots.flatMap(slot => ["-ss", number(slot.trimStartSeconds), "-t", number(slot.trimEndSeconds - slot.trimStartSeconds), "-i", `source-${slot.sourceIndex + 1}.mp4`]);
     const hasAudio = slots.some(slot => !slot.muted);
     const visuals = slots.map((_, index) => `[${index}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v${index}]`);
-    const audio = hasAudio ? slots.map((slot, index) => slot.muted ? `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]` : `[${index}:a]atrim=start=0:end=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]`) : [];
+    const audio = hasAudio ? slots.map((slot, index) => slot.muted || !sourceAudio[slot.sourceIndex] ? `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]` : `[${index}:a]atrim=start=0:end=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]`) : [];
     const graph = hasAudio ? `${[...visuals, ...audio].join(";")};${slots.map((_, index) => `[v${index}][a${index}]`).join("")}concat=n=${slots.length}:v=1:a=1[v0][a];[v0]subtitles=subtitles.srt[v]` : `${visuals.join(";")};${slots.map((_, index) => `[v${index}]`).join("")}concat=n=${slots.length}:v=1:a=0,subtitles=subtitles.srt[v]`;
     const outputArgs = hasAudio ? ["-map", "[v]", "-map", "[a]", "-c:a", "aac"] : ["-map", "[v]", "-an"];
     await run(this.spawn, this.options.ffmpegPath, ["-y", ...inputArgs, "-filter_complex", graph, ...outputArgs, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-s", "1080x1920", "-movflags", "+faststart", "output.mp4"], workspacePath);
@@ -43,6 +44,7 @@ export class FfmpegRenderRunner implements RenderRunner {
     if (!video || video.codec_name !== "h264" || !String(data.format?.format_name ?? "").split(",").includes("mp4") || Number(video.width) !== 1080 || Number(video.height) !== 1920 || fps(video.r_frame_rate) !== 30 || video.pix_fmt !== "yuv420p" || !Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 90) throw new Error("Invalid FFmpeg output metadata");
     return { width: 1080, height: 1920, fps: 30, durationSeconds };
   }
+  private async hasAudio(workspacePath: string, source: string) { const result = await this.spawn(this.options.ffprobePath, ["-v", "error", "-print_format", "json", "-show_streams", source], { cwd: workspacePath, shell: false }); if (result.code !== 0) throw new Error("FFprobe failed"); try { return (JSON.parse(result.stdout) as { streams?: Array<{ codec_type?: unknown }> }).streams?.some(stream => stream.codec_type === "audio") === true; } catch { throw new Error("Invalid source metadata"); } }
 }
 
 function subtitles(slots: NonNullable<RenderManifest["slots"]>) { let offset = 0; const entries: string[] = []; for (const slot of slots) { const duration = slot.trimEndSeconds - slot.trimStartSeconds; if (slot.subtitleEnabled && slot.subtitleText?.trim()) entries.push(`${entries.length + 1}\n${srtTime(offset)} --> ${srtTime(offset + duration)}\n${slot.subtitleText.replace(/[\r\n]+/g, " ").trim()}\n`); offset += duration; } return entries.join("\n"); }

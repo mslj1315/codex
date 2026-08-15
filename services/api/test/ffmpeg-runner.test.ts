@@ -23,8 +23,9 @@ describe("FFmpeg storyboard render runner", () => {
     const result = await runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: ["saved subtitle"], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: true, subtitleText: "saved subtitle", subtitleEnabled: true }] });
 
     expect(calls.every(call => call.shell === false)).toBe(true);
-    expect(calls[0]).toMatchObject({ command: "ffmpeg" });
-    expect(calls[0]!.args).toEqual(expect.arrayContaining(["-ss", "0", "-t", "4", "-an", "-c:v", "libx264", "-r", "30", "-s", "1080x1920", "-movflags", "+faststart"]));
+    const render = calls.find(call => call.command === "ffmpeg")!;
+    expect(render).toMatchObject({ command: "ffmpeg" });
+    expect(render.args).toEqual(expect.arrayContaining(["-ss", "0", "-t", "4", "-an", "-c:v", "libx264", "-r", "30", "-s", "1080x1920", "-movflags", "+faststart"]));
     expect(calls.filter(call => call.command === "ffmpeg")).toHaveLength(4);
     expect(result.metadata).toMatchObject({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" });
     expect(result.coverFrames.map(frame => frame.positionSeconds)).toEqual([1, 2, 3]);
@@ -42,14 +43,23 @@ describe("FFmpeg storyboard render runner", () => {
 
   it("retains unmuted slot audio with trim and concat instead of globally disabling audio", async () => {
     const calls: Array<{ command: string; args: string[] }> = [];
-    const spawn: SpawnProcess = async (command, args) => { calls.push({ command, args }); return command === "ffprobe" ? { stdout: JSON.stringify({ format: { format_name: "mp4", duration: "4" }, streams: [{ codec_type: "video", codec_name: "h264", width: 1080, height: 1920, r_frame_rate: "30/1", pix_fmt: "yuv420p" }] }), stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 }; };
+    const spawn: SpawnProcess = async (command, args) => { calls.push({ command, args }); return command === "ffprobe" ? { stdout: JSON.stringify({ format: { format_name: "mp4", duration: "4" }, streams: [{ codec_type: "video", codec_name: "h264", width: 1080, height: 1920, r_frame_rate: "30/1", pix_fmt: "yuv420p" }, { codec_type: "audio" }] }), stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 }; };
     const files = new MemoryFiles(); for (const name of ["output.mp4", "cover-1.jpg", "cover-2.jpg", "cover-3.jpg"]) files.set(join("work", name), Buffer.from(name));
     await new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files }).render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] });
-    const args = calls[0]!.args;
+    const args = calls.find(call => call.command === "ffmpeg")!.args;
     expect(args).not.toContain("-an");
     expect(args).toEqual(expect.arrayContaining(["-c:a", "aac"]));
     expect(args[args.indexOf("-filter_complex") + 1]).toContain("atrim=start=0:end=4,asetpts=PTS-STARTPTS[a0]");
     expect(args[args.indexOf("-filter_complex") + 1]).toContain("concat=n=1:v=1:a=1[v0][a]");
+  });
+
+  it("uses controlled silence for an unmuted source without an audio stream", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const spawn: SpawnProcess = async (command, args) => { calls.push({ command, args }); return command === "ffprobe" ? { stdout: JSON.stringify({ format: { format_name: "mp4", duration: "4" }, streams: [{ codec_type: "video", codec_name: "h264", width: 1080, height: 1920, r_frame_rate: "30/1", pix_fmt: "yuv420p" }] }), stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 }; };
+    const files = new MemoryFiles(); for (const name of ["output.mp4", "cover-1.jpg", "cover-2.jpg", "cover-3.jpg"]) files.set(join("work", name), Buffer.from(name));
+    await new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files }).render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] });
+    const render = calls.find(call => call.command === "ffmpeg")!;
+    expect(render.args[render.args.indexOf("-filter_complex") + 1]).toContain("anullsrc=channel_layout=stereo:sample_rate=48000");
   });
 });
 

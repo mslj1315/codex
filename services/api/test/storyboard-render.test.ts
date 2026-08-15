@@ -84,6 +84,13 @@ describe("storyboard render queue", () => {
     expect(events).not.toContain("succeed");
   });
 
+  it("renews the token lease while a render is still running", async () => {
+    let finish!: () => void; const renewals: string[] = []; let tick: (() => Promise<void>) | undefined;
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "long-render", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"], leaseToken: "lease" }), renewLease: async (_id, token) => { renewals.push(token); return true; }, isCancelled: async () => false, succeed: async () => {}, fail: async () => {} }, { create: async () => "workspace", remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async () => {} }, { render: async () => await new Promise(resolve => { finish = () => resolve({ output: Buffer.from("out"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("1") }, { positionSeconds: 2, bytes: Buffer.from("2") }, { positionSeconds: 3, bytes: Buffer.from("3") }] }); }) }, undefined, { start: callback => { tick = callback; return () => {}; } });
+    const running = worker.runOnce(); while (!finish) await new Promise(resolve => setTimeout(resolve, 0)); await tick!(); finish(); await running;
+    expect(renewals).toEqual(["lease"]);
+  });
+
   it("lets its customer list and cancel a queued render without exposing output storage", async () => {
     const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "preview" } });
     const listed = await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders` });
