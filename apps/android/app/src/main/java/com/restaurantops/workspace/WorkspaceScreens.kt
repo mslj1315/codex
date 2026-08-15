@@ -112,7 +112,7 @@ fun WorkspaceRoot(
             storeId = storeId,
             taskId = storyboardContext!!.taskId,
             shotListId = storyboardContext!!.shotListId,
-            onDeliver = { render, candidate -> renderDelivery?.let { delivery -> deliveryScope.launch { val result = if (candidate == null) delivery.output(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id) else delivery.cover(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id, candidate); if (result is RenderDeliveryResult.Ready) delivery.open(result.file, if (candidate == null) "video/mp4" else "image/jpeg") } } }
+            onDeliver = { render, candidate -> renderDelivery?.let { delivery -> deliveryScope.launch { val result = if (candidate == null) delivery.output(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id) else delivery.cover(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id, candidate); when (result) { is RenderDeliveryResult.Ready -> delivery.open(result.file, if (candidate == null) "video/mp4" else "image/jpeg"); is RenderDeliveryResult.Unavailable -> storyboardViewModel.deliveryUnavailable(result.message) } } } }
         )
         viewModel.isVideoFactoryOpen && storyboardContextRepository != null -> StoryboardContextScreen(
             repository = storyboardContextRepository,

@@ -18,6 +18,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -36,6 +38,8 @@ fun StoryboardVideoScreen(viewModel: StoryboardVideoViewModel, storeId: String, 
         })
     }
     val state = viewModel.state
+    LaunchedEffect(storeId, taskId, shotListId, state.hasActiveRender()) { if (state.hasActiveRender()) viewModel.pollWhileActive(storeId, taskId, shotListId) }
+    DisposableEffect(viewModel) { onDispose { viewModel.stopPolling() } }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Storyboard video", style = MaterialTheme.typography.titleLarge)
         Text("Choose up to 20 videos. Each may be up to 500 MB; all sources may total 10 minutes.")
