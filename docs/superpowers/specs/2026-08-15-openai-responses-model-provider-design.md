@@ -58,6 +58,26 @@ MODEL_MAX_RETRIES=1
 `MODEL_BASE_URL` is the gateway root, not the complete `/responses` endpoint.
 The production environment must not enable local container development mode.
 
+## Token Pricing And Usage Aggregation
+
+Token prices are configured in CNY per one million tokens. Each immutable,
+published price version has separate non-negative input and output prices,
+provider, model, effective time, and optional retirement time. A new price is
+published as a new version; published history is never edited.
+
+When a generation run succeeds, the server selects the applicable published
+price version and freezes its ID, currency, input price, output price, input
+cost, output cost, and total cost beside the existing usage record. A missing
+price does not block generation: the usage remains cost-unpriced. Later price
+changes never recalculate historical runs.
+
+The internal service-provider console may create and publish price versions
+and see only date/provider/model aggregate usage and cost. It cannot query a
+customer, task, generation run, prompt, copy, review, storyboard, media, or
+object address. Customers may see only their own enterprise/store aggregate
+usage and estimated cost. The price-configuring role receives no customer data
+read capability as a consequence of configuring prices.
+
 ## Verification
 
 Tests first prove request method, URL normalization, authorization header,
