@@ -13,7 +13,7 @@
 ## File Structure
 
 - Modify `services/api/src/content-planning/workflow-routes.ts`: list/detail reads and explicit response mappers, including `topicId` on each copy.
-- Create `services/api/migrations/025_content_task_customer_queue_index.sql`: index the customer work queue by enterprise, store, actor, and newest creation time.
+- Create `services/api/migrations/027_content_task_customer_queue_index.sql`: index the customer work queue by enterprise, store, actor, and newest creation time.
 - Modify `services/api/test/content-planning-workflow.test.ts`: ownership, role-denial, and response-redaction regressions.
 - Create `apps/android/app/src/main/java/com/restaurantops/content/ContentCreationModels.kt`: immutable task, topic, copy, finding, shot-list, and input types.
 - Create `apps/android/app/src/main/java/com/restaurantops/content/ContentCreationApi.kt`: Retrofit interface and response DTO mapping.
@@ -28,7 +28,7 @@
 
 ### Task 1: Customer-Scoped Content Task Reads
 
-**Files:** `services/api/src/content-planning/workflow-routes.ts`, `services/api/migrations/025_content_task_customer_queue_index.sql`, `services/api/test/content-planning-workflow.test.ts`, `services/api/test/migrate.test.ts`
+**Files:** `services/api/src/content-planning/workflow-routes.ts`, `services/api/migrations/027_content_task_customer_queue_index.sql`, `services/api/test/content-planning-workflow.test.ts`, `services/api/test/migrate.test.ts`
 
 - [ ] **Step 1: Write failing route tests.** Create a customer task using the existing workflow fixture, generate topics/copies, then assert:
 
