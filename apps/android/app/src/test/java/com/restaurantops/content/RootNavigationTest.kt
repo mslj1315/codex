@@ -7,7 +7,7 @@ import com.restaurantops.workspace.WorkspaceTab
 
 class RootNavigationTest {
     @Test fun workspaceExposesCustomerContentCreationDestination() {
-        val destination = WorkspaceTab.entries.single { it.wireValue == "content-creation" }
+        val destination = WorkspaceTab.entries.single { it.wireValue == "content" }
 
         assertEquals("内容创作", destination.title)
         assertTrue(destination.isCustomerContentCreation)

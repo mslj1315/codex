@@ -89,7 +89,7 @@ class WorkspaceViewModelTest {
     }
 
     @Test fun workspaceTabsMapContentCreationAndUnknownValues() {
-        assertEquals(WorkspaceTab.CONTENT_CREATION, WorkspaceTab.fromWireValue("content-creation"))
+        assertEquals(WorkspaceTab.CONTENT_CREATION, WorkspaceTab.fromWireValue("content"))
         assertEquals("内容创作", WorkspaceTab.CONTENT_CREATION.title)
         assertEquals(WorkspaceTab.HOME, WorkspaceTab.fromWireValue("unknown"))
     }
