@@ -16,7 +16,7 @@ Add a dedicated Content Creation item to the authenticated customer workspace's 
 
 - A primary action opens a compact new-task sheet.
 - The remaining content lists only the current customer's non-terminal tasks, grouped by their current workflow state.
-- Selecting a `topic_draft` task opens topic generation/selection; a task with topics but no copies opens its selected topic; a task with draft copies opens copy editing; a `copy_confirmed` task opens shot generation; and a task with a shot list opens the storyboard handoff.
+- Selecting a task with no generated topics opens topic generation. A task with topics but no copies reopens topic selection; selection is not persisted until copy generation begins. Every restored copy includes its `topicId`, so a task with copies reopens the exact topic that generated those copies. A `copy_confirmed` task opens shot generation, and a task with a shot list opens the storyboard handoff.
 - A task with a generated shot list presents an action that opens the existing storyboard context/editor flow.
 - The local demo never presents generated sample output as remote AI work. It shows that real content creation requires an authenticated server connection.
 
@@ -53,7 +53,7 @@ Android does not call a model directly. It never persists model credentials, raw
 Add customer-only, store-scoped reads without changing existing generation or mutation contracts:
 
 - `GET /v1/stores/:storeId/content-tasks` returns the authenticated customer's current tasks and public progression metadata.
-- `GET /v1/stores/:storeId/content-tasks/:id` returns the authenticated customer's task details: task state, topics, copies, copy status/version, review-result summary needed for corrective editing, and any shot-list identifier/status.
+- `GET /v1/stores/:storeId/content-tasks/:id` returns the authenticated customer's task details: task state, topics, copies including their `topicId`, copy status/version, review-result summary needed for corrective editing, and any shot-list identifier/status.
 
 Both routes resolve trusted customer context before parsing or reading task data. They return `403` for provider, operator editor, and operator reviewer callers. They do not return provider-facing aggregation data, model secrets, prompts, audit record internals, source object keys, media URLs, or customer content belonging to another customer.
 
