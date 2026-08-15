@@ -39,6 +39,16 @@ export async function registerAuthRoutes(app: FastifyInstance, service: AuthServ
     }
   });
 
+  app.post("/v1/auth/change-password", async (request, reply) => {
+    try {
+      const body = record(request.body);
+      await service.changePassword(requireBearer(request), { currentPassword: stringValue(body.currentPassword), newPassword: stringValue(body.newPassword) });
+      return reply.code(204).send();
+    } catch (error) {
+      return authenticationFailure(error, reply);
+    }
+  });
+
   app.get("/v1/auth/me/internal-permissions", async (request, reply) => {
     try {
       return await service.internalPermissions(requireBearer(request));

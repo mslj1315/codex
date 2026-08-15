@@ -14,6 +14,7 @@ export interface AuthAccount {
   displayName: string;
   passwordHash: string;
   enabled: boolean;
+  passwordChangeRequired: boolean;
 }
 
 export interface StoreMembership {
@@ -33,7 +34,7 @@ export class AuthRepository {
 
   async findAccountByLoginName(loginName: string): Promise<AuthAccount | undefined> {
     const result = await this.database.query<Row>(
-      "SELECT id, login_name, display_name, password_hash, enabled FROM accounts WHERE login_name = $1",
+      "SELECT id, login_name, display_name, password_hash, enabled, password_change_required FROM accounts WHERE login_name = $1",
       [loginName]
     );
     return result.rowCount === 1 ? account(result.rows[0]) : undefined;
@@ -104,6 +105,19 @@ export class AuthRepository {
       [accountId]
     );
     return result.rows.map((row) => row.role as ServiceOperatorRole);
+  }
+
+  async changePassword(input: { accountId: string; currentPasswordHash: string; nextPasswordHash: string }): Promise<boolean> {
+    return this.transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE accounts SET password_hash = $1, password_change_required = false, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND password_hash = $3 AND enabled = true`,
+        [input.nextPasswordHash, input.accountId, input.currentPasswordHash]
+      );
+      if (updated.rowCount !== 1) return false;
+      await client.query("UPDATE account_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE account_id = $1 AND revoked_at IS NULL", [input.accountId]);
+      return true;
+    });
   }
 
   databaseConnection(): Database {
@@ -190,7 +204,7 @@ type Row = Record<string, unknown>;
 async function readSessionByRefreshToken(database: Queryable, refreshTokenHash: string, lock = ""): Promise<SessionAccount | undefined> {
   const result = await database.query<Row>(
     `SELECT session.id AS session_id, session.expires_at, session.revoked_at,
-            account.id, account.login_name, account.display_name, account.password_hash, account.enabled
+            account.id, account.login_name, account.display_name, account.password_hash, account.enabled, account.password_change_required
      FROM account_sessions AS session JOIN accounts AS account ON account.id = session.account_id
      WHERE session.refresh_token_hash = $1 ${lock}`,
     [refreshTokenHash]
@@ -201,7 +215,7 @@ async function readSessionByRefreshToken(database: Queryable, refreshTokenHash: 
 async function readSessionById(database: Queryable, accountId: string, sessionId: string): Promise<SessionAccount | undefined> {
   const result = await database.query<Row>(
     `SELECT session.id AS session_id, session.expires_at, session.revoked_at,
-            account.id, account.login_name, account.display_name, account.password_hash, account.enabled
+            account.id, account.login_name, account.display_name, account.password_hash, account.enabled, account.password_change_required
      FROM account_sessions AS session JOIN accounts AS account ON account.id = session.account_id
      WHERE session.id = $1 AND session.account_id = $2`,
     [sessionId, accountId]
@@ -216,7 +230,7 @@ function isActive(value: SessionAccount, now: Date): boolean {
 function account(row: Row): AuthAccount {
   return {
     id: String(row.id), loginName: String(row.login_name), displayName: String(row.display_name),
-    passwordHash: String(row.password_hash), enabled: Boolean(row.enabled)
+    passwordHash: String(row.password_hash), enabled: Boolean(row.enabled), passwordChangeRequired: Boolean(row.password_change_required)
   };
 }
 
@@ -226,7 +240,7 @@ function publicAccount(value: AuthAccount): AuthAccount {
     loginName: value.loginName,
     displayName: value.displayName,
     passwordHash: value.passwordHash,
-    enabled: value.enabled
+    enabled: value.enabled, passwordChangeRequired: value.passwordChangeRequired
   };
 }
 
