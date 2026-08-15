@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { newDb } from "pg-mem";
+import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
@@ -21,7 +21,10 @@ describe("content planning workflow", () => {
     ] : request.promptVersion === "content-copy-v1" ? [
       { title: "手艺版", body: "老板凌晨熬汤", strategy: "persona_story", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }, { title: "生活版", body: "午饭来碗热米线", strategy: "daily_life", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }, { title: "产品版", body: "招牌米线现煮", strategy: "product_value", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }
     ] : request.promptVersion === "content-semantic-review-v1" ? { approved: true, findings: [] } : [{ order: 1, shot: "熬汤锅", durationSeconds: 3, narration: "凌晨开始熬汤", productReference: "招牌米线", goalReference: "到店", commercialLevel: 1 }] } as never));
-    const memory = newDb({ noAstCoverageCheck: true }); const { Pool } = memory.adapters.createPg(); pool = new Pool();
+    const memory = newDb({ noAstCoverageCheck: true });
+    // pg-mem exposes NUMERIC arithmetic as float and omits PostgreSQL's two-argument ROUND.
+    memory.public.registerFunction({ name: "round", args: [DataType.float, DataType.integer], returns: DataType.float, implementation: (value, precision) => Number(value.toFixed(precision)) });
+    const { Pool } = memory.adapters.createPg(); pool = new Pool();
     for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "028_model_token_pricing.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
       await pool.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, "").replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
@@ -331,6 +334,7 @@ describe("content planning workflow", () => {
   it("freezes the applicable published CNY token price on a successful generation", async () => {
     await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-old','deepseek','test',4,16,CURRENT_TIMESTAMP - INTERVAL '1 day','published')");
     await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-current','deepseek','test',8,32,CURRENT_TIMESTAMP - INTERVAL '1 minute','published')");
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-draft','deepseek','test',80,320,CURRENT_TIMESTAMP - INTERVAL '1 second','draft')");
     vi.mocked(generator.generateStructured).mockResolvedValueOnce({ provider: "deepseek", model: "test", usage: { inputTokens: 1000, outputTokens: 2000, totalTokens: 3000 }, latencyMs: 1, output: [
       { title: "one", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "two", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "three", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }
     ] });
@@ -348,6 +352,22 @@ describe("content planning workflow", () => {
     expect((await pool.query("SELECT price_version_id,currency,input_unit_price,output_unit_price,input_cost,output_cost,total_cost FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toEqual([{
       price_version_id: null, currency: null, input_unit_price: null, output_unit_price: null, input_cost: null, output_cost: null, total_cost: null
     }]);
+  });
+
+  it("rejects a partial priced snapshot rather than accepting unknown cost fields", async () => {
+    const { taskId } = await seedDraftCopy();
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('price-current','deepseek','test',8,32,CURRENT_TIMESTAMP - INTERVAL '1 minute','published')");
+    await expect(pool.query("INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,price_version_id,currency) VALUES('partial-priced',$1,'topics','','deepseek','test','content-topic-v1','[]','succeeded','price-current','CNY')", [taskId])).rejects.toThrow();
+  });
+
+  it("rounds individual fractional CNY costs before summing the frozen total", async () => {
+    await pool.query("INSERT INTO model_token_price_versions(id,provider,model,input_cny_per_million_tokens,output_cny_per_million_tokens,effective_from,status) VALUES('fractional','deepseek','test',0.333333,0.333333,CURRENT_TIMESTAMP - INTERVAL '1 minute','published')");
+    vi.mocked(generator.generateStructured).mockResolvedValueOnce({ provider: "deepseek", model: "test", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, latencyMs: 1, output: [
+      { title: "one", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "two", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }, { title: "three", angle: "a", productReference: "p", goalReference: "g", commercialLevel: 1 }
+    ] });
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json();
+    expect((await app.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` })).statusCode).toBe(201);
+    expect((await pool.query("SELECT input_cost,output_cost,total_cost FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toEqual([{ input_cost: 0, output_cost: 0, total_cost: 0 }]);
   });
 
   it("does not recalculate an earlier run when a later price version is published", async () => {

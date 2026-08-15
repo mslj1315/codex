@@ -19,11 +19,16 @@ describe("runMigrations", () => {
     expect(sql).toContain("output_cny_per_million_tokens NUMERIC");
     expect(sql).toContain("CHECK (input_cny_per_million_tokens >= 0)");
     expect(sql).toContain("CHECK (output_cny_per_million_tokens >= 0)");
+    expect(sql).toContain("status IN ('draft', 'published', 'retired')");
+    expect(sql).toContain("effective_to TIMESTAMPTZ");
     expect(sql).toContain("ALTER TABLE content_task_generation_runs");
     expect(sql).toContain("price_version_id");
     expect(sql).toContain("total_cost NUMERIC");
     expect(sql).toContain("model token price history is immutable");
     expect(sql).toContain("CREATE TRIGGER model_token_price_versions_append_only");
+    expect(sql).toContain("IF OLD.status = 'draft' THEN");
+    expect(sql).toContain("OLD.status = 'published' AND NEW.status = 'retired'");
+    expect(sql).toContain("currency = 'CNY' AND input_unit_price IS NOT NULL AND output_unit_price IS NOT NULL AND input_cost IS NOT NULL AND output_cost IS NOT NULL AND total_cost IS NOT NULL");
   });
   it("declares and executes the customer content task queue index migration", async () => {
     const id = "027_content_task_customer_queue_index.sql";

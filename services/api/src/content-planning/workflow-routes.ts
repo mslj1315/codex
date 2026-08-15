@@ -253,7 +253,7 @@ async function recordRun(client: PoolClient, item: Row, kind: GenerationKind, su
     return;
   }
   await client.query(
-    "INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms,failure_code,price_version_id,currency,input_unit_price,output_unit_price,input_cost,output_cost,total_cost) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'CNY',$14::numeric,$15::numeric,($16::numeric * $14::numeric / 1000000)::numeric(18,6),($17::numeric * $15::numeric / 1000000)::numeric(18,6),(($16::numeric * $14::numeric / 1000000) + ($17::numeric * $15::numeric / 1000000))::numeric(18,6))",
+    "INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms,failure_code,price_version_id,currency,input_unit_price,output_unit_price,input_cost,output_cost,total_cost) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::integer,$12,$13,'CNY',$14::numeric,$15::numeric,input_cost,output_cost,(input_cost + output_cost)::numeric(18,6) FROM (SELECT ROUND($16::numeric * $14::numeric / 1000000, 6)::numeric(18,6) AS input_cost, ROUND($17::numeric * $15::numeric / 1000000, 6)::numeric(18,6) AS output_cost) AS costs",
     [...fields, price.id, price.input_cny_per_million_tokens, price.output_cny_per_million_tokens, String(output.usage.inputTokens), String(output.usage.outputTokens)]
   );
 }
