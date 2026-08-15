@@ -57,7 +57,8 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
     val state: StateFlow<ContentCreationState> = mutableState.asStateFlow()
 
     fun load(storeId: String) = perform {
-        mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId), usageSummary = repository.loadUsageSummary(storeId), loaded = true)
+        mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId), loaded = true)
+        refreshUsageSummary(storeId)
     }
 
     fun restore(storeId: String, taskId: String) = perform {
@@ -91,6 +92,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
             if (topics.size != 3) throw ContentCreationRequestException("Generated topic options are invalid")
             refreshQueue(storeId)
             restoreTask(storeId, taskId)
+            refreshUsageSummary(storeId)
             mutableState.value = mutableState.value.copy(creationSheetOpen = false, pendingTopicGenerationTaskId = null)
         } catch (error: CancellationException) {
             throw error
@@ -103,6 +105,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
     fun generateTopics(storeId: String) = withTask { task ->
         repository.generateTopics(storeId, task.id)
         restoreTask(storeId, task.id)
+        refreshUsageSummary(storeId)
     }
 
     fun selectTopic(topicId: String) {
@@ -121,6 +124,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
         val topicId = mutableState.value.selectedTopicId ?: return@withTask
         repository.generateCopies(storeId, task.id, topicId)
         restoreTask(storeId, task.id)
+        refreshUsageSummary(storeId)
     }
 
     fun selectCopy(copyId: String) {
@@ -183,6 +187,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
                 }
             }
         }
+        refreshUsageSummary(storeId)
     }
 
     fun generateShots(storeId: String) = withTask { task ->
@@ -190,6 +195,7 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
         repository.generateShots(storeId, task.id)
         refreshQueue(storeId)
         restoreTask(storeId, task.id)
+        refreshUsageSummary(storeId)
     }
 
     private fun withTask(block: suspend (ContentTaskDetail) -> Unit) = perform {
@@ -258,6 +264,16 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
 
     private suspend fun refreshQueue(storeId: String) {
         mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId))
+    }
+
+    private suspend fun refreshUsageSummary(storeId: String) {
+        try {
+            mutableState.value = mutableState.value.copy(usageSummary = repository.loadUsageSummary(storeId))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Usage is supplemental; retain the prior successful aggregate and keep content work usable.
+        }
     }
 
     private suspend fun recoverPendingTask(storeId: String, taskId: String) {

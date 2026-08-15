@@ -35,6 +35,50 @@ class ContentCreationViewModelTest {
         assertTrue(viewModel.state.value.loaded)
     }
 
+    @Test fun usageSummaryFailureDoesNotBlockTheLoadedQueueOrNewAction() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository(detail(copies = emptyList())).apply { usageFailure = IllegalStateException("private usage failure") }
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.load("store")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.loaded)
+        assertEquals(1, viewModel.state.value.tasks.size)
+        assertNull(viewModel.state.value.usageSummary)
+        assertNull(viewModel.state.value.error)
+        viewModel.openCreationSheet()
+        assertTrue(viewModel.state.value.creationSheetOpen)
+    }
+
+    @Test fun successfulTopicGenerationRefreshesUsageButItsFailureDoesNotBreakTheWorkflow() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository().apply {
+            generatedTopics = listOf(topic("topic-1"), topic("topic-2"), topic("topic-3"))
+            usageFailure = IllegalStateException("private usage failure")
+        }
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+
+        assertEquals(1, repository.usageCalls)
+        assertEquals(ContentCreationStage.TopicSelection, viewModel.state.value.stage)
+        assertNull(viewModel.state.value.error)
+    }
+
+    @Test fun successfulTopicGenerationStoresTheRefreshedUsageTotals() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository().apply {
+            generatedTopics = listOf(topic("topic-1"), topic("topic-2"), topic("topic-3"))
+            usageSummary = CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 12, 8, 20, 0.02, 2, 2, 0)
+        }
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+
+        assertEquals(20, viewModel.state.value.usageSummary?.totalTokens)
+        assertEquals(0.02, viewModel.state.value.usageSummary?.estimatedCostCny)
+    }
+
     @Test fun createTaskRestoresItsDetailFromServer() = runTest(dispatcher) {
         val repository = FakeContentCreationRepository()
         val viewModel = ContentCreationViewModel(repository)
@@ -385,6 +429,9 @@ private class FakeContentCreationRepository(
     var updateCalls = 0
     var topicGenerationCalls = 0
     var listCalls = 0
+    var usageCalls = 0
+    var usageFailure: Throwable? = null
+    var usageSummary = CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 0, 0, 0, 0.0, 0, 0, 0)
     var generatedTopics = emptyList<ContentTopic>()
     var createdTaskId = "task"
     val topicFailures = ArrayDeque<Throwable>()
@@ -402,7 +449,11 @@ private class FakeContentCreationRepository(
         if (currentDetail.topics.isEmpty() && currentDetail.copies.isEmpty()) return emptyList()
         return listOf(ContentTaskSummary("task", currentDetail.copies.firstOrNull { it.status == "confirmed" }?.let { "confirmed" } ?: "draft", currentDetail.copies.firstOrNull { it.status == "confirmed" }?.id, "now"))
     }
-    override suspend fun loadUsageSummary(storeId: String) = CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 0, 0, 0, 0.0, 0, 0, 0)
+    override suspend fun loadUsageSummary(storeId: String): CustomerUsageSummary {
+        usageCalls++
+        usageFailure?.let { throw it }
+        return usageSummary
+    }
     override suspend fun loadTask(storeId: String, taskId: String): ContentTaskDetail { loadCalls++; return currentDetail }
     override suspend fun createTask(storeId: String, request: CreateContentTaskRequest): CreatedContentTask {
         createCalls++

@@ -282,7 +282,7 @@ function currentMonthRange(now = new Date()) {
 function customerUsageSummaryJson(rows: Row[], start: Date, end: Date) {
   let inputTokens = 0; let outputTokens = 0; let totalTokens = 0; let estimatedCostCny = 0; let unpricedCallCount = 0;
   for (const row of rows) {
-    const usage = JSON.parse(String(row.usage_json)) as Row;
+    const usage = safeUsage(row.usage_json);
     inputTokens += nonnegativeInteger(usage.inputTokens);
     outputTokens += nonnegativeInteger(usage.outputTokens);
     totalTokens += nonnegativeInteger(usage.totalTokens);
@@ -290,6 +290,12 @@ function customerUsageSummaryJson(rows: Row[], start: Date, end: Date) {
     else estimatedCostCny += nonnegativeNumber(row.total_cost);
   }
   return { periodStart: start.toISOString(), periodEnd: end.toISOString(), inputTokens, outputTokens, totalTokens, estimatedCostCny: Number(estimatedCostCny.toFixed(6)), callCount: rows.length, successCount: rows.length, unpricedCallCount };
+}
+function safeUsage(value: unknown): Row {
+  try {
+    const parsed: unknown = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Row : {};
+  } catch { return {}; }
 }
 function nonnegativeInteger(value: unknown) { return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : 0; }
 function nonnegativeNumber(value: unknown) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0; }

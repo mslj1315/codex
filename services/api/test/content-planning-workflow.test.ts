@@ -126,6 +126,17 @@ describe("content planning workflow", () => {
     await privilegedApp.close();
   });
 
+  it("treats corrupt historical usage payloads as zero without exposing or failing", async () => {
+    const taskId = (await seedReadableTask()).taskId;
+    await pool.query("INSERT INTO content_task_generation_runs(id,task_id,kind,subject_id,provider,model,prompt_version,template_snapshot_json,status,usage_json,latency_ms) VALUES($1,$2,'topics','subject','private-provider','private-model','private-prompt','{}','succeeded',$3,1),($4,$2,'copies','subject','private-provider','private-model','private-prompt','{}','succeeded',NULL,1)", [randomUUID(), taskId, "not json", randomUUID()]);
+
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks/usage-summary" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostCny: 0, callCount: 2, successCount: 2, unpricedCallCount: 2 });
+    expect(JSON.stringify(response.json())).not.toMatch(/private-provider|private-model|private-prompt|not json/i);
+  });
+
   it("returns an actor-scoped task detail with ordered editable state and no internal fields", async () => {
     const seeded = await seedReadableTask();
 
