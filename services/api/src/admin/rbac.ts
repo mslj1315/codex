@@ -32,7 +32,7 @@ export class InternalPermissionRepository {
     const roles = await this.database.query<{ code: string }>(
       `SELECT role.code FROM internal_account_roles AS assignment
        JOIN internal_roles AS role ON role.id = assignment.role_id
-       WHERE assignment.account_id = $1 AND assignment.enabled = true AND role.enabled = true`,
+       WHERE assignment.account_id = $1 AND assignment.enabled = true`,
       [accountId]
     );
     if (roles.rows.some((role) => role.code === "super_admin")) return new Set(INTERNAL_PERMISSION_CODES);
@@ -49,8 +49,7 @@ export class InternalPermissionRepository {
   async hasEnabledInternalRole(accountId: string): Promise<boolean> {
     const result = await this.database.query(
       `SELECT 1 FROM internal_account_roles AS assignment
-       JOIN internal_roles AS role ON role.id = assignment.role_id
-       WHERE assignment.account_id = $1 AND assignment.enabled = true AND role.enabled = true`,
+       WHERE assignment.account_id = $1 AND assignment.enabled = true`,
       [accountId]
     );
     return (result.rowCount ?? 0) > 0;

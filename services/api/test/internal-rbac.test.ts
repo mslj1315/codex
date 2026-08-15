@@ -85,6 +85,23 @@ describe("internal RBAC", () => {
     expect(denied.json()).toEqual({ error: "Forbidden" });
   });
 
+  test("keeps a bound super administrator effective while disabled ordinary roles lose access", async () => {
+    const { app, database, superAdminToken, customerToken } = await authenticatedRbacApp();
+    await database.query("INSERT INTO internal_roles (id, code, display_name) VALUES ('internal-role-reader', 'reader', 'Reader')");
+    await database.query("INSERT INTO internal_role_permissions (role_id, permission_code) VALUES ('internal-role-reader', 'model_pricing.read')");
+    await database.query("INSERT INTO internal_account_roles (account_id, role_id) VALUES ('account_customer', 'internal-role-reader')");
+
+    const ordinaryBeforeDisable = await app.inject({ method: "GET", url: "/v1/auth/me/internal-permissions", headers: bearer(customerToken) });
+    await database.query("UPDATE internal_roles SET enabled = false WHERE id = 'internal-role-reader'");
+    const ordinaryAfterDisable = await app.inject({ method: "GET", url: "/v1/auth/me/internal-permissions", headers: bearer(customerToken) });
+    await database.query("UPDATE internal_roles SET enabled = false WHERE id = 'internal-role-super-admin'");
+    const superAdminAfterDisable = await app.inject({ method: "GET", url: "/v1/auth/me/internal-permissions", headers: bearer(superAdminToken) });
+
+    expect(ordinaryBeforeDisable.json()).toMatchObject({ permissions: ["model_pricing.read"] });
+    expect(ordinaryAfterDisable.statusCode).toBe(403);
+    expect(superAdminAfterDisable.json()).toMatchObject({ permissions: [...INTERNAL_PERMISSION_CODES].sort() });
+  });
+
   test("rejects an internal account before reading a customer resource even when it has store membership", async () => {
     const { app, superAdminToken } = await authenticatedRbacApp();
 
@@ -162,7 +179,7 @@ async function authenticatedRbacApp() {
     if (text.includes("FROM store_memberships")) customerMembershipQueries++;
     return query(text, ...rest as []);
   };
-  return { app, superAdminToken, customerToken, customerMembershipQueryCount: () => customerMembershipQueries };
+  return { app, database, superAdminToken, customerToken, customerMembershipQueryCount: () => customerMembershipQueries };
 }
 
 function bearer(accessToken: string) { return { authorization: `Bearer ${accessToken}` }; }
