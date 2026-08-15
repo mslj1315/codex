@@ -64,10 +64,10 @@ describe("content planning workflow", () => {
     const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks" });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual([
+    expect(response.json()).toEqual({ tasks: [
       expect.objectContaining({ id: seeded.taskId, status: "copy_confirmed", confirmedCopyId: seeded.confirmedCopyId, createdAt: expect.any(String) }),
       { id: "older-task", status: "topic_draft", confirmedCopyId: null, createdAt: "2020-01-01T00:00:00.000Z" }
-    ]);
+    ] });
     expect(JSON.stringify(response.json())).not.toMatch(/prompt|token|objectKey|url|model|audit|snapshot|template|media/i);
   });
 
@@ -85,6 +85,18 @@ describe("content planning workflow", () => {
       reviewFindings: [{ copyId: seeded.draftCopyId, pattern: "needs correction", severity: "block", guidance: "make this factual", source: "semantic" }],
       shotList: { id: seeded.shotListId, copyId: seeded.confirmedCopyId, status: "draft", shots: [{ order: 1, shot: "wide", durationSeconds: 3 }] }
     });
+    expect(JSON.stringify(response.json())).not.toMatch(/prompt|token|objectKey|url|model|audit|snapshot|template|media/i);
+  });
+
+  it("returns a stable null shot-list field when the confirmed copy has no shot list", async () => {
+    const seeded = await seedReadableTask();
+    await pool.query("DELETE FROM content_task_shot_lists WHERE id=$1", [seeded.shotListId]);
+
+    const response = await app.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: seeded.taskId, status: "copy_confirmed", shotList: null });
+    expect(Object.keys(response.json())).toEqual(["id", "status", "topics", "copies", "reviewFindings", "shotList"]);
     expect(JSON.stringify(response.json())).not.toMatch(/prompt|token|objectKey|url|model|audit|snapshot|template|media/i);
   });
 
@@ -131,7 +143,7 @@ describe("content planning workflow", () => {
       await privilegedApp.close();
     }
     const otherCustomerApp = buildServer({ database: pool, trustedContextResolver: async () => ({ ...scope, actorId: "other-actor" }), modelGenerationService: generator });
-    expect((await otherCustomerApp.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks" })).json()).toEqual([]);
+    expect((await otherCustomerApp.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks" })).json()).toEqual({ tasks: [] });
     expect((await otherCustomerApp.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` })).statusCode).toBe(404);
     await otherCustomerApp.close();
   });

@@ -11,8 +11,9 @@ const migration = {
 
 describe("runMigrations", () => {
   it("declares and executes the customer content task queue index migration", async () => {
-    const id = "025_content_task_customer_queue_index.sql";
+    const id = "027_content_task_customer_queue_index.sql";
     const sql = await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8");
+    await expect(readFile(new URL("../migrations/025_content_task_customer_queue_index.sql", import.meta.url), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(sql.trim()).toBe("CREATE INDEX content_tasks_customer_queue_idx ON content_tasks(enterprise_id, store_id, actor_id, created_at DESC);");
 
     const memory = newDb({ noAstCoverageCheck: true });

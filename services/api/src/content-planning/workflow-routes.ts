@@ -43,7 +43,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
   app.get("/v1/stores/:storeId/content-tasks", async request => {
     const context = scoped(request);
     const tasks = await database.query<Row>("SELECT id,status,confirmed_copy_id,created_at FROM content_tasks WHERE enterprise_id=$1 AND store_id=$2 AND actor_id=$3 ORDER BY created_at DESC", [context.enterpriseId, context.storeId, context.actorId]);
-    return tasks.rows.map(taskSummaryJson);
+    return { tasks: tasks.rows.map(taskSummaryJson) };
   });
 
   app.get("/v1/stores/:storeId/content-tasks/:id", async request => {
@@ -62,7 +62,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
       topics: topics.rows.map(topicJson),
       copies: copies.rows.map(copyJson),
       reviewFindings: latestReviewFindings(reviews.rows),
-      ...(shots.rows[0] ? { shotList: shotsJson(shots.rows[0]) } : {})
+      shotList: shots.rows[0] ? shotsJson(shots.rows[0]) : null
     };
   });
 
