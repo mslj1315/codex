@@ -14,7 +14,7 @@ describe("storyboard editing projects", () => {
 
   beforeEach(async () => {
     const memory = newDb({ noAstCoverageCheck: true }); memory.public.registerFunction({ name: "jsonb_typeof", args: [DataType.jsonb], returns: DataType.text, implementation: value => Array.isArray(value) ? "array" : typeof value === "object" && value !== null ? "object" : typeof value }); const { Pool } = memory.adapters.createPg(); database = new Pool();
-    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql"]) {
+    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql", "024_storyboard_render_artifacts.sql", "025_storyboard_render_leases.sql", "026_storyboard_render_delivery.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"); await database.query(sql.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     }
     ({ taskId, shotListId, assetId } = await seed(database)); storage = new InMemoryVideoStorage();

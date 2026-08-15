@@ -55,11 +55,15 @@ export class RenderRepository {
     await this.database.query("INSERT INTO storyboard_render_output_deletions(id,render_job_id,enterprise_id,store_id,actor_id,reason) VALUES($1,$2,$3,$4,$5,'customer_deleted')", [randomUUID(), input.jobId, context.enterpriseId, context.storeId, context.actorId]);
   }
   async delivery(context: TrustedContext, input: { taskId: string; shotListId: string; projectId: string; jobId: string; artifactId?: string }) {
-    const found = await this.database.query<Row>("SELECT j.* FROM storyboard_render_jobs j JOIN storyboard_projects p ON p.id=j.project_id WHERE j.id=$1 AND j.project_id=$2 AND j.enterprise_id=$3 AND j.store_id=$4 AND j.task_id=$5 AND j.shot_list_id=$6 AND p.actor_id=$7", [input.jobId, input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
+    const owner = await this.database.query<Row>("SELECT id FROM storyboard_projects WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND task_id=$4 AND shot_list_id=$5 AND actor_id=$6", [input.projectId, context.enterpriseId, context.storeId, input.taskId, input.shotListId, context.actorId]);
+    if (!owner.rowCount) throw new RenderError("Render output is not available", 404);
+    // The render id is globally unique. Compare persisted scope fields here so
+    // delivery remains fail-closed in pg-mem and production PostgreSQL alike.
+    const found = await this.database.query<Row>("SELECT * FROM storyboard_render_jobs WHERE id=$1", [input.jobId]);
     const row = found.rows[0];
-    if (!row || row.state !== "succeeded" || row.deleted_at || !row.output_expires_at || new Date(String(row.output_expires_at)) <= new Date()) throw new RenderError("Render output is not available", 404);
-    const artifact = input.artifactId ? (await this.database.query<Row>("SELECT object_key,kind FROM storyboard_render_artifacts WHERE id=$1 AND render_job_id=$2 AND kind='cover' AND deleted_at IS NULL", [input.artifactId, input.jobId])).rows[0] : undefined;
-    if (input.artifactId && !artifact) throw new RenderError("Render output is not available", 404);
+    if (!row || String(row.project_id) !== input.projectId || String(row.enterprise_id) !== context.enterpriseId || String(row.store_id) !== context.storeId || String(row.task_id) !== input.taskId || String(row.shot_list_id) !== input.shotListId || row.state !== "succeeded" || row.deleted_at || !row.output_expires_at || new Date(String(row.output_expires_at)) <= new Date()) throw new RenderError("Render output is not available", 404);
+    const artifact = input.artifactId ? (await this.database.query<Row>("SELECT * FROM storyboard_render_artifacts WHERE id=$1", [input.artifactId])).rows[0] : undefined;
+    if (input.artifactId && (!artifact || String(artifact.render_job_id) !== input.jobId || artifact.kind !== "cover" || artifact.deleted_at)) throw new RenderError("Render output is not available", 404);
     const key = input.artifactId ? artifact!.object_key : row.output_object_key;
     if (typeof key !== "string" || !key) throw new RenderError("Render output is not available", 404);
     return { objectKey: key, contentType: input.artifactId ? "image/jpeg" as const : "video/mp4" as const };

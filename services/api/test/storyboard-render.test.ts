@@ -162,6 +162,7 @@ describe("storyboard render queue", () => {
     const id = created.json().id;
     await database.query("UPDATE storyboard_render_jobs SET state='succeeded',output_object_key=$2,output_expires_at='2099-01-01T00:00:00.000Z',cover_candidates_json='[{\"positionSeconds\":1},{\"positionSeconds\":2},{\"positionSeconds\":3}]' WHERE id=$1", [id, `storyboard-render-output/${id}.mp4`]);
     await database.query("INSERT INTO storyboard_render_artifacts(id,render_job_id,object_key,kind) VALUES('output-artifact',$1,$2,'video'),('cover-one',$1,$3,'cover'),('cover-two',$1,$4,'cover'),('cover-three',$1,$5,'cover')", [id, `storyboard-render-output/${id}.mp4`, `storyboard-render-output/${id}-cover-1.jpg`, `storyboard-render-output/${id}-cover-2.jpg`, `storyboard-render-output/${id}-cover-3.jpg`]);
+    expect((await database.query("SELECT id FROM storyboard_render_jobs WHERE id=$1", [id])).rowCount).toBe(1);
     await storage.putProtectedFile(`storyboard-render-output/${id}.mp4`, "fixture.mp4", { contentType: "video/mp4", expiresAt: new Date() });
     await storage.putProtectedFile(`storyboard-render-output/${id}-cover-1.jpg`, "fixture.jpg", { contentType: "image/jpeg", expiresAt: new Date() });
     const output = await app.inject({ method: "GET", url: `${path()}/projects/${projectId}/renders/${id}/output` });
