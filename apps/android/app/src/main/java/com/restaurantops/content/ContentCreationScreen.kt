@@ -27,6 +27,38 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
+enum class ContentCreationAccessAction { ReturnToLogin }
+
+enum class ContentCreationScreenMode { Queue, Creating, TopicSelection, ThreeCopies, ReviewBlocked, Confirmed, StoryboardHandoff }
+
+fun contentCreationScreenMode(state: ContentCreationState): ContentCreationScreenMode = when {
+    state.creationSheetOpen -> ContentCreationScreenMode.Creating
+    state.stage == ContentCreationStage.TopicSelection -> ContentCreationScreenMode.TopicSelection
+    state.stage == ContentCreationStage.CopyEditing -> ContentCreationScreenMode.ThreeCopies
+    state.stage == ContentCreationStage.RevisionRequired -> ContentCreationScreenMode.ReviewBlocked
+    state.stage == ContentCreationStage.Confirmed -> ContentCreationScreenMode.Confirmed
+    state.stage == ContentCreationStage.StoryboardReady -> ContentCreationScreenMode.StoryboardHandoff
+    else -> ContentCreationScreenMode.Queue
+}
+
+fun contentCreationAccessActions(hasAuthenticatedClient: Boolean): List<ContentCreationAccessAction> =
+    if (hasAuthenticatedClient) emptyList() else listOf(ContentCreationAccessAction.ReturnToLogin)
+
+@Composable
+fun RemoteContentCreationRequiredScreen(
+    onReturnToLogin: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("内容创作", style = MaterialTheme.typography.titleLarge)
+        Text("请登录客户账号后使用内容创作。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Button(onClick = onReturnToLogin) { Text("返回登录") }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContentCreationScreen(

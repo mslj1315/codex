@@ -143,6 +143,7 @@ private fun AuthenticatedAppRoot(
             onReturnToOnboarding = sessionViewModel::logout,
             storeId = state.store.storeId,
             authenticatedApiClient = authenticatedApiClient,
+            onReturnToLogin = sessionViewModel::logout,
             onLogout = sessionViewModel::logout,
             onChooseAnotherStore = sessionViewModel::chooseAnotherStore
         )
@@ -161,7 +162,8 @@ private fun LocalDemoRoot(
         WorkspaceRoot(
             viewModel = workspaceViewModel,
             onReturnToOnboarding = onExit,
-            storeId = "store_demo"
+            storeId = "store_demo",
+            onReturnToLogin = onExit
         )
     } else {
         StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { isInWorkspace = true })
