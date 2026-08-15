@@ -36,4 +36,9 @@ class StoryboardVideoModelsTest {
         assertEquals("Final video expires after 180 days.", renderExpiryMessage("final"))
         assertFalse(StoryboardCustomerActions.entries.any { it.name == "Publish" })
     }
+
+    @Test fun finalStoryboardDoesNotNeedAnotherFinalization() {
+        assertTrue(StoryboardDraft("project", 2, emptyList(), status = "final").isFinal())
+        assertFalse(StoryboardDraft("project", 1, emptyList(), status = "draft").isFinal())
+    }
 }

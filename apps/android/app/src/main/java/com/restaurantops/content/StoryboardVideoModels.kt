@@ -25,8 +25,9 @@ data class StoryboardSlot(
     val trimStartSeconds: Int = 0, val trimEndSeconds: Int = 0, val muted: Boolean = false,
     val subtitleEnabled: Boolean = true, val subtitleText: String = ""
 )
-data class StoryboardDraft(val projectId: String, val version: Int, val slots: List<StoryboardSlot>, val coverAssetId: String? = null, val coverFrameOffsetSeconds: Int? = null, val coverTitle: String = "") {
+data class StoryboardDraft(val projectId: String, val version: Int, val slots: List<StoryboardSlot>, val coverAssetId: String? = null, val coverFrameOffsetSeconds: Int? = null, val coverTitle: String = "", val status: String = "draft") {
     fun isRenderable() = slots.isNotEmpty() && slots.all { it.assetId != null && it.trimEndSeconds > it.trimStartSeconds }
+    fun isFinal() = status == "final"
 }
 enum class RenderState { Queued, Processing, Succeeded, Failed, Cancelled }
 data class StoryboardRender(val id: String, val kind: String, val state: RenderState, val expiresAt: String? = null, val coverCandidates: List<String> = emptyList()) {
