@@ -44,6 +44,67 @@ describe("content planning workflow", () => {
     return { taskId, topicId, copyId };
   }
 
+  async function seedReadableTask() {
+    const taskId = randomUUID(); const firstTopicId = randomUUID(); const secondTopicId = randomUUID(); const draftCopyId = randomUUID(); const confirmedCopyId = randomUUID(); const shotListId = randomUUID();
+    await pool.query("DROP INDEX content_task_one_confirmed_copy");
+    await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,inspiration,persona,content_type,style,commercial_level,status,confirmed_copy_id) VALUES($1,'ent_demo','store_demo','actor_demo',1,'{\"token\":\"hidden\"}','{\"prompt\":\"hidden\"}','[{\"contents\":\"hidden\"}]','hidden prompt','owner','story','sincere',1,'copy_confirmed',$2)", [taskId, confirmedCopyId]);
+    await pool.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$3,1,'first topic','angle one','product one','goal one',1),($2,$3,2,'second topic','angle two','product two','goal two',2)", [firstTopicId, secondTopicId, taskId]);
+    await pool.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level,version,status) VALUES($1,$2,$3,2,'confirmed copy','confirmed body','product','product one','goal one',1,1,'confirmed')", [confirmedCopyId, taskId, firstTopicId]);
+    await pool.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level,version,status) VALUES($1,$2,$3,1,'draft copy','draft body','story','product two','goal two',2,2,'draft')", [draftCopyId, taskId, secondTopicId]);
+    await pool.query("INSERT INTO content_task_copy_reviews(id,task_id,copy_id,copy_version,content_digest,rule_snapshot_json,provider,model,prompt_version,result_json,approved) VALUES($1,$2,$3,2,'digest','[{\"pattern\":\"hidden\"}]','hidden-provider','hidden-model','hidden-prompt',$4,false)", [randomUUID(), taskId, draftCopyId, JSON.stringify({ approved: false, findings: [{ pattern: "needs correction", severity: "block", guidance: "make this factual", source: "semantic" }] })]);
+    await pool.query("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json,status) VALUES($1,$2,$3,$4,'draft')", [shotListId, taskId, confirmedCopyId, JSON.stringify([{ order: 1, shot: "wide", durationSeconds: 3 }])]);
+    return { taskId, firstTopicId, secondTopicId, draftCopyId, confirmedCopyId, shotListId };
+  }
+
+  it("lists only the current customer's task summaries in newest-first order", async () => {
+    const seeded = await seedReadableTask();
+    await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status,created_at) VALUES('older-task','ent_demo','store_demo','actor_demo',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft','2020-01-01T00:00:00.000Z')");
+    await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status) VALUES('other-task','ent_demo','store_demo','other-actor',1,'{}','{}','[]','owner','story','sincere',1,'topic_draft')");
+
+    const response = await app.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([
+      expect.objectContaining({ id: seeded.taskId, status: "copy_confirmed", confirmedCopyId: seeded.confirmedCopyId, createdAt: expect.any(String) }),
+      { id: "older-task", status: "topic_draft", confirmedCopyId: null, createdAt: "2020-01-01T00:00:00.000Z" }
+    ]);
+    expect(JSON.stringify(response.json())).not.toMatch(/prompt|token|objectKey|url|model|audit|snapshot|template|media/i);
+  });
+
+  it("returns an actor-scoped task detail with ordered editable state and no internal fields", async () => {
+    const seeded = await seedReadableTask();
+
+    const response = await app.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: seeded.taskId,
+      status: "copy_confirmed",
+      topics: [{ id: seeded.firstTopicId, title: "first topic", angle: "angle one", productReference: "product one", goalReference: "goal one", commercialLevel: 1 }, { id: seeded.secondTopicId, title: "second topic" }],
+      copies: [{ id: seeded.confirmedCopyId, title: "confirmed copy", version: 1, status: "confirmed" }, { id: seeded.draftCopyId, title: "draft copy", body: "draft body", strategy: "story", version: 2, status: "draft" }],
+      reviewFindings: [{ copyId: seeded.draftCopyId, pattern: "needs correction", severity: "block", guidance: "make this factual", source: "semantic" }],
+      shotList: { id: seeded.shotListId, copyId: seeded.confirmedCopyId, status: "draft", shots: [{ order: 1, shot: "wide", durationSeconds: 3 }] }
+    });
+    expect(JSON.stringify(response.json())).not.toMatch(/prompt|token|objectKey|url|model|audit|snapshot|template|media/i);
+  });
+
+  it("rejects service roles before content-task read queries and hides foreign customer tasks", async () => {
+    const seeded = await seedReadableTask();
+    for (const actorRole of ["provider", "operator_editor", "operator_reviewer"] as const) {
+      const privilegedApp = buildServer({ database: pool, trustedContextResolver: async () => ({ ...scope, actorRole }), modelGenerationService: generator });
+      const querySpy = vi.spyOn(pool, "query");
+      expect((await privilegedApp.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks" })).statusCode).toBe(403);
+      expect((await privilegedApp.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks/not-a-valid-id" })).statusCode).toBe(403);
+      expect(querySpy).not.toHaveBeenCalled();
+      querySpy.mockRestore();
+      await privilegedApp.close();
+    }
+    const otherCustomerApp = buildServer({ database: pool, trustedContextResolver: async () => ({ ...scope, actorId: "other-actor" }), modelGenerationService: generator });
+    expect((await otherCustomerApp.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks" })).json()).toEqual([]);
+    expect((await otherCustomerApp.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` })).statusCode).toBe(404);
+    await otherCustomerApp.close();
+  });
+
   it("locks profile and stage snapshots, then generates exactly three topics", async () => {
     const task = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { inspiration: "老板每天凌晨熬汤", persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } });
     expect(task.statusCode).toBe(201);

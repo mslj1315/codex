@@ -40,6 +40,32 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     return found.rows[0];
   };
 
+  app.get("/v1/stores/:storeId/content-tasks", async request => {
+    const context = scoped(request);
+    const tasks = await database.query<Row>("SELECT id,status,confirmed_copy_id,created_at FROM content_tasks WHERE enterprise_id=$1 AND store_id=$2 AND actor_id=$3 ORDER BY created_at DESC", [context.enterpriseId, context.storeId, context.actorId]);
+    return tasks.rows.map(taskSummaryJson);
+  });
+
+  app.get("/v1/stores/:storeId/content-tasks/:id", async request => {
+    const context = scoped(request);
+    const id = String((request.params as Row).id ?? "");
+    const tasks = await database.query<Row>("SELECT id,status,confirmed_copy_id FROM content_tasks WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND actor_id=$4", [id, context.enterpriseId, context.storeId, context.actorId]);
+    if (!tasks.rowCount) throw new WorkflowError("Content task not found", 404);
+    const item = tasks.rows[0];
+    const topics = await database.query<Row>("SELECT id,title,angle,product_reference,goal_reference,commercial_level FROM content_task_topics WHERE task_id=$1 ORDER BY position", [item.id]);
+    const copies = await database.query<Row>("SELECT c.id,c.title,c.body,c.strategy,c.product_reference,c.goal_reference,c.commercial_level,c.version,c.status FROM content_task_copies c JOIN content_task_topics t ON t.id=c.topic_id WHERE c.task_id=$1 ORDER BY t.position,c.position", [item.id]);
+    const reviews = await database.query<Row>("SELECT r.copy_id,r.result_json FROM content_task_copy_reviews r JOIN content_task_copies c ON c.id=r.copy_id WHERE r.task_id=$1 AND c.task_id=$1 AND c.status='draft' AND r.copy_version=c.version AND r.approved=false ORDER BY c.position,r.created_at DESC", [item.id]);
+    const shots = item.confirmed_copy_id ? await database.query<Row>("SELECT id,copy_id,status,shots_json FROM content_task_shot_lists WHERE task_id=$1 AND copy_id=$2", [item.id, item.confirmed_copy_id]) : { rows: [] as Row[] };
+    return {
+      id: item.id,
+      status: item.status,
+      topics: topics.rows.map(topicJson),
+      copies: copies.rows.map(copyJson),
+      reviewFindings: reviews.rows.flatMap(reviewFindingsJson),
+      ...(shots.rows[0] ? { shotList: shotsJson(shots.rows[0]) } : {})
+    };
+  });
+
   app.post("/v1/stores/:storeId/content-tasks", async (request, reply) => {
     const context = scoped(request); const input = body(request);
     const required = ["persona", "contentType", "style"];
@@ -227,7 +253,9 @@ function level(item: Row): 0 | 1 | 2 | 3 { return Number(item.commercial_level) 
 function optional(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
 function generationInput(item: Row) { return { profile: JSON.parse(String(item.profile_snapshot_json)), stage: JSON.parse(String(item.stage_snapshot_json)), templates: JSON.parse(String(item.template_snapshot_json)), inspiration: item.inspiration }; }
 function taskJson(row: Row) { const stage = JSON.parse(String(row.stage_snapshot_json)); return { id: row.id, profileVersion: Number(row.profile_version), primaryGoal: stage.primary_goal, status: row.status }; }
+function taskSummaryJson(row: Row) { return { id: row.id, status: row.status, confirmedCopyId: row.confirmed_copy_id ?? null, createdAt: new Date(String(row.created_at)).toISOString() }; }
 function topicJson(row: Row) { return { id: row.id, title: row.title, angle: row.angle, productReference: row.product_reference, goalReference: row.goal_reference, commercialLevel: Number(row.commercial_level) }; }
 function copyJson(row: Row) { return { id: row.id, title: row.title, body: row.body, strategy: row.strategy, productReference: row.product_reference, goalReference: row.goal_reference, commercialLevel: Number(row.commercial_level), version: Number(row.version), status: row.status }; }
 function shotsJson(row: Row) { return { id: row.id, copyId: row.copy_id, status: row.status, shots: JSON.parse(String(row.shots_json)) }; }
+function reviewFindingsJson(row: Row) { const result = JSON.parse(String(row.result_json)) as { findings?: unknown }; return Array.isArray(result.findings) ? result.findings.filter(finding => finding && typeof finding === "object" && !Array.isArray(finding)).map(finding => { const item = finding as Row; return { copyId: row.copy_id, pattern: item.pattern, severity: item.severity, guidance: item.guidance, source: item.source }; }) : []; }
 function matchesTemplate(row: Row, profile: Row, input: Row) { const constraints = JSON.parse(String(row.constraints_json)) as Row; return constraints.industryCode === profile.industry_code && constraints.categoryCode === profile.category_code && constraints.persona === input.persona && constraints.contentType === input.contentType && constraints.style === input.style && Number(constraints.commercialLevel) === Number(input.commercialLevel); }
