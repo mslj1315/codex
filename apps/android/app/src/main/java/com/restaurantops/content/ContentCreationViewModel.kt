@@ -55,6 +55,7 @@ data class ContentStoryboardHandoff(val taskId: String, val shotListId: String)
 class ContentCreationViewModel(private val repository: ContentCreationApi) : ViewModel() {
     private val mutableState = MutableStateFlow(ContentCreationState())
     val state: StateFlow<ContentCreationState> = mutableState.asStateFlow()
+    private var usageSummaryRequest = 0L
 
     fun load(storeId: String) = perform {
         mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId), loaded = true)
@@ -266,13 +267,19 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
         mutableState.value = mutableState.value.copy(tasks = repository.listTasks(storeId))
     }
 
-    private suspend fun refreshUsageSummary(storeId: String) {
-        try {
-            mutableState.value = mutableState.value.copy(usageSummary = repository.loadUsageSummary(storeId))
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            // Usage is supplemental; retain the prior successful aggregate and keep content work usable.
+    private fun refreshUsageSummary(storeId: String) {
+        val request = ++usageSummaryRequest
+        viewModelScope.launch {
+            try {
+                val summary = repository.loadUsageSummary(storeId)
+                if (request == usageSummaryRequest) {
+                    mutableState.value = mutableState.value.copy(usageSummary = summary)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // Usage is supplemental; retain the prior successful aggregate and keep content work usable.
+            }
         }
     }
 

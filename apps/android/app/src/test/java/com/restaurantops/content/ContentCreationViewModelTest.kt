@@ -50,6 +50,42 @@ class ContentCreationViewModelTest {
         assertTrue(viewModel.state.value.creationSheetOpen)
     }
 
+    @Test fun pendingUsageSummaryDoesNotKeepTheQueueFinalizingAndAppliesWhenItArrives() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository(detail(copies = emptyList())).apply {
+            usageGate = CompletableDeferred()
+        }
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.load("store")
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.loaded)
+        assertFalse(viewModel.state.value.finalizing)
+        viewModel.openCreationSheet()
+        assertTrue(viewModel.state.value.creationSheetOpen)
+        repository.usageGate!!.complete(CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 7, 3, 10, 0.01, 1, 1, 0))
+        advanceUntilIdle()
+        assertEquals(10, viewModel.state.value.usageSummary?.totalTokens)
+    }
+
+    @Test fun staleUsageSummaryResponseCannotOverwriteTheNewerRequest() = runTest(dispatcher) {
+        val first = CompletableDeferred<CustomerUsageSummary>()
+        val second = CompletableDeferred<CustomerUsageSummary>()
+        val repository = FakeContentCreationRepository().apply { usageGates.addAll(listOf(first, second)) }
+        val viewModel = ContentCreationViewModel(repository)
+
+        viewModel.load("store")
+        advanceUntilIdle()
+        viewModel.load("store")
+        advanceUntilIdle()
+        first.complete(CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 1, 1, 2, 0.01, 1, 1, 0))
+        advanceUntilIdle()
+        assertNull(viewModel.state.value.usageSummary)
+        second.complete(CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 4, 2, 6, 0.02, 1, 1, 0))
+        advanceUntilIdle()
+        assertEquals(6, viewModel.state.value.usageSummary?.totalTokens)
+    }
+
     @Test fun successfulTopicGenerationRefreshesUsageButItsFailureDoesNotBreakTheWorkflow() = runTest(dispatcher) {
         val repository = FakeContentCreationRepository().apply {
             generatedTopics = listOf(topic("topic-1"), topic("topic-2"), topic("topic-3"))
@@ -431,6 +467,8 @@ private class FakeContentCreationRepository(
     var listCalls = 0
     var usageCalls = 0
     var usageFailure: Throwable? = null
+    var usageGate: CompletableDeferred<CustomerUsageSummary>? = null
+    val usageGates = ArrayDeque<CompletableDeferred<CustomerUsageSummary>>()
     var usageSummary = CustomerUsageSummary("2026-08-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", 0, 0, 0, 0.0, 0, 0, 0)
     var generatedTopics = emptyList<ContentTopic>()
     var createdTaskId = "task"
@@ -452,6 +490,8 @@ private class FakeContentCreationRepository(
     override suspend fun loadUsageSummary(storeId: String): CustomerUsageSummary {
         usageCalls++
         usageFailure?.let { throw it }
+        if (usageGates.isNotEmpty()) return usageGates.removeFirst().await()
+        usageGate?.let { return it.await() }
         return usageSummary
     }
     override suspend fun loadTask(storeId: String, taskId: String): ContentTaskDetail { loadCalls++; return currentDetail }
