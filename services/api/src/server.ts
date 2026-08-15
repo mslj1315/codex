@@ -30,6 +30,7 @@ export interface ServerOptions {
   authTokenSecret?: string;
   developmentMode?: boolean;
   providerBrowserDevelopmentMode?: boolean;
+  operatorPublicOrigin?: string;
   providerConsoleDistDir?: string;
   operatorConsoleDistDir?: string;
   localContainerDevelopmentMode?: boolean;
@@ -83,7 +84,7 @@ export function buildServer(options: ServerOptions = {}) {
     app.register((instance) => registerModelPricingRoutes(instance, providerOptions));
   }
   if (database) {
-    registerOperatorAuthRoutes(app, database);
+    registerOperatorAuthRoutes(app, database, { publicOrigin: options.operatorPublicOrigin });
     app.register((instance) => registerOperatorContentRoutes(instance, database));
   }
   if (database && contextResolver) {
@@ -112,6 +113,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     authTokenSecret: process.env.AUTH_TOKEN_SECRET,
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
     providerBrowserDevelopmentMode: process.env.PROVIDER_BROWSER_DEVELOPMENT_MODE === "true",
+    operatorPublicOrigin: process.env.OPERATOR_PUBLIC_ORIGIN,
     providerConsoleDistDir: process.env.PROVIDER_CONSOLE_DIST_DIR
       ?? fileURLToPath(new URL("../provider-console-dist", import.meta.url)),
     operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR

@@ -139,9 +139,62 @@ describe("operator authentication", () => {
       method: "POST",
       url: "/v1/operator-content/templates",
       headers: { cookie: login.headers["set-cookie"]!, host: "localhost", origin: "https://localhost", "x-csrf-token": login.json().csrfToken },
-      payload: { name: "template", content: { hook: "hook", story: "story", value: "value", productAppearance: "product", cta: "cta", shotRhythm: "rhythm", captionVoiceRequirements: "voice" }, constraints: {}, fallbackScope: {} }
+      payload: { name: "template", content: { hook: "hook", story: "story", value: "value", productAppearance: "product", cta: "cta", shotRhythm: "rhythm", captionVoiceRequirements: "voice", prohibitedExpressions: ["best"] }, constraints: { industryCode: "fast_food", categoryCode: "noodle", persona: "owner", contentType: "story", commercialLevel: 1, style: "natural", priceDiscountEffectRestrictions: ["no_absolute"], riskLevel: "low" }, fallbackScope: { allowCategoryFallback: true, allowIndustryFallback: false } }
     });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ error: "Forbidden" });
+  });
+
+  it("uses a configured public HTTPS origin without trusting forwarded protocol headers", async () => {
+    const app = buildServer({
+      database: pool,
+      trustedContextResolver: async () => undefined,
+      operatorPublicOrigin: "https://app.msljkj.cn"
+    });
+    const login = await app.inject({
+      method: "POST",
+      url: "/v1/operator-auth/login",
+      headers: { host: "app.msljkj.cn", origin: "https://app.msljkj.cn", "x-forwarded-proto": "http" },
+      payload: { accountId: "op-1", password: "correct horse" }
+    });
+    expect(login.statusCode).toBe(200);
+
+    const write = await app.inject({
+      method: "POST",
+      url: "/v1/operator-content/templates",
+      headers: {
+        cookie: login.headers["set-cookie"]!,
+        host: "app.msljkj.cn",
+        origin: "https://app.msljkj.cn",
+        "x-forwarded-proto": "http",
+        "x-csrf-token": login.json().csrfToken
+      },
+      payload: { name: "template", content: { hook: "hook", story: "story", value: "value", productAppearance: "product", cta: "cta", shotRhythm: "rhythm", captionVoiceRequirements: "voice", prohibitedExpressions: ["best"] }, constraints: { industryCode: "fast_food", categoryCode: "noodle", persona: "owner", contentType: "story", commercialLevel: 1, style: "natural", priceDiscountEffectRestrictions: ["no_absolute"], riskLevel: "low" }, fallbackScope: { allowCategoryFallback: true, allowIndustryFallback: false } }
+    });
+    expect(write.statusCode).toBe(201);
+
+    const foreign = await app.inject({
+      method: "POST",
+      url: "/v1/operator-auth/login",
+      headers: { host: "app.msljkj.cn", origin: "https://attacker.example", "x-forwarded-proto": "https" },
+      payload: { accountId: "op-1", password: "correct horse" }
+    });
+    expect(foreign.statusCode).toBe(403);
+  });
+
+  it("does not treat a spoofed forwarded protocol header as a same-origin signal", async () => {
+    const app = appForOperator();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/operator-auth/login",
+      headers: { host: "localhost", origin: "https://localhost", "x-forwarded-proto": "https" },
+      payload: { accountId: "op-1", password: "correct horse" }
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it("rejects a public operator origin that is not an exact HTTPS origin", () => {
+    expect(() => buildServer({ database: pool, trustedContextResolver: async () => undefined, operatorPublicOrigin: "https://app.msljkj.cn/operator" })).toThrow("OPERATOR_PUBLIC_ORIGIN must be an exact HTTPS origin");
+    expect(() => buildServer({ database: pool, trustedContextResolver: async () => undefined, operatorPublicOrigin: "https://user:password@app.msljkj.cn" })).toThrow("OPERATOR_PUBLIC_ORIGIN must be an exact HTTPS origin");
   });
 });
