@@ -44,6 +44,20 @@ describe("content planning workflow", () => {
     return { taskId, topicId, copyId };
   }
 
+  async function seedForeignMutableTask() {
+    const taskId = randomUUID(); const confirmedTopicId = randomUUID(); const draftTopicId = randomUUID(); const emptyTopicId = randomUUID(); const confirmedCopyId = randomUUID(); const draftCopyId = randomUUID();
+    await pool.query("INSERT INTO content_tasks(id,enterprise_id,store_id,actor_id,profile_version,profile_snapshot_json,stage_snapshot_json,template_snapshot_json,persona,content_type,style,commercial_level,status,confirmed_copy_id) VALUES($1,'ent_demo','store_demo','other-actor',1,'{}','{}','[]','owner','story','sincere',1,'copy_confirmed',$2)", [taskId, confirmedCopyId]);
+    await pool.query("INSERT INTO content_task_topics(id,task_id,position,title,angle,product_reference,goal_reference,commercial_level) VALUES($1,$4,1,'confirmed topic','angle','product','goal',1),($2,$4,2,'draft topic','angle','product','goal',1),($3,$4,3,'empty topic','angle','product','goal',1)", [confirmedTopicId, draftTopicId, emptyTopicId, taskId]);
+    await pool.query("INSERT INTO content_task_copies(id,task_id,topic_id,position,title,body,strategy,product_reference,goal_reference,commercial_level,status) VALUES($1,$3,$4,1,'confirmed','body','confirmed','product','goal',1,'confirmed'),($2,$3,$5,1,'draft','body','draft','product','goal',1,'draft')", [confirmedCopyId, draftCopyId, taskId, confirmedTopicId, draftTopicId]);
+    await pool.query("INSERT INTO content_task_copy_versions(id,copy_id,version,title,body) VALUES($1,$2,1,'draft','body')", [randomUUID(), draftCopyId]);
+    return { taskId, draftCopyId, emptyTopicId };
+  }
+
+  async function workflowMutationCounts() {
+    const tables = ["content_task_topics", "content_task_copies", "content_task_copy_versions", "content_task_copy_reviews", "content_task_shot_lists", "content_task_generation_claims", "content_task_generation_runs"];
+    return Promise.all(tables.map(async table => Number((await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count)));
+  }
+
   async function seedReadableTask() {
     const taskId = randomUUID(); const firstTopicId = randomUUID(); const secondTopicId = randomUUID(); const draftCopyId = randomUUID(); const confirmedCopyId = randomUUID(); const shotListId = randomUUID();
     await pool.query("DROP INDEX content_task_one_confirmed_copy");
@@ -146,6 +160,45 @@ describe("content planning workflow", () => {
     expect((await otherCustomerApp.inject({ method: "GET", url: "/v1/stores/store_demo/content-tasks" })).json()).toEqual({ tasks: [] });
     expect((await otherCustomerApp.inject({ method: "GET", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}` })).statusCode).toBe(404);
     await otherCustomerApp.close();
+  });
+
+  it("rejects every foreign-customer task command before models, reviews, or task state can change", async () => {
+    const seeded = await seedForeignMutableTask();
+    const otherCustomerApp = buildServer({ database: pool, trustedContextResolver: async () => ({ ...scope, actorId: "actor_demo" }), modelGenerationService: generator });
+    const beforeCounts = await workflowMutationCounts();
+    const beforeDraft = await pool.query("SELECT title,body,version,status FROM content_task_copies WHERE id=$1", [seeded.draftCopyId]);
+    const commands = [
+      { method: "POST", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}/topics/generate` },
+      { method: "POST", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}/topics/${seeded.emptyTopicId}/copies/generate` },
+      { method: "POST", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}/shots/generate` },
+      { method: "PUT", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}/copies/${seeded.draftCopyId}`, payload: { title: "foreign change", body: "foreign body" } },
+      { method: "POST", url: `/v1/stores/store_demo/content-tasks/${seeded.taskId}/copies/${seeded.draftCopyId}/confirm` }
+    ] as const;
+
+    for (const command of commands) expect((await otherCustomerApp.inject(command)).statusCode).toBe(404);
+
+    expect(vi.mocked(generator.generateStructured)).not.toHaveBeenCalled();
+    expect(await workflowMutationCounts()).toEqual(beforeCounts);
+    expect(await pool.query("SELECT title,body,version,status FROM content_task_copies WHERE id=$1", [seeded.draftCopyId])).toEqual(beforeDraft);
+    await otherCustomerApp.close();
+  });
+
+  it("rejects service roles from task commands before the task lookup query", async () => {
+    const commands = [
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/topics/generate" },
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/topics/topic/copies/generate" },
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/shots/generate" },
+      { method: "PUT", url: "/v1/stores/store_demo/content-tasks/task/copies/copy", payload: { title: "x", body: "y" } },
+      { method: "POST", url: "/v1/stores/store_demo/content-tasks/task/copies/copy/confirm" }
+    ] as const;
+    for (const actorRole of ["provider", "operator_editor", "operator_reviewer"] as const) {
+      const privilegedApp = buildServer({ database: pool, trustedContextResolver: async () => ({ ...scope, actorRole }), modelGenerationService: generator });
+      const querySpy = vi.spyOn(pool, "query");
+      for (const command of commands) expect((await privilegedApp.inject(command)).statusCode).toBe(403);
+      expect(querySpy).not.toHaveBeenCalled();
+      querySpy.mockRestore();
+      await privilegedApp.close();
+    }
   });
 
   it("locks profile and stage snapshots, then generates exactly three topics", async () => {

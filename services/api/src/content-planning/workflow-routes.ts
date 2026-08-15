@@ -35,7 +35,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
   const task = async (request: FastifyRequest) => {
     const context = scoped(request);
     const id = String((request.params as Row).id ?? "");
-    const found = await database.query<Row>("SELECT * FROM content_tasks WHERE id=$1 AND enterprise_id=$2 AND store_id=$3", [id, context.enterpriseId, context.storeId]);
+    const found = await database.query<Row>("SELECT * FROM content_tasks WHERE id=$1 AND enterprise_id=$2 AND store_id=$3 AND actor_id=$4", [id, context.enterpriseId, context.storeId, context.actorId]);
     if (!found.rowCount) throw new WorkflowError("Content task not found", 404);
     return found.rows[0];
   };
