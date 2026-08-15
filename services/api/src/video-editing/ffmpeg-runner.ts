@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { isAbsolute, join } from "node:path";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import type { RenderManifest, RenderRunner, RunnerResult } from "./worker.js";
 
 export type SpawnResult = { stdout: string; stderr: string; code: number };
 export type SpawnProcess = (command: string, args: string[], options: { cwd: string; shell: false }) => Promise<SpawnResult>;
-export interface RenderFiles { writeFile(path: string, value: Buffer | string): Promise<void>; readFile(path: string): Promise<Buffer>; }
+export interface RenderFiles { writeFile(path: string, value: string): Promise<void>; }
 
 export class FfmpegRenderRunner implements RenderRunner {
   private readonly spawn: SpawnProcess;
@@ -13,17 +13,16 @@ export class FfmpegRenderRunner implements RenderRunner {
   constructor(private readonly options: { ffmpegPath: string; ffprobePath: string; spawn?: SpawnProcess; files?: RenderFiles }) {
     validateBinary(options.ffmpegPath, "ffmpeg"); validateBinary(options.ffprobePath, "ffprobe");
     this.spawn = options.spawn ?? spawnProcess;
-    this.files = options.files ?? { readFile, writeFile };
+    this.files = options.files ?? { writeFile };
   }
   async render(manifest: RenderManifest): Promise<RunnerResult> {
     if (!manifest.workspacePath) throw new Error("Render workspace is required");
     const workspacePath = manifest.workspacePath;
-    const slots = manifest.slots?.length ? manifest.slots : manifest.sources.map((_, sourceIndex) => ({ sourceIndex, trimStartSeconds: 0, trimEndSeconds: manifest.durationSeconds, muted: false, subtitleEnabled: false }));
-    if (slots.some(slot => !Number.isInteger(slot.sourceIndex) || !manifest.sources[slot.sourceIndex] || !validTrim(slot.trimStartSeconds, slot.trimEndSeconds, manifest.durationSeconds))) throw new Error("Invalid render manifest");
-    for (let index = 0; index < manifest.sources.length; index++) await this.files.writeFile(join(workspacePath, `source-${index + 1}.mp4`), manifest.sources[index]!);
+    const slots = manifest.slots?.length ? manifest.slots : manifest.sourcePaths.map((_, sourceIndex) => ({ sourceIndex, trimStartSeconds: 0, trimEndSeconds: manifest.durationSeconds, muted: false, subtitleEnabled: false }));
+    if (slots.some(slot => !Number.isInteger(slot.sourceIndex) || !manifest.sourcePaths[slot.sourceIndex] || !validTrim(slot.trimStartSeconds, slot.trimEndSeconds, manifest.durationSeconds))) throw new Error("Invalid render manifest");
     await this.files.writeFile(join(workspacePath, "subtitles.srt"), subtitles(slots));
-    const sourceAudio = await Promise.all(manifest.sources.map((_, index) => this.hasAudio(workspacePath, `source-${index + 1}.mp4`)));
-    const inputArgs = slots.flatMap(slot => ["-ss", number(slot.trimStartSeconds), "-t", number(slot.trimEndSeconds - slot.trimStartSeconds), "-i", `source-${slot.sourceIndex + 1}.mp4`]);
+    const sourceAudio = await Promise.all(manifest.sourcePaths.map(sourcePath => this.hasAudio(workspacePath, sourcePath)));
+    const inputArgs = slots.flatMap(slot => ["-ss", number(slot.trimStartSeconds), "-t", number(slot.trimEndSeconds - slot.trimStartSeconds), "-i", manifest.sourcePaths[slot.sourceIndex]!]);
     const hasAudio = slots.some(slot => !slot.muted);
     const visuals = slots.map((_, index) => `[${index}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v${index}]`);
     const audio = hasAudio ? slots.map((slot, index) => slot.muted || !sourceAudio[slot.sourceIndex] ? `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]` : `[${index}:a]atrim=start=0:end=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]`) : [];
@@ -33,7 +32,7 @@ export class FfmpegRenderRunner implements RenderRunner {
     const metadata = await this.probe(workspacePath, "output.mp4");
     const positions = coverPositions(metadata.durationSeconds);
     for (let index = 0; index < positions.length; index++) await run(this.spawn, this.options.ffmpegPath, ["-y", "-ss", number(positions[index]!), "-i", "output.mp4", "-frames:v", "1", "-q:v", "2", `cover-${index + 1}.jpg`], workspacePath);
-    return { output: await this.files.readFile(join(workspacePath, "output.mp4")), metadata: { ...metadata, contentType: "video/mp4" }, coverFrames: await Promise.all(positions.map(async (positionSeconds, index) => ({ positionSeconds, bytes: await this.files.readFile(join(workspacePath, `cover-${index + 1}.jpg`)) }))) };
+    return { outputPath: join(workspacePath, "output.mp4"), metadata: { ...metadata, contentType: "video/mp4" }, coverPaths: positions.map((positionSeconds, index) => ({ positionSeconds, path: join(workspacePath, `cover-${index + 1}.jpg`) })) };
   }
   private async probe(workspacePath: string, output: string) {
     const result = await this.spawn(this.options.ffprobePath, ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", output], { cwd: workspacePath, shell: false });

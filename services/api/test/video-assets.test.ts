@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { newDb } from "pg-mem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
-import { createConfiguredVideoStorage, InMemoryVideoStorage } from "../src/video-editing/storage.js";
+import { createConfiguredVideoStorage, InMemoryVideoStorage, type ProtectedRenderStorage } from "../src/video-editing/storage.js";
 
 const scope = { enterpriseId: "media-ent", storeId: "media-store", actorId: "media-actor" };
 const maxAssetBytes = 500 * 1024 * 1024;
@@ -130,6 +132,25 @@ describe("storyboard media assets", () => {
     await expect(storage.createDirectUpload("object", "video/mp4", new Date())).rejects.toThrow("invalid upload target");
     expect(() => createConfiguredVideoStorage({ VIDEO_STORAGE_MODE: "internal_signer", VIDEO_STORAGE_SIGNER_URL: "http://signer.example/v1", VIDEO_STORAGE_SIGNER_TOKEN: "server-only" })).toThrow("HTTPS");
     vi.unstubAllGlobals();
+  });
+
+  it("streams worker media to and from the signer without JSON base64 payloads", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "storyboard-storage-test-"));
+    const sourcePath = join(directory, "source.mp4"); const destinationPath = join(directory, "download.mp4");
+    await writeFile(sourcePath, "source-bytes");
+    const fetchSpy = vi.fn().mockResolvedValueOnce(new Response("download-bytes", { status: 200 })).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const storage = createConfiguredVideoStorage({ VIDEO_STORAGE_MODE: "internal_signer", VIDEO_STORAGE_SIGNER_URL: "https://signer.example/v1", VIDEO_STORAGE_SIGNER_TOKEN: "worker-only" }) as unknown as ProtectedRenderStorage;
+      await storage.downloadToFile("source-object", destinationPath);
+      await storage.putProtectedFile("output-object", sourcePath, { contentType: "video/mp4", expiresAt: new Date("2026-08-16T00:00:00.000Z") });
+      expect(await readFile(destinationPath, "utf8")).toBe("download-bytes");
+      expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://signer.example/v1/worker-download");
+      expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({ headers: { authorization: "Bearer worker-only", "content-type": "application/json" }, body: JSON.stringify({ objectKey: "source-object" }) });
+      expect(fetchSpy.mock.calls[1]?.[0]).toBe("https://signer.example/v1/worker-put-protected");
+      expect(fetchSpy.mock.calls[1]?.[1]).toMatchObject({ duplex: "half", headers: { authorization: "Bearer worker-only", "x-object-key": "output-object", "x-content-type": "video/mp4" } });
+      expect(fetchSpy.mock.calls[1]?.[1]?.body).not.toBe(JSON.stringify({ bytes: Buffer.from("source-bytes").toString("base64") }));
+    } finally { vi.unstubAllGlobals(); await rm(directory, { recursive: true, force: true }); }
   });
 
   afterEach(async () => { await app.close(); });

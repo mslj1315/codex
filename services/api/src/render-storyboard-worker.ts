@@ -25,5 +25,5 @@ export async function runStoryboardRenderWorker(environment: Record<string, stri
 }
 const workspace: TemporaryWorkspace = { create: jobId => mkdtemp(join(tmpdir(), `storyboard-render-${safeSegment(jobId)}-`)), remove: path => rm(path, { recursive: true, force: true }) };
 function safeSegment(value: string) { return value.replace(/[^a-zA-Z0-9_-]/g, "_"); }
-function isProtected(value: unknown): value is ProtectedRenderStorage { return typeof value === "object" && value !== null && "download" in value && "putProtected" in value && "deleteProtected" in value; }
+function isProtected(value: unknown): value is ProtectedRenderStorage { return typeof value === "object" && value !== null && "downloadToFile" in value && "putProtectedFile" in value && "deleteProtected" in value; }
 if (process.argv[1] === fileURLToPath(import.meta.url)) runStoryboardRenderWorker().then(result => console.log(JSON.stringify(result))).catch(() => { console.error("Storyboard render worker failed"); process.exitCode = 1; });

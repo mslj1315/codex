@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { DataType, newDb } from "pg-mem";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
@@ -64,10 +65,10 @@ describe("storyboard render queue", () => {
       create: async () => "work/job-1",
       remove: async path => { events.push(`remove:${path}`); }
     }, {
-      download: async key => { events.push(`download:${key}`); return Buffer.from("source"); },
-      putProtected: async (_key, _bytes, metadata) => { events.push(`output:${metadata.contentType}`); }
+      downloadToFile: async (key, _destinationPath) => { events.push(`download:${key}`); },
+      putProtectedFile: async (_key, _sourcePath, metadata) => { events.push(`output:${metadata.contentType}`); }
     }, {
-      render: async manifest => { expect(manifest).toMatchObject({ width: 1080, height: 1920, fps: 30, durationSeconds: 12, subtitles: ["only confirmed subtitle"] }); return { output: Buffer.from("mp4"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 12, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("a") }, { positionSeconds: 6, bytes: Buffer.from("b") }, { positionSeconds: 11, bytes: Buffer.from("c") } ] }; }
+      render: async manifest => { expect(manifest).toMatchObject({ width: 1080, height: 1920, fps: 30, durationSeconds: 12, subtitles: ["only confirmed subtitle"] }); return { outputPath: "work/job-1/output.mp4", metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 12, contentType: "video/mp4" }, coverPaths: [{ positionSeconds: 1, path: "work/job-1/cover-1.jpg" }, { positionSeconds: 6, path: "work/job-1/cover-2.jpg" }, { positionSeconds: 11, path: "work/job-1/cover-3.jpg" } ] }; }
     });
     await worker.runOnce();
     expect(events).toContain("remove:work/job-1");
@@ -76,9 +77,36 @@ describe("storyboard render queue", () => {
     expect(events.find(event => event.startsWith("succeed:"))).toContain('"positionSeconds":1');
   });
 
+  it("downloads each unique source to a controlled path sequentially and gives paths to the runner", async () => {
+    let activeDownloads = 0; let maxDownloads = 0; let resolveFirst!: () => void;
+    const firstDownload = new Promise<void>(resolve => { resolveFirst = resolve; });
+    const runnerManifests: unknown[] = [];
+    const worker = new StoryboardRenderWorker({
+      claim: async () => ({ id: "sequential-sources", kind: "final" as const, projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source-a", "source-b"] }),
+      succeed: async () => {}, fail: async () => {}, isCancelled: async () => false
+    }, { create: async () => "workspace", remove: async () => {} }, {
+      downloadToFile: async (key, destinationPath) => {
+        activeDownloads++; maxDownloads = Math.max(maxDownloads, activeDownloads);
+        if (key === "source-a") await firstDownload;
+        activeDownloads--;
+        expect(destinationPath).toMatch(/^workspace[\\/]source-[12]\.mp4$/);
+      },
+      putProtectedFile: async () => {}
+    }, {
+      render: async manifest => { runnerManifests.push(manifest); return { outputPath: "workspace/output.mp4", metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverPaths: [{ positionSeconds: 1, path: "workspace/cover-1.jpg" }, { positionSeconds: 2, path: "workspace/cover-2.jpg" }, { positionSeconds: 3, path: "workspace/cover-3.jpg" }] }; }
+    });
+    const running = worker.runOnce();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(maxDownloads).toBe(1);
+    resolveFirst();
+    await running;
+    expect(maxDownloads).toBe(1);
+    expect(runnerManifests).toEqual([expect.objectContaining({ sourcePaths: [join("workspace", "source-1.mp4"), join("workspace", "source-2.mp4")] })]);
+  });
+
   it("removes protected output when cancellation wins after the write", async () => {
     let cancelledChecks = 0; const events: string[] = [];
-    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "cancel-after-write", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"] }), isCancelled: async () => ++cancelledChecks >= 3, succeed: async () => { events.push("succeed"); }, fail: async () => { events.push("fail"); } }, { create: async () => "workspace", remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async key => { events.push(`put:${key}`); }, deleteProtected: async key => { events.push(`delete:${key}`); } }, { render: async () => ({ output: Buffer.from("output"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("1") }, { positionSeconds: 2, bytes: Buffer.from("2") }, { positionSeconds: 3, bytes: Buffer.from("3") }] }) });
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "cancel-after-write", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"] }), isCancelled: async () => ++cancelledChecks >= 3, succeed: async () => { events.push("succeed"); }, fail: async () => { events.push("fail"); } }, { create: async () => "workspace", remove: async () => {} }, { downloadToFile: async () => {}, putProtectedFile: async key => { events.push(`put:${key}`); }, deleteProtected: async key => { events.push(`delete:${key}`); } }, { render: async () => ({ outputPath: "workspace/output.mp4", metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverPaths: [{ positionSeconds: 1, path: "workspace/cover-1.jpg" }, { positionSeconds: 2, path: "workspace/cover-2.jpg" }, { positionSeconds: 3, path: "workspace/cover-3.jpg" }] }) });
     await worker.runOnce();
     expect(events).toContain("delete:storyboard-render-output/cancel-after-write.mp4");
     expect(events).not.toContain("succeed");
@@ -86,21 +114,21 @@ describe("storyboard render queue", () => {
 
   it("renews the token lease while a render is still running", async () => {
     let finish!: () => void; const renewals: string[] = []; let tick: (() => Promise<void>) | undefined;
-    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "long-render", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"], leaseToken: "lease" }), renewLease: async (_id, token) => { renewals.push(token); return true; }, isCancelled: async () => false, succeed: async () => {}, fail: async () => {} }, { create: async () => "workspace", remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async () => {} }, { render: async () => await new Promise(resolve => { finish = () => resolve({ output: Buffer.from("out"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("1") }, { positionSeconds: 2, bytes: Buffer.from("2") }, { positionSeconds: 3, bytes: Buffer.from("3") }] }); }) }, undefined, { start: callback => { tick = callback; return () => {}; } });
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "long-render", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"], leaseToken: "lease" }), renewLease: async (_id, token) => { renewals.push(token); return true; }, isCancelled: async () => false, succeed: async () => {}, fail: async () => {} }, { create: async () => "workspace", remove: async () => {} }, { downloadToFile: async () => {}, putProtectedFile: async () => {} }, { render: async () => await new Promise(resolve => { finish = () => resolve({ outputPath: "workspace/output.mp4", metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverPaths: [{ positionSeconds: 1, path: "workspace/cover-1.jpg" }, { positionSeconds: 2, path: "workspace/cover-2.jpg" }, { positionSeconds: 3, path: "workspace/cover-3.jpg" }] }); }) }, undefined, { start: callback => { tick = callback; return () => {}; } });
     const running = worker.runOnce(); while (!finish) await new Promise(resolve => setTimeout(resolve, 0)); await tick!(); finish(); await running;
     expect(renewals).toEqual(["lease"]);
   });
 
   it("contains a rejected heartbeat renewal and does not write output", async () => {
     let tick: (() => Promise<void>) | undefined; const events: string[] = [];
-    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "renew-fail", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"], leaseToken: "lease" }), renewLease: async () => { throw new Error("transport"); }, isCancelled: async () => false, succeed: async () => { events.push("succeed"); }, fail: async () => { events.push("fail"); } }, { create: async () => "workspace", remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async () => { events.push("put"); } }, { render: async () => { await tick!(); return { output: Buffer.from("out"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("1") }, { positionSeconds: 2, bytes: Buffer.from("2") }, { positionSeconds: 3, bytes: Buffer.from("3") }] }; } }, undefined, { start: callback => { tick = callback; return () => { events.push("stop"); }; } });
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "renew-fail", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"], leaseToken: "lease" }), renewLease: async () => { throw new Error("transport"); }, isCancelled: async () => false, succeed: async () => { events.push("succeed"); }, fail: async () => { events.push("fail"); } }, { create: async () => "workspace", remove: async () => {} }, { downloadToFile: async () => {}, putProtectedFile: async () => { events.push("put"); } }, { render: async () => { await tick!(); return { outputPath: "workspace/output.mp4", metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverPaths: [{ positionSeconds: 1, path: "workspace/cover-1.jpg" }, { positionSeconds: 2, path: "workspace/cover-2.jpg" }, { positionSeconds: 3, path: "workspace/cover-3.jpg" }] }; } }, undefined, { start: callback => { tick = callback; return () => { events.push("stop"); }; } });
     await worker.runOnce();
     expect(events).toEqual(["fail", "stop"]);
   });
 
   it("stops the heartbeat when workspace creation fails", async () => {
     const events: string[] = [];
-    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "workspace-fail", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: [], leaseToken: "lease" }), renewLease: async () => true, isCancelled: async () => false, succeed: async () => {}, fail: async () => { events.push("fail"); } }, { create: async () => { throw new Error("disk"); }, remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async () => {} }, { render: async () => { throw new Error("unreachable"); } }, undefined, { start: () => () => { events.push("stop"); } });
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "workspace-fail", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: [], leaseToken: "lease" }), renewLease: async () => true, isCancelled: async () => false, succeed: async () => {}, fail: async () => { events.push("fail"); } }, { create: async () => { throw new Error("disk"); }, remove: async () => {} }, { downloadToFile: async () => {}, putProtectedFile: async () => {} }, { render: async () => { throw new Error("unreachable"); } }, undefined, { start: () => () => { events.push("stop"); } });
     await worker.runOnce();
     expect(events).toEqual(["fail", "stop"]);
   });
@@ -119,7 +147,7 @@ describe("storyboard render queue", () => {
   it("lets only its customer delete a succeeded output and audits the protected cleanup", async () => {
     const created = await app.inject({ method: "POST", url: `${path()}/projects/${projectId}/renders`, payload: { kind: "final" } });
     await database.query("UPDATE storyboard_render_jobs SET state='succeeded',output_object_key=$2,output_expires_at=CURRENT_TIMESTAMP + interval '180 days',cover_candidates_json='[{\"positionSeconds\":1},{\"positionSeconds\":2},{\"positionSeconds\":3}]' WHERE id=$1", [created.json().id, `storyboard-render-output/${created.json().id}.mp4`]);
-    await storage.putProtected(`storyboard-render-output/${created.json().id}.mp4`, Buffer.from("mp4"), { contentType: "video/mp4", expiresAt: new Date() });
+    await storage.putProtectedFile(`storyboard-render-output/${created.json().id}.mp4`, "fixture.mp4", { contentType: "video/mp4", expiresAt: new Date() });
     for (const context of [{ ...scope, actorRole: "provider" as const }, { ...scope, actorRole: "operator_editor" as const }, { ...scope, actorId: "other-customer" }]) {
       const forbidden = buildServer({ database, trustedContextResolver: async () => context, videoStorage: storage });
       expect((await forbidden.inject({ method: "DELETE", url: `${path()}/projects/${projectId}/renders/${created.json().id}`, payload: [] })).statusCode).toBe(403); await forbidden.close();

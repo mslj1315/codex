@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { FfmpegRenderRunner, type SpawnProcess } from "../src/video-editing/ffmpeg-runner.js";
@@ -14,13 +14,9 @@ describe("FFmpeg storyboard render runner", () => {
       return { stdout: "", stderr: "", code: 0 };
     };
     const files = new MemoryFiles();
-    files.set(join("work", "output.mp4"), Buffer.from("output"));
-    files.set(join("work", "cover-1.jpg"), Buffer.from("cover-1"));
-    files.set(join("work", "cover-2.jpg"), Buffer.from("cover-2"));
-    files.set(join("work", "cover-3.jpg"), Buffer.from("cover-3"));
     const runner = new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files });
 
-    const result = await runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: ["saved subtitle"], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: true, subtitleText: "saved subtitle", subtitleEnabled: true }] });
+    const result = await runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: ["saved subtitle"], sourcePaths: [join("work", "source-1.mp4")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: true, subtitleText: "saved subtitle", subtitleEnabled: true }] });
 
     expect(calls.every(call => call.shell === false)).toBe(true);
     const render = calls.find(call => call.command === "ffmpeg")!;
@@ -28,7 +24,7 @@ describe("FFmpeg storyboard render runner", () => {
     expect(render.args).toEqual(expect.arrayContaining(["-ss", "0", "-t", "4", "-an", "-c:v", "libx264", "-r", "30", "-s", "1080x1920", "-movflags", "+faststart"]));
     expect(calls.filter(call => call.command === "ffmpeg")).toHaveLength(4);
     expect(result.metadata).toMatchObject({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" });
-    expect(result.coverFrames.map(frame => frame.positionSeconds)).toEqual([1, 2, 3]);
+    expect(result.coverPaths.map(cover => cover.positionSeconds)).toEqual([1, 2, 3]);
   });
 
   it("rejects output whose probe metadata is not vertical H.264 MP4 at 30 fps", async () => {
@@ -36,16 +32,15 @@ describe("FFmpeg storyboard render runner", () => {
       ? { stdout: JSON.stringify({ format: { format_name: "matroska", duration: "4" }, streams: [{ codec_type: "video", codec_name: "vp9", width: 1920, height: 1080, r_frame_rate: "24/1" }] }), stderr: "", code: 0 }
       : { stdout: "", stderr: "", code: 0 };
     const files = new MemoryFiles();
-    files.set(join("work", "output.mp4"), Buffer.from("output"));
     const runner = new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files });
-    await expect(runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] })).rejects.toThrow("Invalid FFmpeg output metadata");
+    await expect(runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sourcePaths: [join("work", "source-1.mp4")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] })).rejects.toThrow("Invalid FFmpeg output metadata");
   });
 
   it("retains unmuted slot audio with trim and concat instead of globally disabling audio", async () => {
     const calls: Array<{ command: string; args: string[] }> = [];
     const spawn: SpawnProcess = async (command, args) => { calls.push({ command, args }); return command === "ffprobe" ? { stdout: JSON.stringify({ format: { format_name: "mp4", duration: "4" }, streams: [{ codec_type: "video", codec_name: "h264", width: 1080, height: 1920, r_frame_rate: "30/1", pix_fmt: "yuv420p" }, { codec_type: "audio" }] }), stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 }; };
-    const files = new MemoryFiles(); for (const name of ["output.mp4", "cover-1.jpg", "cover-2.jpg", "cover-3.jpg"]) files.set(join("work", name), Buffer.from(name));
-    await new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files }).render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] });
+    const files = new MemoryFiles();
+    await new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files }).render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sourcePaths: [join("work", "source-1.mp4")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] });
     const args = calls.find(call => call.command === "ffmpeg")!.args;
     expect(args).not.toContain("-an");
     expect(args).toEqual(expect.arrayContaining(["-c:a", "aac"]));
@@ -56,8 +51,8 @@ describe("FFmpeg storyboard render runner", () => {
   it("uses controlled silence for an unmuted source without an audio stream", async () => {
     const calls: Array<{ command: string; args: string[] }> = [];
     const spawn: SpawnProcess = async (command, args) => { calls.push({ command, args }); return command === "ffprobe" ? { stdout: JSON.stringify({ format: { format_name: "mp4", duration: "4" }, streams: [{ codec_type: "video", codec_name: "h264", width: 1080, height: 1920, r_frame_rate: "30/1", pix_fmt: "yuv420p" }] }), stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 }; };
-    const files = new MemoryFiles(); for (const name of ["output.mp4", "cover-1.jpg", "cover-2.jpg", "cover-3.jpg"]) files.set(join("work", name), Buffer.from(name));
-    await new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files }).render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] });
+    const files = new MemoryFiles();
+    await new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files }).render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sourcePaths: [join("work", "source-1.mp4")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] });
     const render = calls.find(call => call.command === "ffmpeg")!;
     expect(render.args[render.args.indexOf("-filter_complex") + 1]).toContain("anullsrc=channel_layout=stereo:sample_rate=48000");
   });
@@ -72,16 +67,13 @@ integration("renders and probes a real vertical H.264 MP4 when explicitly enable
     const fixture = spawnSync(ffmpegPath, ["-y", "-f", "lavfi", "-i", "color=c=red:s=1080x1920:r=30:d=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", source], { shell: false });
     if (fixture.status !== 0) throw new Error("FFMPEG_INTEGRATION fixture creation failed");
     const runner = new FfmpegRenderRunner({ ffmpegPath, ffprobePath });
-    const result = await runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: ["saved subtitle"], sources: [await readFile(source)], workspacePath: workspace, slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: true, subtitleText: "saved subtitle", subtitleEnabled: true }] });
+    const result = await runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: ["saved subtitle"], sourcePaths: [source], workspacePath: workspace, slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: true, subtitleText: "saved subtitle", subtitleEnabled: true }] });
     expect(result.metadata).toMatchObject({ width: 1080, height: 1920, fps: 30, contentType: "video/mp4" });
-    expect(result.coverFrames).toHaveLength(3);
-    expect(new Set(result.coverFrames.map(frame => frame.positionSeconds)).size).toBe(3);
+    expect(result.coverPaths).toHaveLength(3);
+    expect(new Set(result.coverPaths.map(cover => cover.positionSeconds)).size).toBe(3);
   } finally { await rm(workspace, { recursive: true, force: true }); }
 });
 
 class MemoryFiles {
-  private readonly values = new Map<string, Buffer>();
-  set(path: string, value: Buffer) { this.values.set(path, value); }
-  async writeFile(path: string, value: Buffer | string) { this.values.set(path, Buffer.from(value)); }
-  async readFile(path: string) { const value = this.values.get(path); if (!value) throw new Error(`missing ${path}`); return value; }
+  async writeFile(_path: string, _value: string) {}
 }
