@@ -50,3 +50,11 @@ describe('operator console application identity', () =>
 
     expect(manifest.name).toBe('operator-console');
   }));
+
+describe('operator console runtime packaging', () =>
+  it('uses the packaged operator-console directory unless an environment override is configured', async () => {
+    const serverSource = await readFile(new URL('../src/server.ts', import.meta.url), 'utf8');
+
+    expect(serverSource).toContain('operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR');
+    expect(serverSource).toContain('fileURLToPath(new URL("../operator-console-dist", import.meta.url))');
+  }));

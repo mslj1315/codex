@@ -114,7 +114,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     providerBrowserDevelopmentMode: process.env.PROVIDER_BROWSER_DEVELOPMENT_MODE === "true",
     providerConsoleDistDir: process.env.PROVIDER_CONSOLE_DIST_DIR
       ?? fileURLToPath(new URL("../provider-console-dist", import.meta.url)),
-    operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR,
+    operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR
+      ?? fileURLToPath(new URL("../operator-console-dist", import.meta.url)),
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
     objectStorage: createMinioObjectStorageFromEnv(process.env),
     modelGenerationService: createConfiguredGenerationService(process.env),
