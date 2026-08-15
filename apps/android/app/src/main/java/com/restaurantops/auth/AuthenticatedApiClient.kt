@@ -44,9 +44,10 @@ class BearerInterceptor(
 }
 
 class AuthenticatedApiClient(private val session: AccessTokenSession) {
+    fun okHttpClient(): OkHttpClient = OkHttpClient.Builder().addInterceptor(BearerInterceptor(session)).build()
     fun retrofit(baseUrl: String): Retrofit = Retrofit.Builder()
         .baseUrl(baseUrl)
-        .client(OkHttpClient.Builder().addInterceptor(BearerInterceptor(session)).build())
+        .client(okHttpClient())
         .addConverterFactory(GsonConverterFactory.create())
         .build()
 }

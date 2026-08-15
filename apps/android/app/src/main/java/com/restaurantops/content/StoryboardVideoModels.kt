@@ -29,7 +29,7 @@ data class StoryboardDraft(val projectId: String, val version: Int, val slots: L
     fun isRenderable() = slots.isNotEmpty() && slots.all { it.assetId != null && it.trimEndSeconds > it.trimStartSeconds }
 }
 enum class RenderState { Queued, Processing, Succeeded, Failed, Cancelled }
-data class StoryboardRender(val id: String, val kind: String, val state: RenderState, val expiresAt: String? = null, val coverCandidates: List<Int> = emptyList()) {
+data class StoryboardRender(val id: String, val kind: String, val state: RenderState, val expiresAt: String? = null, val coverCandidates: List<String> = emptyList()) {
     val canCancel get() = state == RenderState.Queued || state == RenderState.Processing
 }
 enum class StoryboardCustomerActions { SelectSources, Upload, Edit, Preview, Render, Download, Delete }

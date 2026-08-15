@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 import android.media.MediaMetadataRetriever
 
 @Composable
-fun StoryboardVideoScreen(viewModel: StoryboardVideoViewModel, storeId: String, taskId: String, shotListId: String, modifier: Modifier = Modifier) {
+fun StoryboardVideoScreen(viewModel: StoryboardVideoViewModel, storeId: String, taskId: String, shotListId: String, onDeliver: (StoryboardRender, String?) -> Unit = { _, _ -> }, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         viewModel.selectSources(uris.mapNotNull { uri ->
@@ -51,21 +51,24 @@ fun StoryboardVideoScreen(viewModel: StoryboardVideoViewModel, storeId: String, 
         if (state.draft == null) Button(onClick = { viewModel.createProject(storeId, taskId, shotListId) }) { Text("Start confirmed storyboard") }
         state.draft?.let { draft ->
             Text("Slots", style = MaterialTheme.typography.titleMedium)
-            draft.slots.sortedBy { it.order }.forEach { slot -> SlotEditor(slot, viewModel::updateSlot) }
+            val acceptedAssets = state.uploads.filter { it.state == UploadState.Uploaded && it.assetId != null }
+            draft.slots.sortedBy { it.order }.forEach { slot -> SlotEditor(slot, acceptedAssets, viewModel::updateSlot) }
             TextButton(onClick = viewModel::addSupplementalSlot) { Text("Add supplemental slot") }
             OutlinedTextField(value = draft.coverTitle, onValueChange = { viewModel.updateCover(draft.coverAssetId, draft.coverFrameOffsetSeconds, it) }, label = { Text("Short cover title") }, modifier = Modifier.fillMaxWidth())
             Text("Choose one of the actual frame candidates returned after a successful final render.")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { viewModel.requestRender(storeId, taskId, shotListId, "preview") }, enabled = draft.isRenderable()) { Text("Create preview") }; Button(onClick = { viewModel.requestRender(storeId, taskId, shotListId, "final") }, enabled = draft.isRenderable()) { Text("Create final") } }
             TextButton(onClick = { viewModel.refreshRenders(storeId, taskId, shotListId) }) { Text("Refresh render status") }
         }
-        state.renders.forEach { render -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) { Text("${render.kind} - ${render.state}"); Text(renderExpiryMessage(render.kind)); if (render.canCancel) Text("You can cancel this render while it is queued or processing."); if (render.state == RenderState.Succeeded) Text("Download is available only through the protected customer render response until expiry.") } }
+        state.renders.forEach { render -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) { Text("${render.kind} - ${render.state}"); Text(renderExpiryMessage(render.kind)); if (render.canCancel) { TextButton(onClick = { viewModel.cancelRender(storeId, taskId, shotListId, render.id) }) { Text("Cancel render") } }; if (render.state == RenderState.Succeeded) { TextButton(onClick = { onDeliver(render, null) }) { Text("Preview / download") }; TextButton(onClick = { viewModel.deleteRender(storeId, taskId, shotListId, render.id) }) { Text("Delete output") }; if (render.kind == "final") render.coverCandidates.forEachIndexed { index, candidate -> TextButton(onClick = { onDeliver(render, candidate) }) { Text("Preview real frame ${index + 1}") }; TextButton(onClick = { viewModel.selectCover(storeId, taskId, shotListId, render.id, candidate, state.draft?.coverTitle.orEmpty()) }) { Text("Use real frame ${index + 1} as cover") } } } } }
         Text("Publish in Douyin manually after downloading. This editor has no publish action.", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
-@Composable private fun SlotEditor(slot: StoryboardSlot, onChange: (StoryboardSlot) -> Unit) {
+@Composable private fun SlotEditor(slot: StoryboardSlot, assets: List<UploadItem>, onChange: (StoryboardSlot) -> Unit) {
     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Slot ${slot.order}")
+        assets.forEach { asset -> TextButton(onClick = { onChange(slot.copy(assetId = asset.assetId)) }) { Text(if (slot.assetId == asset.assetId) "Selected: ${asset.source.displayName}" else "Use ${asset.source.displayName}") } }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { TextButton(onClick = { onChange(slot.copy(order = (slot.order - 1).coerceAtLeast(1))) }) { Text("Move earlier") }; TextButton(onClick = { onChange(slot.copy(order = slot.order + 1)) }) { Text("Move later") } }
         OutlinedTextField(value = slot.trimStartSeconds.toString(), onValueChange = { onChange(slot.copy(trimStartSeconds = it.toIntOrNull() ?: slot.trimStartSeconds)) }, label = { Text("Trim start seconds") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = slot.trimEndSeconds.toString(), onValueChange = { onChange(slot.copy(trimEndSeconds = it.toIntOrNull() ?: slot.trimEndSeconds)) }, label = { Text("Trim end seconds") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(value = slot.subtitleText, onValueChange = { onChange(slot.copy(subtitleText = it)) }, label = { Text("Subtitle") }, modifier = Modifier.fillMaxWidth())

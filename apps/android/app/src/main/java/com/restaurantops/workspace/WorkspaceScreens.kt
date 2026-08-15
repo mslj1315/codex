@@ -40,6 +40,18 @@ import com.restaurantops.imports.network.LocalImportApiRuntime
 import com.restaurantops.operations.OperationsRuntime
 import com.restaurantops.operations.OperationsScreen
 import com.restaurantops.operations.OperationsViewModel
+import com.restaurantops.content.StoryboardContext
+import com.restaurantops.content.StoryboardContextRepository
+import com.restaurantops.content.StoryboardContextScreen
+import com.restaurantops.content.StoryboardVideoScreen
+import com.restaurantops.content.StoryboardVideoViewModel
+import com.restaurantops.content.StoryboardWireApi
+import com.restaurantops.content.RetrofitStoryboardVideoApi
+import com.restaurantops.content.HttpStoryboardVideoRepository
+import com.restaurantops.content.ContentResolverDirectVideoUploader
+import com.restaurantops.content.AuthenticatedRenderDelivery
+import com.restaurantops.content.RenderDeliveryResult
+import kotlinx.coroutines.launch
 import com.restaurantops.home.OperationsHomeScreen
 import com.restaurantops.home.OperationsHomeViewModel
 import retrofit2.Retrofit
@@ -55,7 +67,8 @@ fun WorkspaceRoot(
     onLogout: (() -> Unit)? = null,
     onChooseAnotherStore: (() -> Unit)? = null
 ) {
-    val contentResolver = LocalContext.current.contentResolver
+    val androidContext = LocalContext.current
+    val contentResolver = androidContext.contentResolver
     val importFileReader = remember(contentResolver) { AndroidImportFileReader(contentResolver) }
     val importViewModel = remember(importFileReader, storeId, authenticatedApiClient) {
         val repository = if (authenticatedApiClient != null) {
@@ -83,10 +96,28 @@ fun WorkspaceRoot(
     val operationsHomeViewModel = remember(storeId, operationsHomeRepository, operationsRepository) {
         operationsHomeRepository?.let { OperationsHomeViewModel(it, operationsRepository) }
     }
+    val storyboardWireApi = remember(authenticatedApiClient) { authenticatedApiClient?.retrofit(BuildConfig.LOCAL_API_BASE_URL)?.create(StoryboardWireApi::class.java) }
+    val storyboardContextRepository = remember(storyboardWireApi) { storyboardWireApi?.let(::StoryboardContextRepository) }
+    val storyboardViewModel = remember(storyboardWireApi, contentResolver) { storyboardWireApi?.let { StoryboardVideoViewModel(HttpStoryboardVideoRepository(RetrofitStoryboardVideoApi(it), ContentResolverDirectVideoUploader(contentResolver))) } }
+    val renderDelivery = remember(authenticatedApiClient, androidContext) { authenticatedApiClient?.let { AuthenticatedRenderDelivery(androidContext, BuildConfig.LOCAL_API_BASE_URL, it.okHttpClient()) } }
+    val deliveryScope = androidx.compose.runtime.rememberCoroutineScope()
+    var storyboardContext by remember { androidx.compose.runtime.mutableStateOf<StoryboardContext?>(null) }
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
             onBack = viewModel::closeOverlay,
             onCreateTask = viewModel::createPriorityTaskAndOpenTasks
+        )
+        viewModel.isVideoFactoryOpen && storyboardContext != null && storyboardViewModel != null -> StoryboardVideoScreen(
+            viewModel = storyboardViewModel,
+            storeId = storeId,
+            taskId = storyboardContext!!.taskId,
+            shotListId = storyboardContext!!.shotListId,
+            onDeliver = { render, candidate -> renderDelivery?.let { delivery -> deliveryScope.launch { val result = if (candidate == null) delivery.output(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id) else delivery.cover(storeId, storyboardContext!!.taskId, storyboardContext!!.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id, candidate); if (result is RenderDeliveryResult.Ready) delivery.open(result.file, if (candidate == null) "video/mp4" else "image/jpeg") } } }
+        )
+        viewModel.isVideoFactoryOpen && storyboardContextRepository != null -> StoryboardContextScreen(
+            repository = storyboardContextRepository,
+            storeId = storeId,
+            onSelected = { storyboardContext = it }
         )
         viewModel.isVideoFactoryOpen -> VideoFactoryScreen(
             stage = viewModel.videoStage,
