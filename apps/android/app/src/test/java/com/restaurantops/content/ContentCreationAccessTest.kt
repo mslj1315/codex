@@ -14,4 +14,14 @@ class ContentCreationAccessTest {
             contentCreationAccessActions(hasAuthenticatedClient = true)
         )
     }
+
+    @Test fun requiredLoginRouteExposesOneReturnActionAndInvokesItsCallback() {
+        var returned = false
+        val route = remoteContentCreationRequiredRoute { returned = true }
+
+        assertEquals(1, route.actions.size)
+        assertEquals("返回登录", route.actions.single().label)
+        route.actions.single().invoke()
+        assertEquals(true, returned)
+    }
 }

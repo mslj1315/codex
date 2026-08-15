@@ -29,6 +29,15 @@ import androidx.compose.ui.unit.dp
 
 enum class ContentCreationAccessAction { ReturnToLogin }
 
+data class ContentCreationRouteAction(val label: String, private val callback: () -> Unit) {
+    fun invoke() = callback()
+}
+
+data class RemoteContentCreationRequiredRoute(val actions: List<ContentCreationRouteAction>)
+
+fun remoteContentCreationRequiredRoute(onReturnToLogin: () -> Unit): RemoteContentCreationRequiredRoute =
+    RemoteContentCreationRequiredRoute(listOf(ContentCreationRouteAction("返回登录", onReturnToLogin)))
+
 enum class ContentCreationScreenMode { Queue, Creating, TopicSelection, ThreeCopies, ReviewBlocked, Confirmed, StoryboardHandoff }
 
 fun contentCreationScreenMode(state: ContentCreationState): ContentCreationScreenMode = when {
@@ -49,13 +58,14 @@ fun RemoteContentCreationRequiredScreen(
     onReturnToLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val route = remoteContentCreationRequiredRoute(onReturnToLogin)
     Column(
         modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("内容创作", style = MaterialTheme.typography.titleLarge)
         Text("请登录客户账号后使用内容创作。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(onClick = onReturnToLogin) { Text("返回登录") }
+        Button(onClick = route.actions.single()::invoke) { Text(route.actions.single().label) }
     }
 }
 

@@ -43,4 +43,54 @@ class WorkspaceViewModelTest {
         assertEquals(OperationsPeriod("2026-08-01", "2026-08-07"), viewModel.selectedOperationsPeriod)
         assertFalse(viewModel.isImportOpen)
     }
+
+    @Test fun priorityTaskIsDeduplicatedAndRestored() {
+        val handle = SavedStateHandle()
+        val viewModel = WorkspaceViewModel(handle)
+
+        viewModel.createPriorityTask()
+        viewModel.createPriorityTask()
+
+        assertEquals(1, viewModel.tasks.size)
+        assertEquals(viewModel.tasks, WorkspaceViewModel(handle).tasks)
+    }
+
+    @Test fun importOverlayClosesAndDoesNotRestore() {
+        val handle = SavedStateHandle()
+        val viewModel = WorkspaceViewModel(handle)
+        viewModel.openImport()
+        viewModel.closeOverlay()
+
+        val restored = WorkspaceViewModel(handle)
+        assertFalse(restored.isImportOpen)
+        assertFalse(restored.isDiagnosisOpen)
+        assertFalse(restored.isStoryboardOpen)
+    }
+
+    @Test fun invalidOperationsDatesAreClearedDuringRestoration() {
+        val handle = SavedStateHandle(mapOf(
+            "workspace_operations_range_start" to "2026-08-08",
+            "workspace_operations_range_end" to "2026-08-01"
+        ))
+
+        assertEquals(null, WorkspaceViewModel(handle).selectedOperationsPeriod)
+        assertEquals(null, handle.get<String>("workspace_operations_range_start"))
+        assertEquals(null, handle.get<String>("workspace_operations_range_end"))
+    }
+
+    @Test fun overlaysRemainMutuallyExclusive() {
+        val viewModel = WorkspaceViewModel(SavedStateHandle())
+        viewModel.openDiagnosis()
+        viewModel.openImport()
+
+        assertFalse(viewModel.isDiagnosisOpen)
+        assertTrue(viewModel.isImportOpen)
+        assertFalse(viewModel.isStoryboardOpen)
+    }
+
+    @Test fun workspaceTabsMapContentCreationAndUnknownValues() {
+        assertEquals(WorkspaceTab.CONTENT_CREATION, WorkspaceTab.fromWireValue("content-creation"))
+        assertEquals("内容创作", WorkspaceTab.CONTENT_CREATION.title)
+        assertEquals(WorkspaceTab.HOME, WorkspaceTab.fromWireValue("unknown"))
+    }
 }
