@@ -10,10 +10,11 @@ interface StoryboardVideoApi {
     suspend fun listRenders(storeId: String, taskId: String, shotListId: String, projectId: String): List<StoryboardRender>
     suspend fun cancelRender(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String): StoryboardRender
     suspend fun deleteRender(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String)
-    suspend fun selectCover(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String, candidateId: String, title: String): StoryboardRender
+    suspend fun selectCover(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String, candidateId: String, title: String): CoverSelection
 }
 data class UploadGrant(val assetId: String, val uploadUrl: String, val expiresAt: String)
 data class UploadedAsset(val id: String, val displayName: String, val durationSeconds: Int)
+data class CoverSelection(val candidateId: String, val title: String)
 interface DirectVideoUploader { suspend fun upload(grant: UploadGrant, source: GalleryVideo) }
 interface StoryboardVideoRepository {
     suspend fun upload(storeId: String, taskId: String, shotListId: String, source: GalleryVideo): UploadedAsset
@@ -24,7 +25,7 @@ interface StoryboardVideoRepository {
     suspend fun listRenders(storeId: String, taskId: String, shotListId: String, projectId: String): List<StoryboardRender>
     suspend fun cancelRender(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String): StoryboardRender
     suspend fun deleteRender(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String)
-    suspend fun selectCover(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String, candidateId: String, title: String): StoryboardRender
+    suspend fun selectCover(storeId: String, taskId: String, shotListId: String, projectId: String, renderId: String, candidateId: String, title: String): CoverSelection
 }
 class HttpStoryboardVideoRepository(private val api: StoryboardVideoApi, private val uploader: DirectVideoUploader) : StoryboardVideoRepository {
     override suspend fun upload(storeId: String, taskId: String, shotListId: String, source: GalleryVideo): UploadedAsset { val grant = api.createUploadGrant(storeId, taskId, shotListId, source); uploader.upload(grant, source); return api.completeUpload(storeId, taskId, shotListId, grant.assetId) }

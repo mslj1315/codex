@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 
-data class StoryboardVideoState(val uploads: List<UploadItem> = emptyList(), val draft: StoryboardDraft? = null, val renders: List<StoryboardRender> = emptyList(), val error: String? = null)
+data class StoryboardVideoState(val uploads: List<UploadItem> = emptyList(), val draft: StoryboardDraft? = null, val renders: List<StoryboardRender> = emptyList(), val selectedCoverCandidateId: String? = null, val error: String? = null)
 class StoryboardVideoViewModel(private val repository: StoryboardVideoRepository) : ViewModel() {
     var state by mutableStateOf(StoryboardVideoState()); private set
     fun selectSources(sources: List<GalleryVideo>) { val check = StoryboardUploadPolicy.validate(sources); state = if (check.isAllowed) state.copy(uploads = sources.map(::UploadItem), error = null) else state.copy(error = check.message) }
@@ -21,6 +21,6 @@ class StoryboardVideoViewModel(private val repository: StoryboardVideoRepository
     fun refreshRenders(storeId: String, taskId: String, shotListId: String) = viewModelScope.launch { val projectId = state.draft?.projectId ?: return@launch; runCatching { repository.listRenders(storeId, taskId, shotListId, projectId) }.onSuccess { state = state.copy(renders = it) } }
     fun cancelRender(storeId: String, taskId: String, shotListId: String, renderId: String) = viewModelScope.launch { val project = state.draft ?: return@launch; runCatching { repository.cancelRender(storeId, taskId, shotListId, project.projectId, renderId) }.onSuccess { changed -> state = state.copy(renders = state.renders.map { if (it.id == changed.id) changed else it }) } }
     fun deleteRender(storeId: String, taskId: String, shotListId: String, renderId: String) = viewModelScope.launch { val project = state.draft ?: return@launch; runCatching { repository.deleteRender(storeId, taskId, shotListId, project.projectId, renderId) }.onSuccess { state = state.copy(renders = state.renders.filterNot { it.id == renderId }) } }
-    fun selectCover(storeId: String, taskId: String, shotListId: String, renderId: String, candidateId: String, title: String) = viewModelScope.launch { val project = state.draft ?: return@launch; runCatching { repository.selectCover(storeId, taskId, shotListId, project.projectId, renderId, candidateId, title) }.onSuccess { selected -> state = state.copy(renders = state.renders.map { if (it.id == selected.id) selected else it }, error = null) }.onFailure { state = state.copy(error = "Cover selection is no longer available.") } }
+    fun selectCover(storeId: String, taskId: String, shotListId: String, renderId: String, candidateId: String, title: String) = viewModelScope.launch { val project = state.draft ?: return@launch; runCatching { repository.selectCover(storeId, taskId, shotListId, project.projectId, renderId, candidateId, title) }.onSuccess { selected -> state = state.copy(selectedCoverCandidateId = selected.candidateId, draft = project.copy(coverTitle = selected.title), error = null) }.onFailure { state = state.copy(error = "Cover selection is no longer available.") } }
 }
 private fun List<UploadItem>.replace(sourceId: String, replacement: UploadItem) = map { if (it.source.id == sourceId) replacement else it }
