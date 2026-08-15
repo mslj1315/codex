@@ -87,6 +87,7 @@ describe("production deployment topology", () => {
 
     expect(script).toContain("set -eu");
     expect(script).toContain("[ ! -f .env ]");
+    expect(script).toContain("[ ! -e ../../.git ]");
     expect(script).toContain("AUTH_TOKEN_SECRET");
     expect(script).toContain("POSTGRES_DB");
     expect(script).toContain("POSTGRES_USER");
@@ -115,6 +116,9 @@ describe("production deployment topology", () => {
     expect(runbook).toContain("bot.msljkj.cn");
     expect(runbook).toContain("app.msljkj.cn");
     expect(runbook).toContain("certbot");
+    expect(runbook).toContain("HTTP-only bootstrap");
+    expect(runbook).toContain("certbot certonly --webroot");
+    expect(runbook).toContain("after certificate issuance");
     expect(runbook).toContain("provision:account");
     expect(runbook).toContain("model_pricing_operator");
     expect(runbook).toContain("grant:service-role");

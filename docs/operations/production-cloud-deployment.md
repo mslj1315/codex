@@ -15,18 +15,40 @@ git rev-parse HEAD
 sudo nginx -T
 ```
 
-Verify that `app.msljkj.cn` resolves to the target server before requesting a certificate. Install `deploy/production/nginx/app.msljkj.cn.conf` as an additional virtual host; it only proxies the API loopback address and must never expose PostgreSQL, MinIO, object storage, or a model gateway.
+Verify that `app.msljkj.cn` resolves to the target server before requesting a certificate. Do **not** install the final TLS configuration yet: it references certificate files that do not exist before issuance, so `nginx -t` would fail. First install a separate HTTP-only bootstrap virtual host for the ACME webroot. It must not proxy the API and must not alter the separate `bot.msljkj.cn` virtual host.
 
 ```sh
 getent hosts app.msljkj.cn
+sudo install -d -m 0755 /var/www/certbot
+sudo tee /etc/nginx/conf.d/app.msljkj.cn.bootstrap.conf >/dev/null <<'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name app.msljkj.cn;
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        return 404;
+    }
+}
+EOF
 sudo nginx -t
 sudo systemctl reload nginx
-sudo certbot --nginx -d app.msljkj.cn
+sudo certbot certonly --webroot -w /var/www/certbot -d app.msljkj.cn
+```
+
+Only after certificate issuance succeeds, remove the bootstrap file and install `deploy/production/nginx/app.msljkj.cn.conf` as the final virtual host. The final host only proxies the API loopback address and must never expose PostgreSQL, MinIO, object storage, or a model gateway.
+
+```sh
+sudo rm /etc/nginx/conf.d/app.msljkj.cn.bootstrap.conf
+sudo install -m 0644 /opt/restaurant-ops/deploy/production/nginx/app.msljkj.cn.conf \
+  /etc/nginx/conf.d/app.msljkj.cn.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Certbot must run only after the DNS check succeeds. Its certificate paths in the app site configuration are specific to `app.msljkj.cn`; do not replace certificates or Nginx files belonging to `bot.msljkj.cn`.
+Certbot must run only after the DNS check succeeds. Its certificate paths in the final app site configuration are specific to `app.msljkj.cn`; do not replace certificates or Nginx files belonging to `bot.msljkj.cn`.
 
 ## Server-Only Environment
 

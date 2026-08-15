@@ -12,7 +12,7 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-if [ ! -f ../../.git ]; then
+if [ ! -e ../../.git ]; then
   echo "Run this script from a checked-out restaurant-ops repository." >&2
   exit 1
 fi
