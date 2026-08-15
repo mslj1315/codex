@@ -97,6 +97,45 @@ class ContentCreationApiTest {
         }
     }
 
+    @Test fun retrofitDetailRestoresEditableCopyReviewAndSanitizedShots() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(restorationDetailJson()))
+
+            val detail = HttpContentCreationRepository(realWireApi(server)).loadTask("store-1", "task-1")
+
+            assertEquals("task-1", detail.id)
+            assertEquals("copy_draft", detail.status)
+            assertEquals("topic-1", detail.topics.single().id)
+            assertEquals("Dinner feature", detail.topics.single().title)
+            assertEquals("fresh", detail.topics.single().angle)
+            assertEquals(3, detail.copies.size)
+            assertTrue(detail.copies.all { it.topicId == "topic-1" })
+            assertEquals("Try tonight", detail.copies.first().body)
+            assertEquals("strategy-one", detail.copies.first().strategy)
+            assertEquals(2, detail.copies.first().version)
+            assertEquals("draft", detail.copies.first().status)
+            assertEquals(setOf("strategy-one", "strategy-two", "strategy-three"), detail.copies.map { it.strategy }.toSet())
+            assertEquals("copy-1", detail.reviewFindings.single().copyId)
+            assertEquals("unsupported claim", detail.reviewFindings.single().pattern)
+            assertEquals("high", detail.reviewFindings.single().severity)
+            assertEquals("Use verifiable wording", detail.reviewFindings.single().guidance)
+            assertEquals("semantic", detail.reviewFindings.single().source)
+            val shots = detail.shotList ?: error("Expected restored shot list")
+            assertEquals("shots-1", shots.id)
+            assertEquals("copy-1", shots.copyId)
+            assertEquals("draft", shots.status)
+            assertEquals(3, shots.shots.size)
+            assertEquals(1, shots.shots.first().order)
+            assertEquals("open", shots.shots.first().shot)
+            assertEquals(3, shots.shots.first().durationSeconds)
+            assertEquals("start", shots.shots.first().narration)
+            assertEquals("noodles", shots.shots.first().productReference)
+            assertEquals("visits", shots.shots.first().goalReference)
+            assertEquals(1, shots.shots.first().commercialLevel)
+            assertRequest(server, "GET", "/v1/stores/store-1/content-tasks/task-1")
+        }
+    }
+
     @Test fun invalidLocalContentInputsRejectBeforeNetwork() = runBlocking {
         MockWebServer().use { server ->
             val repository = HttpContentCreationRepository(realWireApi(server))
@@ -159,6 +198,8 @@ private fun topicJson(id: String) = "{\"id\":\"$id\",\"title\":\"Dinner feature\
 private fun copyJson(id: String, strategy: String) = "{\"id\":\"$id\",\"topicId\":\"topic-1\",\"title\":\"Dinner feature\",\"body\":\"Try tonight\",\"strategy\":\"$strategy\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"version\":1,\"status\":\"draft\"}"
 private fun detailJson() = "{\"id\":\"task-1\",\"status\":\"copy_draft\",\"topics\":[${topicJson("topic-1")}],\"copies\":[${copyJson("copy-1", "strategy-one")}],\"reviewFindings\":[],\"shotList\":null}"
 private fun shotListJson() = "{\"id\":\"shots-1\",\"copyId\":\"copy-1\",\"status\":\"draft\",\"shots\":[{\"order\":1,\"shot\":\"open\",\"durationSeconds\":3,\"narration\":\"start\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1},{\"order\":2,\"shot\":\"serve\",\"durationSeconds\":3,\"narration\":\"middle\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1},{\"order\":3,\"shot\":\"close\",\"durationSeconds\":3,\"narration\":\"end\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1}]}"
+private fun restorationDetailJson() = "{\"id\":\"task-1\",\"status\":\"copy_draft\",\"topics\":[${topicJson("topic-1")}],\"copies\":[${copyJsonWithVersion("copy-1", "strategy-one", 2)},${copyJsonWithVersion("copy-2", "strategy-two", 1)},${copyJsonWithVersion("copy-3", "strategy-three", 1)}],\"reviewFindings\":[{\"copyId\":\"copy-1\",\"pattern\":\"unsupported claim\",\"severity\":\"high\",\"guidance\":\"Use verifiable wording\",\"source\":\"semantic\"}],\"shotList\":${shotListJson()}}"
+private fun copyJsonWithVersion(id: String, strategy: String, version: Int) = "{\"id\":\"$id\",\"topicId\":\"topic-1\",\"title\":\"Dinner feature\",\"body\":\"Try tonight\",\"strategy\":\"$strategy\",\"productReference\":\"noodles\",\"goalReference\":\"visits\",\"commercialLevel\":1,\"version\":$version,\"status\":\"draft\"}"
 
 private fun copy(id: String, strategy: String) = ContentCopyWireDto(
     id = id, topicId = "topic-1", title = "Title", body = "Body", strategy = strategy,
