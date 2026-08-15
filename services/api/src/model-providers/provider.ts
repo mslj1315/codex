@@ -1,4 +1,4 @@
-export type ModelProviderId = "deepseek" | "qwen";
+export type ModelProviderId = "deepseek" | "qwen" | "openai_responses";
 
 export interface ModelHttpRequest {
   url: string;

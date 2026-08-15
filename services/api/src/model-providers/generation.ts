@@ -1,4 +1,5 @@
 import { DeepSeekProvider } from "./deepseek.js";
+import { OpenAIResponsesProvider } from "./openai-responses.js";
 import { ModelProviderError, ModelProviderResponseError, ModelProviderTimeoutError, type ModelHttpClient, type ModelProvider, type ModelProviderId } from "./provider.js";
 import { QwenProvider } from "./qwen.js";
 
@@ -24,7 +25,9 @@ export function createGenerationService(config: GenerationConfig, dependencies: 
   const http = dependencies.http ?? defaultHttp;
   const provider: ModelProvider = config.provider === "deepseek"
     ? new DeepSeekProvider(config.apiKey, http, config.baseUrl)
-    : new QwenProvider(config.apiKey, http, config.baseUrl);
+    : config.provider === "qwen"
+      ? new QwenProvider(config.apiKey, http, config.baseUrl)
+      : new OpenAIResponsesProvider(config.apiKey, http, config.baseUrl);
   const now = dependencies.now ?? Date.now;
   const maxRetries = config.maxRetries ?? 1;
   const timeoutMs = config.timeoutMs ?? 15_000;
@@ -59,7 +62,7 @@ export function createConfiguredGenerationService(environment: Record<string, st
   const model = environment.MODEL_MODEL;
   const apiKey = environment.MODEL_API_KEY;
   if (!provider && !model && !apiKey) return undefined;
-  if (provider !== "deepseek" && provider !== "qwen") throw new Error("MODEL_PROVIDER must be deepseek or qwen");
+  if (provider !== "deepseek" && provider !== "qwen" && provider !== "openai_responses") throw new Error("MODEL_PROVIDER must be deepseek, qwen, or openai_responses");
   if (!model) throw new Error("MODEL_MODEL is required when MODEL_PROVIDER is configured");
   if (!apiKey) throw new Error("MODEL_API_KEY is required when MODEL_PROVIDER is configured");
   return createGenerationService({ provider, model, apiKey, baseUrl: baseUrlFromEnv(environment.MODEL_BASE_URL), timeoutMs: numberFromEnv(environment.MODEL_TIMEOUT_MS), maxRetries: numberFromEnv(environment.MODEL_MAX_RETRIES) });

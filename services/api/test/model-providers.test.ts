@@ -18,7 +18,65 @@ function successfulResponse(content: unknown) {
   };
 }
 
+function successfulResponsesResponse(content: unknown) {
+  return {
+    status: 200,
+    json: async () => ({
+      status: "completed",
+      output: [{
+        type: "message",
+        status: "completed",
+        content: [{ type: "output_text", text: JSON.stringify(content) }]
+      }],
+      usage: { input_tokens: 12, output_tokens: 8, total_tokens: 20 }
+    })
+  };
+}
+
 describe("model providers", () => {
+  it("uses the Responses API with disabled storage and maps completed structured output", async () => {
+    const http: ModelHttpClient = { post: vi.fn().mockResolvedValue(successfulResponsesResponse([{ title: "午市排队的原因", angle: "后厨备料", productReference: "招牌牛肉面", goalReference: "到店", commercialLevel: 1 }])) };
+    const service = createGenerationService({ provider: "openai_responses", model: "gpt-5.6-terra-openai-compact", apiKey: "openai-secret", baseUrl: "https://gateway.example/v1/", maxRetries: 0 }, { http });
+
+    const result = await service.generateStructured({ requestId: "request-responses", promptVersion: "topic-v1", commercialLevel: 1, input: { inspiration: "早上熬汤" }, schema: topicArraySchema });
+
+    expect(result).toMatchObject({ provider: "openai_responses", model: "gpt-5.6-terra-openai-compact", output: [{ title: "午市排队的原因" }], usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 } });
+    expect(http.post).toHaveBeenCalledWith(expect.objectContaining({ url: "https://gateway.example/v1/responses", headers: { authorization: "Bearer openai-secret", "content-type": "application/json" } }));
+    expect(JSON.parse((http.post as ReturnType<typeof vi.fn>).mock.calls[0][0].body)).toMatchObject({
+      model: "gpt-5.6-terra-openai-compact",
+      store: false,
+      text: { format: { type: "json_object" } },
+      input: [{ role: "user", content: [{ type: "input_text", text: expect.any(String) }] }]
+    });
+    expect(JSON.parse(JSON.parse((http.post as ReturnType<typeof vi.fn>).mock.calls[0][0].body).input[0].content[0].text)).toMatchObject({ commercialLevel: 1, input: { inspiration: "早上熬汤" } });
+  });
+
+  it("rejects incomplete or malformed Responses output without retrying", async () => {
+    const request = { requestId: "request-incomplete", promptVersion: "topic-v1", commercialLevel: 1 as const, input: {}, schema: topicArraySchema };
+    const incomplete: ModelHttpClient = { post: vi.fn().mockResolvedValue({ status: 200, json: async () => ({ status: "in_progress", output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }) }) };
+    const malformed: ModelHttpClient = { post: vi.fn().mockResolvedValue({ status: 200, json: async () => ({ status: "completed", output: [{ type: "message", status: "completed", content: [{ type: "output_text", text: "not json" }] }], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }) }) };
+
+    await expect(createGenerationService({ provider: "openai_responses", model: "test", apiKey: "key", maxRetries: 1 }, { http: incomplete }).generateStructured(request)).rejects.toThrow("structured content");
+    await expect(createGenerationService({ provider: "openai_responses", model: "test", apiKey: "key", maxRetries: 1 }, { http: malformed }).generateStructured(request)).rejects.toThrow("invalid JSON");
+    expect(incomplete.post).toHaveBeenCalledTimes(1);
+    expect(malformed.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries HTTP 429 Responses failures", async () => {
+    const http: ModelHttpClient = { post: vi.fn().mockResolvedValueOnce({ status: 429, json: async () => ({}) }).mockResolvedValueOnce(successfulResponsesResponse([{ title: "午市", angle: "过程", productReference: "米线", goalReference: "到店", commercialLevel: 1 }])) };
+    const service = createGenerationService({ provider: "openai_responses", model: "test", apiKey: "key", maxRetries: 1 }, { http, sleep: async () => undefined });
+
+    await expect(service.generateStructured({ requestId: "request-429", promptVersion: "topic-v1", commercialLevel: 1, input: {}, schema: topicArraySchema })).resolves.toMatchObject({ provider: "openai_responses" });
+    expect(http.post).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects Responses output with missing usage instead of fabricating token counts", async () => {
+    const http: ModelHttpClient = { post: vi.fn().mockResolvedValue({ status: 200, json: async () => ({ status: "completed", output: [{ type: "message", status: "completed", content: [{ type: "output_text", text: JSON.stringify([{ title: "午市", angle: "过程", productReference: "米线", goalReference: "到店", commercialLevel: 1 }]) }] }], usage: { input_tokens: 1, output_tokens: 1 } }) }) };
+    const service = createGenerationService({ provider: "openai_responses", model: "test", apiKey: "key", maxRetries: 1 }, { http });
+
+    await expect(service.generateStructured({ requestId: "request-missing-usage", promptVersion: "topic-v1", commercialLevel: 1, input: {}, schema: topicArraySchema })).rejects.toThrow("invalid usage");
+    expect(http.post).toHaveBeenCalledTimes(1);
+  });
   it("normalizes DeepSeek requests and returns provider/model/usage metadata", async () => {
     const http: ModelHttpClient = { post: vi.fn().mockResolvedValue(successfulResponse([{ title: "午市排队的原因", angle: "后厨备料", productReference: "招牌牛肉面", goalReference: "到店", commercialLevel: 1 }])) };
     const service = createGenerationService({ provider: "deepseek", model: "deepseek-chat", apiKey: "deepseek-secret", maxRetries: 0 }, { http });
@@ -126,5 +184,6 @@ describe("model providers", () => {
     expect(() => createConfiguredGenerationService({ MODEL_PROVIDER: "deepseek", MODEL_MODEL: "deepseek-chat", MODEL_API_KEY: "key", MODEL_BASE_URL: " " })).toThrow("MODEL_BASE_URL");
     expect(() => createConfiguredGenerationService({ MODEL_PROVIDER: "deepseek", MODEL_MODEL: "deepseek-chat", MODEL_API_KEY: "key", MODEL_BASE_URL: "http://provider.example/v1" })).toThrow("MODEL_BASE_URL");
     expect(() => createConfiguredGenerationService({ MODEL_PROVIDER: "deepseek", MODEL_MODEL: "deepseek-chat", MODEL_API_KEY: "key", MODEL_BASE_URL: "not-a-url" })).toThrow("MODEL_BASE_URL");
+    expect(createConfiguredGenerationService({ MODEL_PROVIDER: "openai_responses", MODEL_MODEL: "gpt-5.6-terra-openai-compact", MODEL_API_KEY: "key", MODEL_BASE_URL: "https://gateway.example/v1" })).toBeDefined();
   });
 });
