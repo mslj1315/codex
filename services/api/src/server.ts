@@ -21,6 +21,7 @@ import { registerWorkflowRoutes } from "./content-planning/workflow-routes.js";
 import { createConfiguredGenerationService, type ModelGenerationService } from "./model-providers/generation.js";
 import { registerVideoAssetRoutes } from "./video-editing/routes.js";
 import { createConfiguredVideoStorage, type VideoStorage } from "./video-editing/storage.js";
+import { registerStoryboardContextRoutes } from "./video-editing/storyboard-context-routes.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -91,6 +92,7 @@ export function buildServer(options: ServerOptions = {}) {
       now: options.now ?? (() => new Date())
     }));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
+    app.register((instance) => registerStoryboardContextRoutes(instance, database, contextResolver));
     if (options.modelGenerationService) {
       app.register((instance) => registerWorkflowRoutes(instance, database, contextResolver, options.modelGenerationService!));
     }
