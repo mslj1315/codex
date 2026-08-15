@@ -132,6 +132,25 @@ class ContentCreationViewModelTest {
         assertFalse(viewModel.state.value.creationSheetOpen)
     }
 
+    @Test fun cancellationDuringPendingTopicRecoveryDoesNotWriteAnErrorOrRecoveryState() = runTest(dispatcher) {
+        val repository = FakeContentCreationRepository().apply {
+            createdTaskId = "created-task"
+            topicFailures += IllegalStateException("topic failure")
+            listFailure = CancellationException("recovery cancelled")
+        }
+        val viewModel = ContentCreationViewModel(repository)
+        viewModel.openCreationSheet()
+        viewModel.updateCreationInput(ContentCreationInput("persona", "video", "style", 1))
+
+        viewModel.createAndGenerateTopics("store")
+        advanceUntilIdle()
+
+        assertEquals("created-task", viewModel.state.value.pendingTopicGenerationTaskId)
+        assertNull(viewModel.state.value.task)
+        assertNull(viewModel.state.value.error)
+        assertFalse(viewModel.state.value.finalizing)
+    }
+
     @Test fun restoredTopicsWithoutCopiesForcesTopicSelectionWithoutPersistingChoice() = runTest(dispatcher) {
         val repository = FakeContentCreationRepository(detail(copies = emptyList()))
         val viewModel = ContentCreationViewModel(repository)

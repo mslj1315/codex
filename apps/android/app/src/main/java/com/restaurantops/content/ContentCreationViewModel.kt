@@ -250,6 +250,8 @@ class ContentCreationViewModel(private val repository: ContentCreationApi) : Vie
             refreshQueue(storeId)
             restoreTask(storeId, taskId)
             mutableState.value = mutableState.value.copy(pendingTopicGenerationTaskId = taskId, creationSheetOpen = true)
+        } catch (error: CancellationException) {
+            throw error
         } catch (_: Exception) {
             mutableState.value = mutableState.value.copy(pendingTopicGenerationTaskId = taskId)
         }
