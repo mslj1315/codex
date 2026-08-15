@@ -23,8 +23,12 @@ export class FfmpegRenderRunner implements RenderRunner {
     for (let index = 0; index < manifest.sources.length; index++) await this.files.writeFile(join(workspacePath, `source-${index + 1}.mp4`), manifest.sources[index]!);
     await this.files.writeFile(join(workspacePath, "subtitles.srt"), subtitles(slots));
     const inputArgs = slots.flatMap(slot => ["-ss", number(slot.trimStartSeconds), "-t", number(slot.trimEndSeconds - slot.trimStartSeconds), "-i", `source-${slot.sourceIndex + 1}.mp4`]);
-    const graph = `${slots.map((_, index) => `[${index}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v${index}]`).join(";")};${slots.map((_, index) => `[v${index}]`).join("")}concat=n=${slots.length}:v=1:a=0,subtitles=subtitles.srt[v]`;
-    await run(this.spawn, this.options.ffmpegPath, ["-y", ...inputArgs, "-filter_complex", graph, "-map", "[v]", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-s", "1080x1920", "-movflags", "+faststart", "output.mp4"], workspacePath);
+    const hasAudio = slots.some(slot => !slot.muted);
+    const visuals = slots.map((_, index) => `[${index}:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v${index}]`);
+    const audio = hasAudio ? slots.map((slot, index) => slot.muted ? `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]` : `[${index}:a]atrim=start=0:end=${number(slot.trimEndSeconds - slot.trimStartSeconds)},asetpts=PTS-STARTPTS[a${index}]`) : [];
+    const graph = hasAudio ? `${[...visuals, ...audio].join(";")};${slots.map((_, index) => `[v${index}][a${index}]`).join("")}concat=n=${slots.length}:v=1:a=1[v0][a];[v0]subtitles=subtitles.srt[v]` : `${visuals.join(";")};${slots.map((_, index) => `[v${index}]`).join("")}concat=n=${slots.length}:v=1:a=0,subtitles=subtitles.srt[v]`;
+    const outputArgs = hasAudio ? ["-map", "[v]", "-map", "[a]", "-c:a", "aac"] : ["-map", "[v]", "-an"];
+    await run(this.spawn, this.options.ffmpegPath, ["-y", ...inputArgs, "-filter_complex", graph, ...outputArgs, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-s", "1080x1920", "-movflags", "+faststart", "output.mp4"], workspacePath);
     const metadata = await this.probe(workspacePath, "output.mp4");
     const positions = coverPositions(metadata.durationSeconds);
     for (let index = 0; index < positions.length; index++) await run(this.spawn, this.options.ffmpegPath, ["-y", "-ss", number(positions[index]!), "-i", "output.mp4", "-frames:v", "1", "-q:v", "2", `cover-${index + 1}.jpg`], workspacePath);

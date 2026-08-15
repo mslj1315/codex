@@ -7,7 +7,7 @@ import { buildServer } from "../src/server.js";
 import { InMemoryVideoStorage } from "../src/video-editing/storage.js";
 import { StoryboardRenderWorker } from "../src/video-editing/worker.js";
 import { RenderArtifactCleanupRunner } from "../src/video-editing/render-cleanup.js";
-import { DatabaseRenderWorkerRepository } from "../src/video-editing/render-repository.js";
+import { DatabaseRenderWorkerRepository, RenderRepository } from "../src/video-editing/render-repository.js";
 
 const scope = { enterpriseId: "render-ent", storeId: "render-store", actorId: "render-customer" };
 
@@ -23,7 +23,7 @@ describe("storyboard render queue", () => {
     const memory = newDb({ noAstCoverageCheck: true });
     memory.public.registerFunction({ name: "jsonb_typeof", args: [DataType.jsonb], returns: DataType.text, implementation: value => Array.isArray(value) ? "array" : typeof value === "object" && value !== null ? "object" : typeof value });
     const { Pool } = memory.adapters.createPg(); database = new Pool();
-    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql", "024_storyboard_render_artifacts.sql"]) {
+    for (const file of ["001_imports.sql", "013_content_planning_profile.sql", "014_content_templates_rules.sql", "015_operator_accounts_sessions.sql", "016_operator_content_versions.sql", "017_douyin_official_connections.sql", "018_content_planning_workflow.sql", "019_storyboard_media_assets.sql", "020_storyboard_media_asset_hardening.sql", "021_storyboard_projects.sql", "022_storyboard_render_jobs.sql", "023_storyboard_render_lifecycle.sql", "024_storyboard_render_artifacts.sql", "025_storyboard_render_leases.sql"]) {
       const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
       await database.query(sql.replace(/CREATE OR REPLACE FUNCTION[\s\S]*$/, ""));
     }
@@ -74,6 +74,14 @@ describe("storyboard render queue", () => {
     expect(events.join("\n")).toContain("output:video/mp4");
     expect(events.filter(event => event === "output:image/jpeg")).toHaveLength(3);
     expect(events.find(event => event.startsWith("succeed:"))).toContain('"positionSeconds":1');
+  });
+
+  it("removes protected output when cancellation wins after the write", async () => {
+    let cancelledChecks = 0; const events: string[] = [];
+    const worker = new StoryboardRenderWorker({ claim: async () => ({ id: "cancel-after-write", kind: "final", projectId, projectVersion: 1, durationSeconds: 4, subtitleText: [], sourceKeys: ["source"] }), isCancelled: async () => ++cancelledChecks >= 3, succeed: async () => { events.push("succeed"); }, fail: async () => { events.push("fail"); } }, { create: async () => "workspace", remove: async () => {} }, { download: async () => Buffer.from("source"), putProtected: async key => { events.push(`put:${key}`); }, deleteProtected: async key => { events.push(`delete:${key}`); } }, { render: async () => ({ output: Buffer.from("output"), metadata: { width: 1080, height: 1920, fps: 30, durationSeconds: 4, contentType: "video/mp4" }, coverFrames: [{ positionSeconds: 1, bytes: Buffer.from("1") }, { positionSeconds: 2, bytes: Buffer.from("2") }, { positionSeconds: 3, bytes: Buffer.from("3") }] }) });
+    await worker.runOnce();
+    expect(events).toContain("delete:storyboard-render-output/cancel-after-write.mp4");
+    expect(events).not.toContain("succeed");
   });
 
   it("lets its customer list and cancel a queued render without exposing output storage", async () => {
@@ -135,10 +143,16 @@ describe("storyboard render queue", () => {
     await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state) VALUES('job-success',$1,$2,$3,$4,$5,1,'final','queued')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]);
     const claimed = await repository.claim();
     expect(claimed?.id).toBe("job-success");
+    expect(claimed?.leaseToken).toEqual(expect.any(String));
     expect(claimed?.slots).toEqual([{ sourceKey: "source-object", trimStartSeconds: 0, trimEndSeconds: 5, muted: false, subtitleText: "subtitle", subtitleEnabled: true }]);
     expect((await database.query("SELECT state,attempt_count FROM storyboard_render_jobs WHERE id='job-success'")).rows).toEqual([{ state: "processing", attempt_count: 1 }]);
     await repository.succeed("job-success", { outputExpiresAt: new Date("2027-02-11T00:00:00.000Z"), coverCandidates: [{ positionSeconds: 1 }, { positionSeconds: 2 }, { positionSeconds: 3 }], artifacts: [{ objectKey: "output", kind: "video" }, { objectKey: "cover-1", kind: "cover" }, { objectKey: "cover-2", kind: "cover" }, { objectKey: "cover-3", kind: "cover" }] });
     expect((await database.query("SELECT kind FROM storyboard_render_artifacts WHERE render_job_id='job-success' ORDER BY kind")).rows).toHaveLength(4);
+    await database.query("UPDATE storyboard_render_jobs SET output_expires_at=$2 WHERE id='job-success'", ["job-success", now]);
+    const cleanupRepository = new RenderRepository(database).cleanupRepository(() => now);
+    for (let artifact = await cleanupRepository.claimDue(); artifact; artifact = await cleanupRepository.claimDue()) await cleanupRepository.markDeleted(artifact.id);
+    expect((await database.query("SELECT deleted_at FROM storyboard_render_jobs WHERE id='job-success'")).rows[0].deleted_at).not.toBeNull();
+    expect((await database.query("SELECT reason FROM storyboard_render_output_deletions WHERE render_job_id='job-success'")).rows).toEqual([{ reason: "retention_expired" }]);
     await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state) VALUES('job-retry',$1,$2,$3,$4,$5,1,'final','processing')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]); await repository.fail("job-retry", "infrastructure_unavailable", true);
     expect((await database.query("SELECT state,next_attempt_at FROM storyboard_render_jobs WHERE id='job-retry'")).rows[0].state).toBe("queued");
     await database.query("UPDATE storyboard_render_jobs SET state='cancelled' WHERE id='job-retry'"); await database.query("INSERT INTO storyboard_render_jobs(id,enterprise_id,store_id,task_id,shot_list_id,project_id,project_version,kind,state) VALUES('job-terminal',$1,$2,$3,$4,$5,1,'final','processing')", [scope.enterpriseId, scope.storeId, taskId, shotListId, projectId]); await repository.fail("job-terminal", "render_validation_failed", false);

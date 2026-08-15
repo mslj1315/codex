@@ -39,6 +39,18 @@ describe("FFmpeg storyboard render runner", () => {
     const runner = new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files });
     await expect(runner.render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] })).rejects.toThrow("Invalid FFmpeg output metadata");
   });
+
+  it("retains unmuted slot audio with trim and concat instead of globally disabling audio", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const spawn: SpawnProcess = async (command, args) => { calls.push({ command, args }); return command === "ffprobe" ? { stdout: JSON.stringify({ format: { format_name: "mp4", duration: "4" }, streams: [{ codec_type: "video", codec_name: "h264", width: 1080, height: 1920, r_frame_rate: "30/1", pix_fmt: "yuv420p" }] }), stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 }; };
+    const files = new MemoryFiles(); for (const name of ["output.mp4", "cover-1.jpg", "cover-2.jpg", "cover-3.jpg"]) files.set(join("work", name), Buffer.from(name));
+    await new FfmpegRenderRunner({ ffmpegPath: "ffmpeg", ffprobePath: "ffprobe", spawn, files }).render({ width: 1080, height: 1920, fps: 30, durationSeconds: 4, subtitles: [], sources: [Buffer.from("source")], workspacePath: "work", slots: [{ sourceIndex: 0, trimStartSeconds: 0, trimEndSeconds: 4, muted: false, subtitleEnabled: false }] });
+    const args = calls[0]!.args;
+    expect(args).not.toContain("-an");
+    expect(args).toEqual(expect.arrayContaining(["-c:a", "aac"]));
+    expect(args[args.indexOf("-filter_complex") + 1]).toContain("atrim=start=0:end=4,asetpts=PTS-STARTPTS[a0]");
+    expect(args[args.indexOf("-filter_complex") + 1]).toContain("concat=n=1:v=1:a=1[v0][a]");
+  });
 });
 
 const integration = process.env.FFMPEG_INTEGRATION === "1" ? it : it.skip;
