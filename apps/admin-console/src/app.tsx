@@ -1,13 +1,20 @@
 import { type FormEvent, useEffect, useState } from "react";
 
 export type AdminSession = { account: { id: string; displayName: string }; permissions: string[] };
-export type AdminApi = { request(path: string, init?: RequestInit): Promise<Response> };
+export type AdminApi = { request(path: string, init?: RequestInit): Promise<Response>; login?(loginName:string,password:string):Promise<AdminSession> };
 type View = "概览" | "客户管理" | "内容运营" | "模型运营" | "权限管理";
 
-export function App({ session, api }: { session: AdminSession; api?: AdminApi }) {
+export function App({ session, api = browserApi() }: { session?: AdminSession; api?: AdminApi }) {
+  const [current,setCurrent]=useState(session);
+  if(!current)return <Login api={api} onLogin={setCurrent}/>;
+  return <Console session={current} api={api}/>;
+}
+function Login({api,onLogin}:{api:AdminApi;onLogin:(s:AdminSession)=>void}){const [name,setName]=useState("");const [password,setPassword]=useState("");const [bad,setBad]=useState(false);async function submit(e:FormEvent<HTMLFormElement>){e.preventDefault();try{if(!api.login)throw new Error();onLogin(await api.login(name,password));}catch{setBad(true)}finally{setPassword("")}}return <main><form onSubmit={(e)=>void submit(e)}><h1>餐饮运营管理后台</h1><label>账号<input value={name} onChange={e=>setName(e.target.value)} required/></label><label>密码<input type="password" value={password} onChange={e=>setPassword(e.target.value)} required/></label>{bad&&<p role="alert">账号、密码或后台权限无效。</p>}<button>登录</button></form></main>}
+function Console({ session, api }: { session: AdminSession; api?: AdminApi }) {
   const views = allowedViews(session.permissions); const [view, setView] = useState<View>(views[0]!);
   return <div className="shell"><aside><strong>餐饮运营</strong><small>{session.account.displayName}</small><nav aria-label="管理导航">{views.map((item) => <button className={view === item ? "selected" : ""} key={item} onClick={() => setView(item)}>{item}</button>)}</nav></aside><main><h1>{view}</h1>{view === "概览" && <p>仅展示安全运行状态和汇总信息，不展示客户原始内容、素材、审核记录或对象地址。</p>}{view === "客户管理" && <Customers permissions={session.permissions} api={api} />}{view === "内容运营" && <p>模板与审核规则只允许版本化发布；不展示客户文案或审核记录。</p>}{view === "模型运营" && <Models permissions={session.permissions} api={api} />}{view === "权限管理" && <><p>服务端权限摘要</p><ul>{session.permissions.map((permission) => <li key={permission}>{permission}</li>)}</ul></>}</main></div>;
 }
+function browserApi():AdminApi{let token="";const request=(path:string,init:RequestInit={})=>fetch(path,{...init,headers:{...init.headers,Authorization:`Bearer ${token}`}});return{request,async login(loginName,password){const login=await fetch("/v1/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({loginName,password})});if(!login.ok)throw new Error();const value=await login.json() as {accessToken:string};token=value.accessToken;const summary=await request("/v1/auth/me/internal-permissions");if(!summary.ok)throw new Error();return summary.json() as Promise<AdminSession>;}}}
 
 function Customers({ permissions, api }: { permissions: string[]; api?: AdminApi }) {
   const [items, setItems] = useState<Array<{id:string;loginName:string;displayName:string;enterpriseId:string;storeId:string;enabled:boolean;passwordChangeRequired:boolean}>>([]);
