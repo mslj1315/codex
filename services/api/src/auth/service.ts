@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { TrustedContext } from "../imports/service.js";
-import { hashPassword, isBcryptPasswordLength, isLegacyScryptPasswordHash, verifyPassword } from "./credentials.js";
+import { hashNewPassword, hashPassword, isBcryptPasswordLength, isLegacyScryptPasswordHash, isNewPassword, verifyPassword } from "./credentials.js";
 import { AuthRepository, type ServiceOperatorRole, type StoreMembership } from "./repository.js";
 import { InternalAuthorizationError, InternalPermissionRepository, requireInternalPermission, type InternalPermission } from "../admin/rbac.js";
 import { AuthenticationError, createRefreshToken, hashRefreshToken, issueAccessToken, parseAccessToken } from "./tokens.js";
@@ -59,11 +59,11 @@ export class AuthService {
   }
 
   async changePassword(accessToken: string, input: { currentPassword: string; newPassword: string }): Promise<void> {
-    if (Buffer.byteLength(input.newPassword, "utf8") < 12 || !isBcryptPasswordLength(input.newPassword)) throw new AuthenticationError("Authentication required");
+    if (!isNewPassword(input.newPassword)) throw new AuthenticationError("Authentication required");
     const identity = parseAccessToken(accessToken, this.secret, this.now());
     const account = await this.repository.findActiveSession(identity.accountId, identity.sessionId, this.now());
     if (!account || !await verifyPassword(input.currentPassword, account.passwordHash)) throw new AuthenticationError("Authentication required");
-    if (!await this.repository.changePassword({ accountId: account.id, currentPasswordHash: account.passwordHash, nextPasswordHash: await hashPassword(input.newPassword) })) throw new AuthenticationError("Authentication required");
+    if (!await this.repository.changePassword({ accountId: account.id, currentPasswordHash: account.passwordHash, nextPasswordHash: await hashNewPassword(input.newPassword) })) throw new AuthenticationError("Authentication required");
   }
 
   async authenticateAccessToken(accessToken: string): Promise<{ id: string; displayName: string }> {

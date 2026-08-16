@@ -1,9 +1,17 @@
 import { scrypt as nodeScrypt } from "node:crypto";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { hashPassword, verifyPassword } from "../src/auth/credentials.js";
+import { hashNewPassword, hashPassword, verifyPassword } from "../src/auth/credentials.js";
 
 describe("auth credentials", () => {
+  it("requires new passwords to have at least eight characters with ASCII uppercase and lowercase letters", async () => {
+    for (const password of ["Abcdefg", "abcdefgh", "ABCDEFGH"]) {
+      await expect(hashNewPassword(password)).rejects.toThrow();
+    }
+
+    await expect(hashNewPassword("Abcdefgh")).resolves.toMatch(/^\$2[aby]\$/);
+  });
+
   it("hashes a password and verifies only the original value", async () => {
     const hash = await hashPassword("correct horse battery staple", () => Buffer.alloc(16, 7));
 

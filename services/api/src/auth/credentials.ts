@@ -14,6 +14,11 @@ export async function hashPassword(password: string, _legacyRandom?: unknown): P
   return bcrypt.hash(password, BCRYPT_COST);
 }
 
+export async function hashNewPassword(password: string): Promise<string> {
+  if (!isNewPassword(password)) throw new PasswordValidationError();
+  return bcrypt.hash(password, BCRYPT_COST);
+}
+
 export async function verifyPassword(password: string, serialized: string): Promise<boolean> {
   if (/^\$2[aby]\$\d\d\$/.test(serialized)) return bcrypt.compare(password, serialized);
   const legacy = parseLegacyScrypt(serialized);
@@ -24,6 +29,9 @@ export async function verifyPassword(password: string, serialized: string): Prom
 
 export function isLegacyScryptPasswordHash(value: string): boolean { return parseLegacyScrypt(value) !== undefined; }
 export function isBcryptPasswordLength(value: string): boolean { const bytes = Buffer.byteLength(value, "utf8"); return bytes > 0 && bytes <= 72; }
+export function isNewPassword(value: string): boolean {
+  return Buffer.byteLength(value, "utf8") >= 8 && isBcryptPasswordLength(value) && /[A-Z]/.test(value) && /[a-z]/.test(value);
+}
 export class PasswordValidationError extends Error {}
 
 function parseLegacyScrypt(serialized: string): { salt: Buffer; expected: Buffer } | undefined {

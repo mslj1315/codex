@@ -52,6 +52,20 @@ describe("authentication routes", () => {
     expect(afterLogout.statusCode).toBe(401);
   });
 
+  it("accepts only policy-compliant password changes and keeps rejected changes neutral", async () => {
+    const accessToken = (await loginOwner(app)).json<{ accessToken: string }>().accessToken;
+
+    for (const newPassword of ["Abcdefg", "abcdefgh", "ABCDEFGH"]) {
+      const rejected = await app.inject({ method: "POST", url: "/v1/auth/change-password", headers: bearer(accessToken), payload: { currentPassword: "passphrase", newPassword } });
+      expect(rejected.statusCode).toBe(401);
+      expect(rejected.json()).toEqual({ error: "Authentication required" });
+    }
+
+    const changed = await app.inject({ method: "POST", url: "/v1/auth/change-password", headers: bearer(accessToken), payload: { currentPassword: "passphrase", newPassword: "Abcdefgh" } });
+    expect(changed.statusCode).toBe(204);
+    expect((await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "owner", password: "Abcdefgh" } })).statusCode).toBe(200);
+  });
+
   it("derives existing store route context from the bearer membership", async () => {
     const accessToken = (await loginOwner(app)).json<{ accessToken: string }>().accessToken;
     const allowed = await app.inject({ method: "GET", url: "/v1/stores/store_demo/readiness?rangeStart=2026-08-01&rangeEnd=2026-08-07", headers: bearer(accessToken) });

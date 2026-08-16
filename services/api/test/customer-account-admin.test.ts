@@ -47,10 +47,10 @@ describe("customer account administration", () => {
 
     expect(accessToken.passwordChangeRequired).toBe(true);
     expect((await app.inject({ method: "GET", url: "/v1/auth/me/stores", headers: bearer(accessToken.accessToken) })).statusCode).toBe(403);
-    const changed = await app.inject({ method: "POST", url: "/v1/auth/change-password", headers: bearer(accessToken.accessToken), payload: { currentPassword: account.temporaryPassword, newPassword: "a-new-safe-password" } });
+    const changed = await app.inject({ method: "POST", url: "/v1/auth/change-password", headers: bearer(accessToken.accessToken), payload: { currentPassword: account.temporaryPassword, newPassword: "A-new-safe-password" } });
     expect(changed.statusCode).toBe(204);
 
-    const usable = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "13900139000", password: "a-new-safe-password" } });
+    const usable = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "13900139000", password: "A-new-safe-password" } });
     const currentToken = usable.json<{ accessToken: string }>().accessToken;
     const reset = await app.inject({ method: "POST", url: `/v1/admin/customer-accounts/${account.account.id}/reset-password`, headers: await superBearer(app) });
     expect(reset.statusCode).toBe(200);
