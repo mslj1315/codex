@@ -11,8 +11,16 @@ export function AccountSecurity({ api, onPasswordChanged }: { api: AdminApi; onP
     const currentPassword = String(form.get("currentPassword") ?? "");
     const newPassword = String(form.get("newPassword") ?? "");
     const confirmPassword = String(form.get("confirmPassword") ?? "");
-    if (newPassword !== confirmPassword) return setFailure("mismatch");
-    if (!isNewPassword(newPassword)) return setFailure("format");
+    if (newPassword !== confirmPassword) {
+      formElement.reset();
+      setFailure("mismatch");
+      return;
+    }
+    if (!isNewPassword(newPassword)) {
+      formElement.reset();
+      setFailure("format");
+      return;
+    }
 
     try {
       setFailure(undefined);

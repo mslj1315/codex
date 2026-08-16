@@ -177,6 +177,9 @@ describe("unified admin console", () => {
     await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
 
     expect(client.changePassword).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u65b0\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801")).toHaveValue("");
     expect(screen.getByRole("alert")).toHaveTextContent("\u8bf7\u786e\u8ba4\u4e24\u6b21\u8f93\u5165\u7684\u65b0\u5bc6\u7801\u4e00\u81f4");
   });
 
@@ -190,6 +193,9 @@ describe("unified admin console", () => {
     await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
 
     expect(client.changePassword).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u65b0\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801")).toHaveValue("");
     expect(screen.getByRole("alert")).toHaveTextContent("\u65b0\u5bc6\u7801\u81f3\u5c11 8 \u4f4d");
   });
 
