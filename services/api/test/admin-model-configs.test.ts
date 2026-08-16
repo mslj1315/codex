@@ -71,6 +71,24 @@ describe("admin model configurations", () => {
     expect(audit).toContain("model_configuration.key_rotated");
     expect(audit).not.toMatch(/old-secret|new-secret|ciphertext|nonce/i);
   });
+
+  it("rejects creating a disabled default configuration", async () => {
+    const response = await app.inject({ method: "POST", url: "/v1/admin/model-configs", headers: await superBearer(app), payload: {
+      label: "Invalid default", provider: "deepseek", model: "m", baseUrl: "https://safe.example/v1", apiKey: "secret", enabled: false, makeDefault: true
+    } });
+    expect(response.statusCode).toBe(400);
+    expect((await database.query("SELECT id FROM model_configurations")).rowCount).toBe(0);
+  });
+
+  it("rejects disabling the current default configuration", async () => {
+    const created = await app.inject({ method: "POST", url: "/v1/admin/model-configs", headers: await superBearer(app), payload: {
+      label: "Default", provider: "qwen", model: "m", baseUrl: "https://safe.example/v1", apiKey: "secret", enabled: true, makeDefault: true
+    } });
+    const id = created.json<{ id: string }>().id;
+    const response = await app.inject({ method: "POST", url: `/v1/admin/model-configs/${id}/enabled`, headers: await superBearer(app), payload: { enabled: false } });
+    expect(response.statusCode).toBe(422);
+    expect((await database.query("SELECT enabled,is_default FROM model_configurations WHERE id=$1", [id])).rows[0]).toMatchObject({ enabled: true, is_default: true });
+  });
 });
 
 async function superBearer(app: ReturnType<typeof buildServer>) { const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "super", password: "passphrase" } }); return bearer(login.json<{ accessToken: string }>().accessToken); }
