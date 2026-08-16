@@ -29,7 +29,7 @@ class LoginViewModel(
         uiState = LoginUiState.Loading
         viewModelScope.launch {
             uiState = try {
-                LoginUiState.Success(repository.login(normalizedLoginName, submittedPassword))
+                LoginUiState.Success(normalizedLoginName, repository.login(normalizedLoginName, submittedPassword))
             } catch (error: AuthRequestException) {
                 if (error.statusCode == 401) {
                     LoginUiState.Error("账号或密码不正确")

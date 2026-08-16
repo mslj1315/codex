@@ -1,0 +1,34 @@
+package com.restaurantops.content
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+
+data class StoryboardVideoState(val uploads: List<UploadItem> = emptyList(), val draft: StoryboardDraft? = null, val renders: List<StoryboardRender> = emptyList(), val selectedCoverCandidateId: String? = null, val error: String? = null)
+class StoryboardVideoViewModel(private val repository: StoryboardVideoRepository) : ViewModel() {
+    var state by mutableStateOf(StoryboardVideoState()); private set
+    private var pollingJob: Job? = null
+    fun selectSources(sources: List<GalleryVideo>) { val check = StoryboardUploadPolicy.validate(sources); state = if (check.isAllowed) state.copy(uploads = sources.map(::UploadItem), error = null) else state.copy(error = check.message) }
+    fun upload(storeId: String, taskId: String, shotListId: String, sourceId: String) = viewModelScope.launch { val item = state.uploads.firstOrNull { it.source.id == sourceId } ?: return@launch; state = state.copy(uploads = state.uploads.replace(sourceId, item.copy(state = UploadState.Uploading))); runCatching { repository.upload(storeId, taskId, shotListId, item.source) }.onSuccess { asset -> state = state.copy(uploads = state.uploads.replace(sourceId, item.copy(state = UploadState.Uploaded, assetId = asset.id))) }.onFailure { state = state.copy(uploads = state.uploads.replace(sourceId, item.copy(state = UploadState.Failed, error = "Upload failed. Retry when connected."))) } }
+    fun recoverUpload(sourceId: String) { state = state.copy(uploads = state.uploads.map { if (it.source.id == sourceId) it.recover() else it }) }
+    fun createProject(storeId: String, taskId: String, shotListId: String) = viewModelScope.launch { runCatching { repository.createProject(storeId, taskId, shotListId) }.onSuccess { state = state.copy(draft = it, error = null) }.onFailure { state = state.copy(error = "A confirmed storyboard is required before editing.") } }
+    fun updateSlot(slot: StoryboardSlot) { state.draft?.let { draft -> val previous = draft.slots.firstOrNull { it.id == slot.id } ?: return; val slots = draft.slots.map { when { it.id == slot.id -> slot; it.order == slot.order && previous.order != slot.order -> it.copy(order = previous.order); else -> it } }.sortedBy { it.order }; state = state.copy(draft = draft.copy(slots = slots)) } }
+    fun addSupplementalSlot() { state.draft?.let { draft -> state = state.copy(draft = draft.copy(slots = draft.slots + StoryboardSlot("supplemental-${draft.slots.size + 1}", draft.slots.size + 1, kind = "supplemental"))) } }
+    fun updateCover(assetId: String?, frameOffsetSeconds: Int?, title: String) { state.draft?.let { state = state.copy(draft = it.copy(coverAssetId = assetId, coverFrameOffsetSeconds = frameOffsetSeconds, coverTitle = title.take(120))) } }
+    fun requestRender(storeId: String, taskId: String, shotListId: String, kind: String) = viewModelScope.launch { val draft = state.draft ?: return@launch; runCatching { val project = if (draft.isFinal()) draft else repository.saveProject(storeId, taskId, shotListId, draft, finalize = true).also { state = state.copy(draft = it) }; repository.createRender(storeId, taskId, shotListId, project.projectId, kind) }.onSuccess { state = state.copy(renders = listOf(it) + state.renders) }.onFailure { state = state.copy(error = "Finalize the storyboard before rendering.") } }
+    fun refreshRenders(storeId: String, taskId: String, shotListId: String) = viewModelScope.launch { val projectId = state.draft?.projectId ?: return@launch; runCatching { repository.listRenders(storeId, taskId, shotListId, projectId) }.onSuccess { state = state.copy(renders = it) } }
+    fun pollWhileActive(storeId: String, taskId: String, shotListId: String) { if (pollingJob?.isActive == true) return; pollingJob = viewModelScope.launch { while (state.hasActiveRender()) { refreshRenders(storeId, taskId, shotListId).join(); delay(3_000) } } }
+    fun stopPolling() { pollingJob?.cancel(); pollingJob = null }
+    fun deliveryUnavailable(message: String) { state = state.withDeliveryUnavailable(message) }
+    fun cancelRender(storeId: String, taskId: String, shotListId: String, renderId: String) = viewModelScope.launch { val project = state.draft ?: return@launch; runCatching { repository.cancelRender(storeId, taskId, shotListId, project.projectId, renderId) }.onSuccess { changed -> state = state.copy(renders = state.renders.map { if (it.id == changed.id) changed else it }) } }
+    fun deleteRender(storeId: String, taskId: String, shotListId: String, renderId: String) = viewModelScope.launch { val project = state.draft ?: return@launch; runCatching { repository.deleteRender(storeId, taskId, shotListId, project.projectId, renderId) }.onSuccess { state = state.copy(renders = state.renders.filterNot { it.id == renderId }) } }
+    fun selectCover(storeId: String, taskId: String, shotListId: String, renderId: String, candidateId: String, title: String) = viewModelScope.launch { val project = state.draft ?: return@launch; runCatching { repository.selectCover(storeId, taskId, shotListId, project.projectId, renderId, candidateId, title) }.onSuccess { selected -> state = state.copy(selectedCoverCandidateId = selected.candidateId, draft = project.copy(coverTitle = selected.title), error = null) }.onFailure { state = state.copy(error = "Cover selection is no longer available.") } }
+}
+private fun List<UploadItem>.replace(sourceId: String, replacement: UploadItem) = map { if (it.source.id == sourceId) replacement else it }
+fun StoryboardVideoState.hasActiveRender() = renders.any { it.state == RenderState.Queued || it.state == RenderState.Processing }
+fun StoryboardVideoState.withDeliveryUnavailable(message: String) = copy(error = message)

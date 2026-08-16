@@ -12,7 +12,23 @@ import { AuthService } from "./auth/service.js";
 import { authenticatedContextResolver } from "./imports/routes.js";
 import { registerProviderFeedbackRoutes } from "./provider-feedback/routes.js";
 import { registerProviderCustomerRoutes } from "./provider-customers/routes.js";
-import { registerProviderConsoleStatic } from "./provider-console-static.js";
+import { registerLegacyConsoleRedirects } from "./legacy-console-redirects.js";
+import { registerOperatorAuthRoutes } from "./operator-auth/routes.js";
+import { registerOperatorContentRoutes } from "./operator-content/routes.js";
+import { registerProfileRoutes } from "./content-planning/profile-routes.js";
+import { registerWorkflowRoutes } from "./content-planning/workflow-routes.js";
+import { createConfiguredGenerationService, type ModelGenerationService } from "./model-providers/generation.js";
+import { registerVideoAssetRoutes } from "./video-editing/routes.js";
+import { createConfiguredVideoStorage, type VideoStorage } from "./video-editing/storage.js";
+import { registerStoryboardContextRoutes } from "./video-editing/storyboard-context-routes.js";
+import { registerModelPricingRoutes } from "./model-pricing/routes.js";
+import { registerCustomerAccountAdminRoutes } from "./admin/customer-account-routes.js";
+import { registerModelConfigurationRoutes } from "./admin/model-config-routes.js";
+import { ModelConfigurationRepository, type ModelGenerationResolver } from "./admin/model-configs.js";
+import { registerAdminConsoleStatic } from "./admin-console-static.js";
+import { registerAdminModelPricingRoutes } from "./admin/model-pricing-routes.js";
+import { registerAdminContentRoutes } from "./admin/content-routes.js";
+import { registerAccessManagementRoutes } from "./admin/access-management-routes.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -20,22 +36,27 @@ export interface ServerOptions {
   authTokenSecret?: string;
   developmentMode?: boolean;
   providerBrowserDevelopmentMode?: boolean;
-  providerConsoleDistDir?: string;
+  operatorPublicOrigin?: string;
+  adminConsoleDistDir?: string;
   localContainerDevelopmentMode?: boolean;
   trustedContextResolver?: TrustedContextResolver;
   objectStorage?: ObjectStorage;
   now?: () => Date;
   logger?: FastifyServerOptions["logger"];
+  modelGenerationService?: ModelGenerationService;
+  videoStorage?: VideoStorage;
+  modelConfigEncryptionKey?: string;
+  modelGenerationResolver?: ModelGenerationResolver;
 }
 
 export function buildServer(options: ServerOptions = {}) {
-  const app = Fastify({ bodyLimit: 5 * 1024 * 1024, logger: options.logger ?? false });
+  // Operator CSRF origin validation derives its scheme from this direct request.
+  // Do not trust client-controlled forwarded protocol headers here.
+  const app = Fastify({ bodyLimit: 5 * 1024 * 1024, logger: options.logger ?? false, trustProxy: false });
 
   app.get("/health", async () => ({ status: "ok" }));
-  const providerConsoleDistDir = options.providerConsoleDistDir;
-  if (providerConsoleDistDir) {
-    app.register((instance) => registerProviderConsoleStatic(instance, providerConsoleDistDir));
-  }
+  registerLegacyConsoleRedirects(app);
+  if (options.adminConsoleDistDir) app.register((instance) => registerAdminConsoleStatic(instance, options.adminConsoleDistDir!));
   const database = options.database ?? (options.databaseUrl ? createDatabase(options.databaseUrl) : undefined);
   const explicitContextResolver = options.trustedContextResolver ?? (
     options.localContainerDevelopmentMode
@@ -62,6 +83,16 @@ export function buildServer(options: ServerOptions = {}) {
     const providerOptions = { auth, database, now: options.now ?? (() => new Date()) };
     app.register((instance) => registerProviderFeedbackRoutes(instance, providerOptions));
     app.register((instance) => registerProviderCustomerRoutes(instance, providerOptions));
+    app.register((instance) => registerModelPricingRoutes(instance, providerOptions));
+    app.register((instance) => registerCustomerAccountAdminRoutes(instance, auth, database));
+    app.register((instance) => registerModelConfigurationRoutes(instance, auth, database, options.modelConfigEncryptionKey));
+    app.register((instance) => registerAdminModelPricingRoutes(instance, auth, database));
+    app.register((instance) => registerAdminContentRoutes(instance, auth, database));
+    app.register((instance) => registerAccessManagementRoutes(instance, auth, database));
+  }
+  if (database) {
+    registerOperatorAuthRoutes(app, database, { publicOrigin: options.operatorPublicOrigin });
+    app.register((instance) => registerOperatorContentRoutes(instance, database));
   }
   if (database && contextResolver) {
     app.register((instance) => registerImportRoutes(instance, {
@@ -70,6 +101,15 @@ export function buildServer(options: ServerOptions = {}) {
       objectStorage: options.objectStorage ?? unavailableObjectStorage,
       now: options.now ?? (() => new Date())
     }));
+    app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
+    app.register((instance) => registerStoryboardContextRoutes(instance, database, contextResolver));
+    const modelResolver = options.modelGenerationResolver ?? (options.modelConfigEncryptionKey ? new ModelConfigurationRepository(database, options.modelConfigEncryptionKey) : undefined);
+    if (options.modelGenerationService || modelResolver) {
+      app.register((instance) => registerWorkflowRoutes(instance, database, contextResolver, options.modelGenerationService, modelResolver));
+    }
+    if (options.videoStorage) {
+      app.register((instance) => registerVideoAssetRoutes(instance, database, contextResolver, options.videoStorage!));
+    }
   }
 
   return app;
@@ -81,10 +121,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     authTokenSecret: process.env.AUTH_TOKEN_SECRET,
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
     providerBrowserDevelopmentMode: process.env.PROVIDER_BROWSER_DEVELOPMENT_MODE === "true",
-    providerConsoleDistDir: process.env.PROVIDER_CONSOLE_DIST_DIR
-      ?? fileURLToPath(new URL("../provider-console-dist", import.meta.url)),
+    operatorPublicOrigin: process.env.OPERATOR_PUBLIC_ORIGIN,
+    adminConsoleDistDir: process.env.ADMIN_CONSOLE_DIST_DIR
+      ?? fileURLToPath(new URL("../admin-console-dist", import.meta.url)),
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
     objectStorage: createMinioObjectStorageFromEnv(process.env),
+    modelGenerationService: createConfiguredGenerationService(process.env),
+    modelConfigEncryptionKey: process.env.MODEL_CONFIG_ENCRYPTION_KEY,
+    videoStorage: createConfiguredVideoStorage(process.env),
     logger: true
   });
   const port = Number(process.env.PORT ?? 3000);

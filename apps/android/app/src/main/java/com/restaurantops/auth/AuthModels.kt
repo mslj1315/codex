@@ -6,14 +6,20 @@ data class StoreMembership(
     val role: StoreRole
 )
 
+data class AuthenticatedSession(
+    val stores: List<StoreMembership>,
+    val passwordChangeRequired: Boolean
+)
+
 enum class StoreRole {
     OWNER,
     OPERATOR
 }
 
 interface AuthRepository {
-    suspend fun login(loginName: String, password: String): List<StoreMembership>
-    suspend fun restore(): List<StoreMembership>
+    suspend fun login(loginName: String, password: String): AuthenticatedSession
+    suspend fun restore(): AuthenticatedSession
+    suspend fun changePassword(loginName: String, currentPassword: String, newPassword: String): AuthenticatedSession
     suspend fun logout()
 }
 
@@ -26,6 +32,6 @@ class AuthRequestException(
 sealed interface LoginUiState {
     data object Idle : LoginUiState
     data object Loading : LoginUiState
-    data class Success(val stores: List<StoreMembership>) : LoginUiState
+    data class Success(val loginName: String, val session: AuthenticatedSession) : LoginUiState
     data class Error(val message: String) : LoginUiState
 }

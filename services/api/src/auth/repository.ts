@@ -5,7 +5,8 @@ export type StoreRole = "owner" | "operator";
 export type ServiceOperatorRole =
   | "metric_catalog_operator"
   | "provider_feedback_viewer"
-  | "provider_customer_metadata_editor";
+  | "provider_customer_metadata_editor"
+  | "model_pricing_operator";
 
 export interface AuthAccount {
   id: string;
@@ -13,6 +14,8 @@ export interface AuthAccount {
   displayName: string;
   passwordHash: string;
   enabled: boolean;
+  passwordChangeRequired: boolean;
+  credentialVersion: number;
 }
 
 export interface StoreMembership {
@@ -25,6 +28,7 @@ interface SessionAccount extends AuthAccount {
   sessionId: string;
   expiresAt: Date;
   revokedAt: Date | null;
+  sessionCredentialVersion: number;
 }
 
 export class AuthRepository {
@@ -32,16 +36,16 @@ export class AuthRepository {
 
   async findAccountByLoginName(loginName: string): Promise<AuthAccount | undefined> {
     const result = await this.database.query<Row>(
-      "SELECT id, login_name, display_name, password_hash, enabled FROM accounts WHERE login_name = $1",
+      "SELECT id, login_name, display_name, password_hash, enabled, password_change_required, credential_version FROM accounts WHERE login_name = $1",
       [loginName]
     );
     return result.rowCount === 1 ? account(result.rows[0]) : undefined;
   }
 
-  async createSession(input: { id: string; accountId: string; refreshTokenHash: string; expiresAt: Date }): Promise<void> {
+  async createSession(input: { id: string; accountId: string; credentialVersion: number; refreshTokenHash: string; expiresAt: Date }): Promise<void> {
     await this.database.query(
-      "INSERT INTO account_sessions (id, account_id, refresh_token_hash, expires_at) VALUES ($1, $2, $3, $4)",
-      [input.id, input.accountId, input.refreshTokenHash, input.expiresAt]
+      "INSERT INTO account_sessions (id, account_id, credential_version, refresh_token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)",
+      [input.id, input.accountId, input.credentialVersion, input.refreshTokenHash, input.expiresAt]
     );
   }
 
@@ -51,8 +55,8 @@ export class AuthRepository {
       if (!current || !isActive(current, input.now)) return undefined;
       await client.query("UPDATE account_sessions SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL", [input.now, current.sessionId]);
       await client.query(
-        "INSERT INTO account_sessions (id, account_id, refresh_token_hash, expires_at) VALUES ($1, $2, $3, $4)",
-        [input.nextSessionId, current.id, input.nextRefreshTokenHash, input.nextExpiresAt]
+        "INSERT INTO account_sessions (id, account_id, credential_version, refresh_token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)",
+        [input.nextSessionId, current.id, current.credentialVersion, input.nextRefreshTokenHash, input.nextExpiresAt]
       );
       return publicAccount(current);
     });
@@ -105,6 +109,30 @@ export class AuthRepository {
     return result.rows.map((row) => row.role as ServiceOperatorRole);
   }
 
+  async changePassword(input: { accountId: string; currentPasswordHash: string; nextPasswordHash: string }): Promise<boolean> {
+    return this.transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE accounts SET password_hash = $1, password_change_required = false, credential_version = credential_version + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2 AND password_hash = $3 AND enabled = true`,
+        [input.nextPasswordHash, input.accountId, input.currentPasswordHash]
+      );
+      if (updated.rowCount !== 1) return false;
+      await client.query("UPDATE account_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE account_id = $1 AND revoked_at IS NULL", [input.accountId]);
+      return true;
+    });
+  }
+
+  async upgradeLegacyPasswordHash(accountId: string, legacyHash: string, bcryptHash: string): Promise<void> {
+    await this.database.query(
+      "UPDATE accounts SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND password_hash = $3",
+      [bcryptHash, accountId, legacyHash]
+    );
+  }
+
+  databaseConnection(): Database {
+    return this.database;
+  }
+
   async grantServiceOperatorRole(accountId: string, role: ServiceOperatorRole): Promise<boolean> {
     return this.transaction(async (client) => {
       const account = await client.query(
@@ -137,7 +165,7 @@ export class AuthRepository {
       const accountId = existing.rowCount === 1 ? String(existing.rows[0].id) : randomUUID();
       if (existing.rowCount === 1) {
         await client.query(
-          "UPDATE accounts SET display_name = $1, password_hash = $2, enabled = true, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+          "UPDATE accounts SET display_name = $1, password_hash = $2, enabled = true, credential_version = credential_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
           [input.displayName, input.passwordHash, accountId]
         );
         await client.query("UPDATE account_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE account_id = $1 AND revoked_at IS NULL", [accountId]);
@@ -185,7 +213,7 @@ type Row = Record<string, unknown>;
 async function readSessionByRefreshToken(database: Queryable, refreshTokenHash: string, lock = ""): Promise<SessionAccount | undefined> {
   const result = await database.query<Row>(
     `SELECT session.id AS session_id, session.expires_at, session.revoked_at,
-            account.id, account.login_name, account.display_name, account.password_hash, account.enabled
+            account.id, account.login_name, account.display_name, account.password_hash, account.enabled, account.password_change_required, account.credential_version, session.credential_version AS session_credential_version
      FROM account_sessions AS session JOIN accounts AS account ON account.id = session.account_id
      WHERE session.refresh_token_hash = $1 ${lock}`,
     [refreshTokenHash]
@@ -196,7 +224,7 @@ async function readSessionByRefreshToken(database: Queryable, refreshTokenHash: 
 async function readSessionById(database: Queryable, accountId: string, sessionId: string): Promise<SessionAccount | undefined> {
   const result = await database.query<Row>(
     `SELECT session.id AS session_id, session.expires_at, session.revoked_at,
-            account.id, account.login_name, account.display_name, account.password_hash, account.enabled
+            account.id, account.login_name, account.display_name, account.password_hash, account.enabled, account.password_change_required, account.credential_version, session.credential_version AS session_credential_version
      FROM account_sessions AS session JOIN accounts AS account ON account.id = session.account_id
      WHERE session.id = $1 AND session.account_id = $2`,
     [sessionId, accountId]
@@ -205,13 +233,13 @@ async function readSessionById(database: Queryable, accountId: string, sessionId
 }
 
 function isActive(value: SessionAccount, now: Date): boolean {
-  return value.enabled && value.revokedAt === null && value.expiresAt.getTime() > now.getTime();
+  return value.enabled && value.revokedAt === null && value.expiresAt.getTime() > now.getTime() && value.credentialVersion === value.sessionCredentialVersion;
 }
 
 function account(row: Row): AuthAccount {
   return {
     id: String(row.id), loginName: String(row.login_name), displayName: String(row.display_name),
-    passwordHash: String(row.password_hash), enabled: Boolean(row.enabled)
+    passwordHash: String(row.password_hash), enabled: Boolean(row.enabled), passwordChangeRequired: Boolean(row.password_change_required), credentialVersion: Number(row.credential_version)
   };
 }
 
@@ -221,14 +249,14 @@ function publicAccount(value: AuthAccount): AuthAccount {
     loginName: value.loginName,
     displayName: value.displayName,
     passwordHash: value.passwordHash,
-    enabled: value.enabled
+    enabled: value.enabled, passwordChangeRequired: value.passwordChangeRequired, credentialVersion: value.credentialVersion
   };
 }
 
 function sessionAccount(row: Row): SessionAccount {
   return {
     ...account(row), sessionId: String(row.session_id), expiresAt: new Date(String(row.expires_at)),
-    revokedAt: row.revoked_at == null ? null : new Date(String(row.revoked_at))
+    revokedAt: row.revoked_at == null ? null : new Date(String(row.revoked_at)), sessionCredentialVersion: Number(row.session_credential_version)
   };
 }
 

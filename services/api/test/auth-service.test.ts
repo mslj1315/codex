@@ -1,4 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
+import { scrypt as nodeScrypt } from "node:crypto";
+import { promisify } from "node:util";
 import { DataType, newDb } from "pg-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
@@ -93,7 +95,7 @@ describe("auth service", () => {
 
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: false, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: false, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
 
     await database.query(
@@ -101,7 +103,7 @@ describe("auth service", () => {
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
 
     await database.query(
@@ -112,7 +114,7 @@ describe("auth service", () => {
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: true, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: false, metricCatalogOperator: true, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
 
     await database.query(
@@ -121,14 +123,14 @@ describe("auth service", () => {
     const providerSession = await service.providerSession(login.accessToken);
     expect(providerSession).toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: false }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: false, modelPricingOperator: false }
     });
     await database.query(
       "INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'provider_customer_metadata_editor')"
     );
     await expect(service.providerSession(login.accessToken)).resolves.toEqual({
       account: { id: "account_owner", displayName: "Owner" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: true }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: true, providerCustomerMetadataEditor: true, modelPricingOperator: false }
     });
     expect(JSON.stringify(providerSession)).not.toMatch(/loginName|passwordHash|refreshToken|sessionId|store_demo/);
   });
@@ -215,7 +217,44 @@ describe("auth service", () => {
 
     await expect(service.authenticateAccessToken(login.accessToken)).rejects.toBeInstanceOf(AuthenticationError);
   });
+
+  it("accepts a formatted customer mobile login and upgrades a verified legacy password hash", async () => {
+    const legacyHash = await legacyScryptHash("passphrase");
+    await database.query("UPDATE accounts SET login_name = '13800138000', password_hash = $1 WHERE id = 'account_owner'", [legacyHash]);
+
+    const login = await service.login({ loginName: " +86 138-0013-8000 ", password: "passphrase" });
+
+    expect(login.account).toEqual({ id: "account_owner", displayName: "Owner" });
+    await expect(database.query("SELECT password_hash FROM accounts WHERE id = 'account_owner'"))
+      .resolves.toMatchObject({ rows: [{ password_hash: expect.stringMatching(/^\$2[aby]\$/) }] });
+  });
+
+  it("keeps a verified legacy hash when its UTF-8 password cannot safely fit bcrypt", async () => {
+    const password = "密".repeat(25);
+    const legacyHash = await legacyScryptHash(password);
+    await database.query("UPDATE accounts SET password_hash = $1 WHERE id = 'account_owner'", [legacyHash]);
+
+    await expect(service.login({ loginName: "owner", password })).resolves.toMatchObject({ account: { id: "account_owner" } });
+    await expect(database.query("SELECT password_hash FROM accounts WHERE id = 'account_owner'"))
+      .resolves.toMatchObject({ rows: [{ password_hash: legacyHash }] });
+  });
+
+  it("rejects a session created from a credential version invalidated by a concurrent reset", async () => {
+    const repository = new AuthRepository(database);
+    await database.query("UPDATE accounts SET credential_version = 1 WHERE id = 'account_owner'");
+    await database.query("UPDATE accounts SET credential_version = credential_version + 1 WHERE id = 'account_owner'");
+    await repository.createSession({ id: "stale_session", accountId: "account_owner", credentialVersion: 1, refreshTokenHash: "stale", expiresAt: new Date("2026-09-01T00:00:00.000Z") });
+
+    await expect(repository.findActiveSession("account_owner", "stale_session", now)).resolves.toBeUndefined();
+  });
 });
+
+async function legacyScryptHash(password: string): Promise<string> {
+  const salt = Buffer.alloc(16, 5);
+  const derive = promisify(nodeScrypt) as (value: string, salt: Buffer, length: number) => Promise<Buffer>;
+  const derived = await derive(password, salt, 32);
+  return `scrypt$v1$${salt.toString("base64url")}$${derived.toString("base64url")}`;
+}
 
 async function applyTestMigrations(database: Database): Promise<void> {
   const migrationsUrl = new URL("../migrations/", import.meta.url);

@@ -9,9 +9,12 @@ import { AuthenticationError } from "../auth/tokens.js";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 export type TrustedContextResolver = (request: FastifyRequest) => Promise<TrustedContext | undefined>;
-export const developmentContextResolver: TrustedContextResolver = async (request) => isLoopback(request.ip)
-  ? { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" }
-  : undefined;
+export const developmentContextResolver: TrustedContextResolver = async (request) => {
+  if (!isLoopback(request.ip)) return undefined;
+  return request.headers["x-development-context"] === "ent_demo:store_demo:actor_demo"
+    ? { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" }
+    : undefined;
+};
 export const localContainerContextResolver: TrustedContextResolver = async () => ({
   enterpriseId: "ent_demo",
   storeId: "store_demo",

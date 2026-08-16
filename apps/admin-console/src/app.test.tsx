@@ -1,0 +1,228 @@
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { App, type AdminApi, type AdminSession } from "./app";
+
+const session: AdminSession = {
+  account: { id: "admin-1", displayName: "\u7ba1\u7406\u5458" },
+  permissions: ["customer_accounts.read", "model_pricing.read", "model_usage.read"]
+};
+
+function api(): AdminApi {
+  return { login: vi.fn(), changePassword: vi.fn(async () => new Response(null, { status: 204 })), request: vi.fn(async () => new Response(JSON.stringify({ items: [] }), { status: 200 })) };
+}
+
+describe("unified admin console", () => {
+  afterEach(cleanup);
+  it("uses exact permissions rather than permission prefixes for navigation", () => {
+    render(<App session={session} api={api()} />);
+
+    expect(screen.getByRole("navigation")).toHaveTextContent("\u5ba2\u6237\u7ba1\u7406");
+    expect(screen.getByRole("navigation")).toHaveTextContent("\u6a21\u578b\u8ba1\u8d39");
+    expect(screen.queryByText("\u6a21\u578b\u914d\u7f6e")).not.toBeInTheDocument();
+    expect(screen.queryByText("\u5185\u5bb9\u8fd0\u8425")).not.toBeInTheDocument();
+  });
+
+  it("shows customer management for a disable-only internal permission", () => {
+    render(<App session={{ account: { id: "admin-disable", displayName: "\u7ba1\u7406\u5458" }, permissions: ["customer_accounts.disable"] }} api={api()} />);
+    expect(screen.getByRole("navigation")).toHaveTextContent("\u5ba2\u6237\u7ba1\u7406");
+  });
+
+  it("submits a direct encoded customer disable without loading customer accounts", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-disable", displayName: "\u7ba1\u7406\u5458" }, permissions: ["customer_accounts.disable"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba2\u6237\u7ba1\u7406" }));
+    await userEvent.type(screen.getByLabelText("\u5ba2\u6237\u8d26\u53f7 ID"), "customer/a");
+    await userEvent.click(screen.getByRole("button", { name: "\u63d0\u4ea4\u505c\u7528" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/customer-accounts/customer%2Fa/disable", { method: "POST" });
+    expect(client.request).not.toHaveBeenCalledWith("/v1/admin/customer-accounts?limit=50");
+    expect(screen.getByRole("status")).toHaveTextContent("\u5ba2\u6237\u8d26\u53f7\u5df2\u505c\u7528");
+  });
+
+  it("uses the internal pricing API and presents separate input and output prices", async () => {
+    const client = api();
+    render(<App session={session} api={client} />);
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u6a21\u578b\u8ba1\u8d39" }));
+
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/model-pricing/versions");
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/model-pricing/usage");
+    expect(screen.getByText("\u8f93\u5165\u4ef7\u683c")).toBeInTheDocument();
+    expect(screen.getByText("\u8f93\u51fa\u4ef7\u683c")).toBeInTheDocument();
+  });
+
+  it("shows a neutral failure for an internal login that cannot obtain permissions", async () => {
+    const client: AdminApi = { login: vi.fn(async () => { throw new Error("forbidden"); }), changePassword: vi.fn(), request: vi.fn() };
+    render(<App api={client} />);
+    await userEvent.type(screen.getByLabelText("\u8d26\u53f7"), "admin");
+    await userEvent.type(screen.getByLabelText("\u5bc6\u7801"), "wrong");
+    await userEvent.click(screen.getByRole("button", { name: "\u767b\u5f55" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("\u8d26\u53f7\u3001\u5bc6\u7801\u6216\u540e\u53f0\u6743\u9650\u65e0\u6548");
+  });
+
+  it("keeps the browser authorization token after login causes a console re-render", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/v1/auth/login") return new Response(JSON.stringify({ accessToken: "header.payload.signature" }), { status: 200 });
+      if (input === "/v1/auth/me/internal-permissions") return new Response(JSON.stringify({ account: { id: "admin-1", displayName: "管理员" }, permissions: ["customer_accounts.read"] }), { status: 200 });
+      return new Response(JSON.stringify({ items: [] }), { status: 200 });
+    });
+    render(<App />);
+    await userEvent.type(screen.getByLabelText("账号"), "admin");
+    await userEvent.type(screen.getByLabelText("密码"), "password");
+    await userEvent.click(screen.getByRole("button", { name: "登录" }));
+    await userEvent.click(screen.getByRole("button", { name: "客户管理" }));
+
+    const customerRequest = fetchMock.mock.calls.find(([url]) => url === "/v1/admin/customer-accounts?limit=50");
+    expect(customerRequest?.[1]).toEqual(expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer header.payload.signature" }) }));
+    fetchMock.mockRestore();
+  });
+
+  it("offers direct safe operations without fetching lists for manage-only permissions", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-2", displayName: "\u7ba1\u7406\u5458" }, permissions: ["model_assignments.manage", "model_configs.manage", "model_pricing.manage"] }} api={client} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba2\u6237\u7ba1\u7406" }));
+    expect(screen.getByLabelText("\u4f01\u4e1a ID")).toBeInTheDocument();
+    expect(screen.getByLabelText(/\u6a21\u578b\u914d\u7f6e ID/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "\u6a21\u578b\u914d\u7f6e" }));
+    expect(screen.getByLabelText("\u5df2\u6709\u6a21\u578b\u914d\u7f6e ID")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "\u6a21\u578b\u8ba1\u8d39" }));
+    expect(screen.getByLabelText("\u5df2\u6709\u8ba1\u8d39\u7248\u672c ID")).toBeInTheDocument();
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
+  it("sends a direct assignment only with the assignment permission", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-3", displayName: "\u7ba1\u7406\u5458" }, permissions: ["model_assignments.manage"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba2\u6237\u7ba1\u7406" }));
+    await userEvent.type(screen.getByLabelText("\u4f01\u4e1a ID"), "ent-1");
+    await userEvent.type(screen.getByLabelText("\u95e8\u5e97 ID"), "store-1");
+    await userEvent.type(screen.getByLabelText(/\u6a21\u578b\u914d\u7f6e ID/), "model-1");
+    await userEvent.click(screen.getByRole("button", { name: "\u63d0\u4ea4\u6a21\u578b\u5206\u914d" }));
+
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/customer-model-assignments/ent-1/store-1", expect.objectContaining({ method: "PUT" }));
+  });
+
+  it("limits direct model fields to the selected operation and never reloads a manage-only list", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-4", displayName: "\u7ba1\u7406\u5458" }, permissions: ["model_configs.manage"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u6a21\u578b\u914d\u7f6e" }));
+    const operation = screen.getByLabelText("\u64cd\u4f5c");
+    await userEvent.selectOptions(operation, "default");
+    expect(screen.queryByLabelText(/\u65b0 API \u5bc6\u94a5/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/\u540d\u79f0\uff08\u7f16\u8f91\u65f6\uff09/)).not.toBeInTheDocument();
+    await userEvent.selectOptions(operation, "rotate");
+    expect(screen.getByLabelText(/\u65b0 API \u5bc6\u94a5/)).toBeRequired();
+  });
+
+  it("offers direct content edit and publish without reading a list", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-5", displayName: "\u7ba1\u7406\u5458" }, permissions: ["content_templates.edit", "content_templates.publish"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5185\u5bb9\u8fd0\u8425" }));
+    expect(screen.getByLabelText("\u6a21\u677f ID")).toBeInTheDocument();
+    expect(screen.getByLabelText("\u53d1\u5e03\u6a21\u677f ID")).toBeInTheDocument();
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
+  it("sends the required name with a direct content draft edit", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-7", displayName: "\u7ba1\u7406\u5458" }, permissions: ["content_templates.edit"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5185\u5bb9\u8fd0\u8425" }));
+    await userEvent.type(screen.getByLabelText("\u6a21\u677f ID"), "template-1");
+    await userEvent.type(screen.getByLabelText("\u540d\u79f0"), "到店模板");
+    await userEvent.click(screen.getByRole("button", { name: "\u76f4\u63a5\u4fdd\u5b58\u8349\u7a3f" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/content/templates/template-1/draft", expect.objectContaining({ method: "PUT", body: expect.stringContaining('"name":"到店模板"') }));
+  });
+
+  it("resets a direct content editor to valid rule fields after switching kind", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-8", displayName: "\u7ba1\u7406\u5458" }, permissions: ["content_templates.edit", "review_rules.edit"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5185\u5bb9\u8fd0\u8425" }));
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba1\u6838\u89c4\u5219" }));
+    expect((screen.getByLabelText("\u7248\u672c\u914d\u7f6e\uff08JSON\uff09") as HTMLTextAreaElement).value).toContain('"ruleType"');
+    await userEvent.type(screen.getByLabelText("\u89c4\u5219 ID"), "rule-1");
+    await userEvent.type(screen.getByLabelText("\u540d\u79f0"), "绝对化规则");
+    await userEvent.click(screen.getByRole("button", { name: "\u76f4\u63a5\u4fdd\u5b58\u8349\u7a3f" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/content/rules/rule-1/draft", expect.objectContaining({ method: "PUT", body: expect.stringContaining('"ruleType"') }));
+  });
+
+  it("offers direct internal role assignment without reading accounts", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-6", displayName: "\u7ba1\u7406\u5458" }, permissions: ["internal_accounts.manage"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u6743\u9650\u7ba1\u7406" }));
+    await userEvent.type(screen.getByLabelText("\u5185\u90e8\u8d26\u53f7 ID"), "internal-1");
+    await userEvent.type(screen.getByLabelText("\u5206\u914d\u89d2\u8272 ID"), "role-1");
+    await userEvent.click(screen.getByRole("button", { name: "\u63d0\u4ea4\u89d2\u8272\u5206\u914d" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/access/accounts/internal-1/roles", expect.objectContaining({ method: "PUT" }));
+    expect(client.request).not.toHaveBeenCalledWith("/v1/admin/access/accounts");
+  });
+
+  it("offers account security to every authenticated internal user", async () => {
+    render(<App session={{ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }} api={api()} />);
+
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+
+    expect(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801")).toBeInTheDocument();
+    expect(screen.getByLabelText("\u65b0\u5bc6\u7801")).toBeInTheDocument();
+    expect(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801")).toBeInTheDocument();
+  });
+
+  it("does not submit an account password change when confirmation differs", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }} api={client} />);
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+    await userEvent.type(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801"), "Current1");
+    await userEvent.type(screen.getByLabelText("\u65b0\u5bc6\u7801"), "NewPassword1");
+    await userEvent.type(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801"), "Different1");
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
+
+    expect(client.changePassword).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u65b0\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByRole("alert")).toHaveTextContent("\u8bf7\u786e\u8ba4\u4e24\u6b21\u8f93\u5165\u7684\u65b0\u5bc6\u7801\u4e00\u81f4");
+  });
+
+  it("does not submit an account password change when the new password misses the policy", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }} api={client} />);
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+    await userEvent.type(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801"), "Current1");
+    await userEvent.type(screen.getByLabelText("\u65b0\u5bc6\u7801"), "alllowercase");
+    await userEvent.type(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801"), "alllowercase");
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
+
+    expect(client.changePassword).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u65b0\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801")).toHaveValue("");
+    expect(screen.getByRole("alert")).toHaveTextContent("\u65b0\u5bc6\u7801\u81f3\u5c11 8 \u4f4d");
+  });
+
+  it("posts a password change with the bearer then returns to login on success", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/v1/auth/login") return new Response(JSON.stringify({ accessToken: "password-change-token" }), { status: 200 });
+      if (input === "/v1/auth/me/internal-permissions") return new Response(JSON.stringify({ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }), { status: 200 });
+      if (input === "/v1/auth/change-password") return new Response(null, { status: 204 });
+      return new Response(null, { status: 404 });
+    });
+    render(<App />);
+    await userEvent.type(screen.getByLabelText("\u8d26\u53f7"), "admin");
+    await userEvent.type(screen.getByLabelText("\u5bc6\u7801"), "Current1");
+    await userEvent.click(screen.getByRole("button", { name: "\u767b\u5f55" }));
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+    await userEvent.type(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801"), "Current1");
+    await userEvent.type(screen.getByLabelText("\u65b0\u5bc6\u7801"), "NewPassword1");
+    await userEvent.type(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801"), "NewPassword1");
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
+
+    const passwordChange = fetchMock.mock.calls.find(([url]) => url === "/v1/auth/change-password");
+    expect(passwordChange?.[1]).toEqual(expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ Authorization: "Bearer password-change-token", "Content-Type": "application/json" }),
+      body: JSON.stringify({ currentPassword: "Current1", newPassword: "NewPassword1" })
+    }));
+    expect(screen.getByRole("heading", { name: "\u9910\u996e\u8fd0\u8425\u7ba1\u7406\u540e\u53f0" })).toBeInTheDocument();
+    fetchMock.mockRestore();
+  });
+});

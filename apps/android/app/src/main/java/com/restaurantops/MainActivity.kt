@@ -50,6 +50,8 @@ import com.restaurantops.auth.EncryptedRefreshTokenStore
 import com.restaurantops.auth.HttpAuthRepository
 import com.restaurantops.auth.LoginScreen
 import com.restaurantops.auth.LoginViewModel
+import com.restaurantops.auth.PasswordChangeScreen
+import com.restaurantops.auth.PasswordChangeViewModel
 import com.restaurantops.auth.AppSessionState
 import com.restaurantops.auth.PreferencesSelectedStoreStore
 import com.restaurantops.auth.RemoteServiceUnavailableScreen
@@ -104,6 +106,7 @@ private fun AuthenticatedAppRoot(
         SessionViewModel(repository, PreferencesSelectedStoreStore(context), SavedStateHandle())
     }
     val loginViewModel = remember(repository) { LoginViewModel(repository, SavedStateHandle()) }
+    val passwordChangeViewModel = remember(repository) { PasswordChangeViewModel(repository, SavedStateHandle()) }
     val authenticatedApiClient = remember(repository) { AuthenticatedApiClient(repository) }
     var isInLocalWorkspace by rememberSaveable { mutableStateOf(false) }
 
@@ -137,12 +140,18 @@ private fun AuthenticatedAppRoot(
             },
             onAuthenticated = sessionViewModel::acceptLogin
         )
+        is AppSessionState.ForcedPasswordChange -> PasswordChangeScreen(
+            loginName = state.loginName,
+            viewModel = passwordChangeViewModel,
+            onChanged = sessionViewModel::acceptChangedPassword
+        )
         is AppSessionState.StoreSelection -> StoreSelectionScreen(state.stores, sessionViewModel::selectStore)
         is AppSessionState.RemoteWorkspace -> WorkspaceRoot(
             viewModel = workspaceViewModel,
             onReturnToOnboarding = sessionViewModel::logout,
             storeId = state.store.storeId,
             authenticatedApiClient = authenticatedApiClient,
+            onReturnToLogin = sessionViewModel::logout,
             onLogout = sessionViewModel::logout,
             onChooseAnotherStore = sessionViewModel::chooseAnotherStore
         )
@@ -161,7 +170,8 @@ private fun LocalDemoRoot(
         WorkspaceRoot(
             viewModel = workspaceViewModel,
             onReturnToOnboarding = onExit,
-            storeId = "store_demo"
+            storeId = "store_demo",
+            onReturnToLogin = onExit
         )
     } else {
         StoreOnboardingScreen(viewModel = onboardingViewModel, onEnterWorkspace = { isInWorkspace = true })

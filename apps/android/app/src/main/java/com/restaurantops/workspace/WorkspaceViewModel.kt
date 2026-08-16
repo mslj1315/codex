@@ -26,7 +26,7 @@ class WorkspaceViewModel(
     var isDiagnosisOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.DIAGNOSIS)
         private set
 
-    var isVideoFactoryOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.VIDEO_FACTORY)
+    var isStoryboardOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.STORYBOARD)
         private set
 
     var isImportOpen by mutableStateOf(restoredOverlay == WorkspaceOverlay.IMPORT)
@@ -40,17 +40,6 @@ class WorkspaceViewModel(
 
     val tasks: List<LocalActionTask>
         get() = mutableTasks.toList()
-
-    var videoStage by mutableStateOf(
-        VideoFactoryStage.fromWireValue(savedStateHandle[VIDEO_STAGE])
-    )
-        private set
-
-    var selectedTopic by mutableStateOf(savedStateHandle[SELECTED_TOPIC] ?: "")
-        private set
-
-    var copyDraft by mutableStateOf(savedStateHandle[COPY_DRAFT] ?: "")
-        private set
 
     fun selectTab(tab: WorkspaceTab) {
         selectedTab = tab
@@ -81,53 +70,30 @@ class WorkspaceViewModel(
 
     fun openDiagnosis() {
         isDiagnosisOpen = true
-        isVideoFactoryOpen = false
+        isStoryboardOpen = false
         isImportOpen = false
         savedStateHandle[OVERLAY] = WorkspaceOverlay.DIAGNOSIS.wireValue
     }
 
     fun closeOverlay() {
         isDiagnosisOpen = false
-        isVideoFactoryOpen = false
+        isStoryboardOpen = false
         isImportOpen = false
         savedStateHandle[OVERLAY] = WorkspaceOverlay.NONE.wireValue
     }
 
-    fun openVideoFactory() {
+    fun openStoryboard() {
         isDiagnosisOpen = false
-        isVideoFactoryOpen = true
+        isStoryboardOpen = true
         isImportOpen = false
-        savedStateHandle[OVERLAY] = WorkspaceOverlay.VIDEO_FACTORY.wireValue
+        savedStateHandle[OVERLAY] = WorkspaceOverlay.STORYBOARD.wireValue
     }
 
     fun openImport() {
         isDiagnosisOpen = false
-        isVideoFactoryOpen = false
+        isStoryboardOpen = false
         isImportOpen = true
         savedStateHandle[OVERLAY] = WorkspaceOverlay.IMPORT.wireValue
-    }
-
-    fun advanceVideoStage() = updateVideoStage(
-        VideoFactoryStage.entries[(videoStage.ordinal + 1).coerceAtMost(VideoFactoryStage.entries.lastIndex)]
-    )
-
-    fun retreatVideoStage() = updateVideoStage(
-        VideoFactoryStage.entries[(videoStage.ordinal - 1).coerceAtLeast(0)]
-    )
-
-    fun selectTopic(topic: String) {
-        selectedTopic = topic
-        savedStateHandle[SELECTED_TOPIC] = topic
-    }
-
-    fun updateCopyDraft(copy: String) {
-        copyDraft = copy
-        savedStateHandle[COPY_DRAFT] = copy
-    }
-
-    private fun updateVideoStage(stage: VideoFactoryStage) {
-        videoStage = stage
-        savedStateHandle[VIDEO_STAGE] = stage.wireValue
     }
 
     private fun restoreOverlay(): WorkspaceOverlay {
@@ -143,7 +109,7 @@ class WorkspaceViewModel(
 
         return when {
             savedStateHandle.get<Boolean>(IS_DIAGNOSIS_OPEN) == true -> WorkspaceOverlay.DIAGNOSIS
-            savedStateHandle.get<Boolean>(IS_VIDEO_FACTORY_OPEN) == true -> WorkspaceOverlay.VIDEO_FACTORY
+            savedStateHandle.get<Boolean>(IS_STORYBOARD_OPEN) == true -> WorkspaceOverlay.STORYBOARD
             else -> WorkspaceOverlay.NONE
         }
     }
@@ -171,11 +137,8 @@ class WorkspaceViewModel(
         const val OPERATIONS_RANGE_END = "workspace_operations_range_end"
         const val OVERLAY = "workspace_overlay"
         const val IS_DIAGNOSIS_OPEN = "workspace_is_diagnosis_open"
-        const val IS_VIDEO_FACTORY_OPEN = "workspace_is_video_factory_open"
+        const val IS_STORYBOARD_OPEN = "workspace_is_storyboard_open"
         const val HAS_PRIORITY_TASK = "workspace_has_priority_task"
-        const val VIDEO_STAGE = "workspace_video_stage"
-        const val SELECTED_TOPIC = "workspace_selected_topic"
-        const val COPY_DRAFT = "workspace_copy_draft"
 
         val PRIORITY_TASK = LocalActionTask(
             title = "检查午市套餐曝光与核销承接",
@@ -188,7 +151,7 @@ class WorkspaceViewModel(
     private enum class WorkspaceOverlay(val wireValue: String) {
         NONE("none"),
         DIAGNOSIS("diagnosis"),
-        VIDEO_FACTORY("video-factory"),
+        STORYBOARD("storyboard"),
         IMPORT("import");
 
         companion object {

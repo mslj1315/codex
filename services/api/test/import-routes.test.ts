@@ -25,7 +25,7 @@ describe("import API routes", () => {
     pool = new Pool();
     await applyTestMigrations(pool);
     storage = new FakeObjectStorage();
-    app = buildServer({ database: pool, developmentMode: true, objectStorage: storage, now: () => now });
+    app = buildServer({ database: pool, localContainerDevelopmentMode: true, objectStorage: storage, now: () => now });
   });
 
   it("requires an authentication secret without an explicit trusted context provider", () => {
@@ -193,7 +193,7 @@ describe("import API routes", () => {
   });
 
   it("keeps manual imports available but routes unconfigured file storage through a neutral 503", async () => {
-    const unconfigured = buildServer({ database: pool, developmentMode: true });
+    const unconfigured = buildServer({ database: pool, localContainerDevelopmentMode: true });
     const manual = await unconfigured.inject({
       method: "POST",
       url: "/v1/stores/store_demo/imports/manual",

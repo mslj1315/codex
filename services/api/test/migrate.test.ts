@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { DataType, newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
@@ -9,6 +10,41 @@ const migration = {
 };
 
 describe("runMigrations", () => {
+  it("declares immutable CNY-per-million-token price versions and nullable run cost snapshots", async () => {
+    const id = "028_model_token_pricing.sql";
+    const sql = await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8");
+
+    expect(sql).toContain("CREATE TABLE model_token_price_versions");
+    expect(sql).toContain("input_cny_per_million_tokens NUMERIC");
+    expect(sql).toContain("output_cny_per_million_tokens NUMERIC");
+    expect(sql).toContain("CHECK (input_cny_per_million_tokens >= 0)");
+    expect(sql).toContain("CHECK (output_cny_per_million_tokens >= 0)");
+    expect(sql).toContain("status IN ('draft', 'published', 'retired')");
+    expect(sql).toContain("effective_to TIMESTAMPTZ");
+    expect(sql).toContain("ALTER TABLE content_task_generation_runs");
+    expect(sql).toContain("price_version_id");
+    expect(sql).toContain("total_cost NUMERIC");
+    expect(sql).toContain("model token price history is immutable");
+    expect(sql).toContain("CREATE TRIGGER model_token_price_versions_append_only");
+    expect(sql).toContain("IF OLD.status = 'draft' THEN");
+    expect(sql).toContain("OLD.status = 'published' AND NEW.status = 'retired'");
+    expect(sql).toContain("currency = 'CNY' AND input_unit_price IS NOT NULL AND output_unit_price IS NOT NULL AND input_cost IS NOT NULL AND output_cost IS NOT NULL AND total_cost IS NOT NULL");
+  });
+  it("declares and executes the customer content task queue index migration", async () => {
+    const id = "027_content_task_customer_queue_index.sql";
+    const sql = await readFile(new URL(`../migrations/${id}`, import.meta.url), "utf8");
+    await expect(readFile(new URL("../migrations/025_content_task_customer_queue_index.sql", import.meta.url), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(sql.trim()).toBe("CREATE INDEX content_tasks_customer_queue_idx ON content_tasks(enterprise_id, store_id, actor_id, created_at DESC);");
+
+    const memory = newDb({ noAstCoverageCheck: true });
+    memory.public.registerFunction({ name: "pg_advisory_xact_lock", args: [DataType.bigint], returns: DataType.bool, implementation: () => true });
+    const pool = new (memory.adapters.createPg().Pool)();
+    await pool.query("CREATE TABLE content_tasks (enterprise_id TEXT NOT NULL, store_id TEXT NOT NULL, actor_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL)");
+
+    expect(await runMigrations(pool, [{ id, sql }])).toEqual([id]);
+    expect((await pool.query("SELECT migration_id FROM schema_migrations")).rows).toEqual([{ migration_id: id }]);
+  });
+
   it("records a migration and skips it on the next run", async () => {
     const memory = newDb({ noAstCoverageCheck: true });
     memory.public.registerFunction({

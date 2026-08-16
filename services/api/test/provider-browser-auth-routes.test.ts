@@ -34,7 +34,7 @@ describe("provider browser authentication routes", () => {
     expect(response.json()).toEqual({
       accessToken: expect.any(String), expiresAt: expect.any(String),
       account: { id: "account_viewer", displayName: "Viewer" },
-      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: true }
+      capabilities: { providerFeedbackViewer: true, metricCatalogOperator: false, providerCustomerMetadataEditor: true, modelPricingOperator: false }
     });
     expect(response.body).not.toContain("refreshToken");
     expect(cookie(response)).toMatch(/^provider_refresh=[A-Za-z0-9_-]+; HttpOnly; Secure; SameSite=Strict; Path=\/v1\/provider-auth\/; Max-Age=2592000$/);

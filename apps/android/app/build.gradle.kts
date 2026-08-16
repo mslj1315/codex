@@ -14,6 +14,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        manifestPlaceholders["appLabel"] = "Restaurant Operations"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -26,6 +27,13 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "LOCAL_API_BASE_URL", "\"http://10.0.2.2:3000/\"")
+        }
+        create("cloudTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".cloudtest"
+            versionNameSuffix = "-cloudtest"
+            manifestPlaceholders["appLabel"] = "Restaurant Operations Cloud Test"
+            buildConfigField("String", "LOCAL_API_BASE_URL", "\"https://app.msljkj.cn/\"")
         }
         release {
             buildConfigField("String", "LOCAL_API_BASE_URL", "\"\"")

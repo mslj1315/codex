@@ -1,6 +1,7 @@
 package com.restaurantops.auth
 
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
@@ -21,12 +22,24 @@ class HttpAuthRepository(
     override var accessToken: String? = null
         private set
 
-    override suspend fun login(loginName: String, password: String): List<StoreMembership> =
-        installAndLoadStores { api.login(LoginRequest(loginName, password)) }
+    override suspend fun login(loginName: String, password: String): AuthenticatedSession =
+        installAndLoadSession { api.login(LoginRequest(loginName, password)) }
 
-    override suspend fun restore(): List<StoreMembership> {
-        val refreshToken = refreshTokenStore.read() ?: return emptyList()
-        return installAndLoadStores { api.refresh(RefreshRequest(refreshToken)) }
+    override suspend fun restore(): AuthenticatedSession {
+        val refreshToken = refreshTokenStore.read() ?: return AuthenticatedSession(emptyList(), passwordChangeRequired = false)
+        return installAndLoadSession { api.refresh(RefreshRequest(refreshToken)) }
+    }
+
+    override suspend fun changePassword(loginName: String, currentPassword: String, newPassword: String): AuthenticatedSession = try {
+        val currentAccessToken = requireNotNull(accessToken) { "Authentication required" }
+        request { api.changePassword(currentAccessToken.toBearerHeader(), ChangePasswordRequest(currentPassword, newPassword)) }
+        clearSession()
+        installAndLoadSession { api.login(LoginRequest(loginName, newPassword)) }
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        clearSession()
+        throw error
     }
 
     override suspend fun logout() {
@@ -77,9 +90,18 @@ class HttpAuthRepository(
         refreshTokenStore.write(tokens.refreshToken)
     }
 
-    private suspend fun installAndLoadStores(tokens: suspend () -> AuthTokensResponse): List<StoreMembership> = try {
-        request { tokens().also(::installTokens) }
-        loadStores().also { stores -> if (stores.isEmpty()) clearSession() }
+    private suspend fun installAndLoadSession(tokens: suspend () -> AuthTokensResponse): AuthenticatedSession = try {
+        val tokenResponse = request { tokens().also(::installTokens) }
+        if (tokenResponse.passwordChangeRequired) {
+            AuthenticatedSession(emptyList(), passwordChangeRequired = true)
+        } else {
+            loadStores().let { stores ->
+                if (stores.isEmpty()) clearSession()
+                AuthenticatedSession(stores, passwordChangeRequired = false)
+            }
+        }
+    } catch (error: CancellationException) {
+        throw error
     } catch (error: Throwable) {
         clearSession()
         throw error

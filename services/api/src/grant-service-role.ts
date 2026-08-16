@@ -73,6 +73,6 @@ function identifier(value: string, key: string): string {
 }
 
 function serviceOperatorRole(value: string): ServiceOperatorRole {
-  if (value === "metric_catalog_operator" || value === "provider_feedback_viewer" || value === "provider_customer_metadata_editor") return value;
+  if (value === "metric_catalog_operator" || value === "provider_feedback_viewer" || value === "provider_customer_metadata_editor" || value === "model_pricing_operator") return value;
   throw new Error("GRANT_SERVICE_OPERATOR_ROLE is invalid");
 }

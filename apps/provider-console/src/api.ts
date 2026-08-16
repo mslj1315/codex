@@ -23,12 +23,12 @@ export function createProviderApiClient(
     return refreshInFlight;
   }
 
-  async function send(path: string, init: RequestInit, token: string | null, isMutation: boolean): Promise<Response> {
+  async function send(path: string, init: RequestInit, token: string | null, requiresProviderMarker: boolean): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.delete("Authorization");
     headers.delete("X-Provider-Console-Request");
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    if (isMutation) headers.set("X-Provider-Console-Request", "1");
+    if (requiresProviderMarker) headers.set("X-Provider-Console-Request", "1");
     return fetcher(path, {
       ...init,
       credentials: "same-origin",
@@ -41,8 +41,10 @@ export function createProviderApiClient(
       const target = new URL(path, window.location.origin);
       const method = (init.method ?? "GET").toUpperCase();
       const metadataRoute = /^\/v1\/provider-customers\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/metadata$/;
-      const isList = method === "GET" && target.pathname === "/v1/provider-customers";
-      const isMutation = method === "PUT" && metadataRoute.test(target.pathname) && target.search === "";
+      const isList = method === "GET" && (target.pathname === "/v1/provider-customers" || target.pathname === "/v1/provider-model-pricing/versions" || target.pathname === "/v1/provider-model-pricing/usage");
+      const priceMutation = /^\/v1\/provider-model-pricing\/versions(?:\/[A-Za-z0-9-]+(?:\/(?:publish|retire))?)?$/.test(target.pathname) && ["POST", "PUT"].includes(method);
+      const isMutation = (method === "PUT" && metadataRoute.test(target.pathname) && target.search === "") || priceMutation;
+      const requiresProviderMarker = isMutation || (method === "GET" && (target.pathname === "/v1/provider-model-pricing/versions" || target.pathname === "/v1/provider-model-pricing/usage"));
       if (
         !path.startsWith("/")
         || path.startsWith("//")
@@ -54,12 +56,12 @@ export function createProviderApiClient(
       }
       const normalizedPath = target.pathname + target.search;
       const initialToken = session.accessToken();
-      const initial = await send(normalizedPath, init, initialToken, isMutation);
+      const initial = await send(normalizedPath, init, initialToken, requiresProviderMarker);
       if (initial.status !== 401) return initial;
       const replacementToken = session.accessToken();
       if (replacementToken === initialToken && !await refresh()) return initial;
 
-      const retry = await send(normalizedPath, init, session.accessToken(), isMutation);
+      const retry = await send(normalizedPath, init, session.accessToken(), requiresProviderMarker);
       if (retry.status === 401) session.clear();
       return retry;
     }

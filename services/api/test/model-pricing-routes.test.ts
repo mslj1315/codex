@@ -1,0 +1,107 @@
+import { readdir, readFile } from "node:fs/promises";
+import { DataType, newDb } from "pg-mem";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { Database } from "../src/db.js";
+import { hashPassword } from "../src/auth/credentials.js";
+import { buildServer } from "../src/server.js";
+import { ModelPricingRepository } from "../src/model-pricing/repository.js";
+
+describe("model pricing provider routes", () => {
+  let database: Database;
+  let app: ReturnType<typeof buildServer>;
+
+  beforeEach(async () => {
+    const memory = newDb();
+    memory.public.registerFunction({ name: "length", args: [DataType.text], returns: DataType.integer, implementation: (value: string) => value.length });
+    const { Pool } = memory.adapters.createPg(); database = new Pool();
+    await applyMigrations(database);
+    const hash = await hashPassword("passphrase", () => Buffer.alloc(16, 4));
+    await database.query("INSERT INTO accounts (id,login_name,display_name,password_hash) VALUES ('price','price','Price', $1), ('viewer','viewer','Viewer',$1), ('super','super','Super',$1)", [hash]);
+    await database.query("INSERT INTO service_operator_roles (account_id,role) VALUES ('price','model_pricing_operator'),('viewer','provider_feedback_viewer')");
+    await database.query("INSERT INTO internal_account_roles (account_id,role_id) VALUES ('super','internal-role-super-admin')");
+    app = buildServer({ database, authTokenSecret: "a sufficiently long test signing secret", now: () => new Date("2026-08-15T00:00:00Z") }); activeApp = app;
+  });
+
+  it("lets only the dedicated price role create a draft and exposes a safe global aggregate", async () => {
+    const price = await login("price"); const viewer = await login("viewer");
+    const denied = await app.inject({ method: "POST", url: "/v1/provider-model-pricing/versions", headers: bearer(viewer), payload: { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" } });
+    expect(denied.statusCode).toBe(403);
+    const created = await app.inject({ method: "POST", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(price), payload: { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" } });
+    expect(created.statusCode).toBe(201); expect(created.json()).toMatchObject({ status: "draft", currency: "CNY", provider: "openai_responses", model: "gpt" });
+    const aggregate = await app.inject({ method: "GET", url: "/v1/provider-model-pricing/usage?from=2026-08-01&to=2026-08-31", headers: providerHeaders(price) });
+    expect(aggregate.statusCode).toBe(200); expect(aggregate.json()).toEqual({ items: [] });
+    expect(aggregate.body).not.toMatch(/enterprise|store|actor|task|prompt|content|media|object/i);
+  });
+
+  it("requires the provider marker and dedicated role before reading price versions", async () => {
+    const price = await login("price"); const viewer = await login("viewer");
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: bearer(price) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(viewer) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url: "/v1/provider-model-pricing/versions", headers: providerHeaders(price) })).statusCode).toBe(200);
+  });
+
+  it("requires the provider marker and dedicated role before reading usage", async () => {
+    const price = await login("price"); const viewer = await login("viewer"); const url = "/v1/provider-model-pricing/usage?from=2026-08-01&to=2026-08-31";
+    expect((await app.inject({ method: "GET", url })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url, headers: bearer(price) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url, headers: providerHeaders(viewer) })).statusCode).toBe(403);
+    expect((await app.inject({ method: "GET", url, headers: providerHeaders(price) })).statusCode).toBe(200);
+  });
+
+  it("lets an internal administrator retrieve a safe aggregate without date parameters", async () => {
+    const superToken = await login("super");
+    const result = await app.inject({ method: "GET", url: "/v1/admin/model-pricing/usage", headers: bearer(superToken) });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toEqual({ items: [] });
+    expect(result.body).not.toMatch(/enterprise|store|actor|task|prompt|content|media|object/i);
+  });
+
+  it("returns the internal version list as items and records only safe pricing audit fields", async () => {
+    const superToken = await login("super");
+    const created = await app.inject({ method: "POST", url: "/v1/admin/model-pricing/versions", headers: bearer(superToken), payload: { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" } });
+    expect(created.statusCode).toBe(201);
+    const id = created.json<{ id: string }>().id;
+    expect((await app.inject({ method: "GET", url: "/v1/admin/model-pricing/versions", headers: bearer(superToken) })).json()).toMatchObject({ items: [{ id, provider: "openai_responses", model: "gpt" }] });
+    expect((await app.inject({ method: "POST", url: `/v1/admin/model-pricing/versions/${id}/publish`, headers: bearer(superToken) })).statusCode).toBe(200);
+    const audit = JSON.stringify((await database.query("SELECT action_code,metadata_json FROM internal_audit_events WHERE target_id=$1", [id])).rows);
+    expect(audit).toContain("model_pricing.created");
+    expect(audit).toContain("model_pricing.published");
+    expect(audit).not.toMatch(/secret|key|token|prompt|content|copy|inspiration|media|object/i);
+  });
+
+  it("rolls back an internal price mutation when its audit write fails", async () => {
+    const originalConnect = database.connect.bind(database);
+    database.connect = async () => {
+      const client = await originalConnect(); const query = client.query.bind(client);
+      client.query = (async (sql: string, ...args: unknown[]) => {
+        if (sql.includes("INSERT INTO internal_audit_events")) throw new Error("audit unavailable");
+        return query(sql, ...args as []);
+      }) as typeof client.query;
+      return client;
+    };
+    const superToken = await login("super");
+    const response = await app.inject({ method: "POST", url: "/v1/admin/model-pricing/versions", headers: bearer(superToken), payload: { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" } });
+    expect(response.statusCode).toBe(500);
+    // pg-mem does not faithfully roll back an intercepted client query; the unit test below
+    // proves the transaction has no commit path after an audit failure.
+  });
+
+  it("never commits a price write when the audit write fails", async () => {
+    const calls: string[] = [];
+    const client = { query: async (sql: string) => { calls.push(sql); if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [], rowCount: 0 }; if (sql.includes("model_token_price_versions")) return { rows: [{ id: "price-1", provider: "openai_responses", model: "gpt", input_cny_per_million_tokens: 8, output_cny_per_million_tokens: 32, effective_from: "2026-08-16T00:00:00Z", effective_to: null, status: "draft" }], rowCount: 1 }; if (sql.includes("internal_audit_events")) throw new Error("audit unavailable"); return { rows: [], rowCount: 0 }; }, release() {} };
+    const repository = new ModelPricingRepository({ connect: async () => client, query: async () => ({ rows: [], rowCount: 0 }) } as never);
+    await expect(repository.createAndAudit("actor", { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" })).rejects.toThrow("audit unavailable");
+    expect(calls).toContain("BEGIN");
+    expect(calls.some(call => call.includes("model_token_price_versions"))).toBe(true);
+    expect(calls.some(call => call.includes("internal_audit_events"))).toBe(true);
+    expect(calls).toContain("ROLLBACK");
+    expect(calls).not.toContain("COMMIT");
+  });
+});
+let activeApp: ReturnType<typeof buildServer>;
+async function login(loginName: string) { const r = await activeApp.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName, password: "passphrase" } }); return r.json<{accessToken:string}>().accessToken; }
+function bearer(accessToken: string) { return { authorization: `Bearer ${accessToken}` }; }
+function providerHeaders(accessToken: string) { return { ...bearer(accessToken), "x-provider-console-request": "1" }; }
+async function applyMigrations(database: Database) { const url = new URL("../migrations/", import.meta.url); for (const file of (await readdir(url)).filter((f) => /^\d+.*\.sql$/.test(f)).sort()) { let sql = await readFile(new URL(file, url), "utf8"); if (file === "028_model_token_pricing.sql") sql = sql.slice(0, sql.indexOf("CREATE OR REPLACE FUNCTION")); await database.query(sql.replace(/\n-- PostgreSQL append-only guards[\s\S]*$/, "")); } }

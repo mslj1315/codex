@@ -27,12 +27,12 @@ fun LoginScreen(
     viewModel: LoginViewModel,
     allowLocalDemo: Boolean,
     onLocalDemo: () -> Unit,
-    onAuthenticated: (List<StoreMembership>) -> Unit
+    onAuthenticated: (String, AuthenticatedSession) -> Unit
 ) {
     val loginState = viewModel.uiState
     if (loginState is LoginUiState.Success) {
         LaunchedEffect(loginState) {
-            onAuthenticated(loginState.stores)
+            onAuthenticated(loginState.loginName, loginState.session)
             viewModel.clearConsumedResult()
         }
     }
@@ -70,6 +70,64 @@ fun LoginScreen(
             if (allowLocalDemo) {
                 TextButton(onClick = onLocalDemo, modifier = Modifier.fillMaxWidth()) { Text("本地演示") }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PasswordChangeScreen(
+    loginName: String,
+    viewModel: PasswordChangeViewModel,
+    onChanged: (AuthenticatedSession) -> Unit
+) {
+    val state = viewModel.uiState
+    if (state is PasswordChangeUiState.Success) {
+        LaunchedEffect(state) {
+            onChanged(state.session)
+            viewModel.clearConsumedResult()
+        }
+    }
+    Scaffold(topBar = { TopAppBar(title = { Text("修改初始密码") }) }) { contentPadding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(contentPadding).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("请先修改初始密码后再进入门店工作台", style = MaterialTheme.typography.titleLarge)
+            OutlinedTextField(
+                value = viewModel.currentPassword,
+                onValueChange = { viewModel.currentPassword = it },
+                label = { Text("当前密码") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = viewModel.newPassword,
+                onValueChange = { viewModel.newPassword = it },
+                label = { Text("新密码，至少 12 位") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = viewModel.confirmation,
+                onValueChange = { viewModel.confirmation = it },
+                label = { Text("确认新密码") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            when (state) {
+                PasswordChangeUiState.Loading -> CircularProgressIndicator()
+                is PasswordChangeUiState.Error -> Text(state.message, color = MaterialTheme.colorScheme.error)
+                else -> Unit
+            }
+            Button(
+                onClick = { viewModel.submit(loginName) },
+                enabled = state != PasswordChangeUiState.Loading,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("确认修改") }
         }
     }
 }

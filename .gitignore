@@ -9,7 +9,10 @@ node_modules/
 
 # Android and Gradle local state
 .gradle/
+**/.kotlin/
 **/build/
+**/dist/
+*.tsbuildinfo
 local.properties
 *.iml
 .idea/

@@ -43,7 +43,7 @@ class LoginViewModelTest {
     @Test
     fun successfulLoginLoadsTheEnabledStoresAndClearsThePassword() = runTest {
         val expectedStores = listOf(StoreMembership("ent_a", "store_a", StoreRole.OWNER))
-        val repository = FakeAuthRepository(stores = expectedStores)
+        val repository = FakeAuthRepository(session = AuthenticatedSession(expectedStores, passwordChangeRequired = false))
         val viewModel = LoginViewModel(repository, SavedStateHandle())
 
         viewModel.loginName = "owner"
@@ -51,9 +51,23 @@ class LoginViewModelTest {
         viewModel.submit()
         advanceUntilIdle()
 
-        assertEquals(LoginUiState.Success(expectedStores), viewModel.uiState)
+        assertEquals(LoginUiState.Success("owner", AuthenticatedSession(expectedStores, passwordChangeRequired = false)), viewModel.uiState)
         assertEquals("", viewModel.password)
         assertEquals(1, repository.loginCalls)
+    }
+
+    @Test
+    fun passwordChangeRequiredLoginDoesNotEnterTheStoreWorkspace() = runTest {
+        val repository = FakeAuthRepository(session = AuthenticatedSession(emptyList(), passwordChangeRequired = true))
+        val viewModel = LoginViewModel(repository, SavedStateHandle())
+        viewModel.loginName = "13800138000"
+        viewModel.password = "temporary-password"
+
+        viewModel.submit()
+        advanceUntilIdle()
+
+        assertEquals(LoginUiState.Success("13800138000", AuthenticatedSession(emptyList(), passwordChangeRequired = true)), viewModel.uiState)
+        assertEquals("", viewModel.password)
     }
 
     @Test
@@ -72,7 +86,7 @@ class LoginViewModelTest {
 
     @Test
     fun consumedSuccessfulLoginReturnsToIdleWithoutClearingTheLoginName() = runTest {
-        val repository = FakeAuthRepository(stores = listOf(StoreMembership("ent_a", "store_a", StoreRole.OWNER)))
+        val repository = FakeAuthRepository(session = AuthenticatedSession(listOf(StoreMembership("ent_a", "store_a", StoreRole.OWNER)), passwordChangeRequired = false))
         val viewModel = LoginViewModel(repository, SavedStateHandle())
         viewModel.loginName = "owner"
         viewModel.password = "password"
@@ -87,18 +101,20 @@ class LoginViewModelTest {
     }
 
     private class FakeAuthRepository(
-        private val stores: List<StoreMembership> = emptyList(),
+        private val session: AuthenticatedSession = AuthenticatedSession(emptyList(), passwordChangeRequired = false),
         private val loginFailure: Throwable? = null
     ) : AuthRepository {
         var loginCalls = 0
 
-        override suspend fun login(loginName: String, password: String): List<StoreMembership> {
+        override suspend fun login(loginName: String, password: String): AuthenticatedSession {
             loginCalls += 1
             loginFailure?.let { throw it }
-            return stores
+            return session
         }
 
-        override suspend fun restore(): List<StoreMembership> = stores
+        override suspend fun restore(): AuthenticatedSession = session
+
+        override suspend fun changePassword(loginName: String, currentPassword: String, newPassword: String): AuthenticatedSession = session
 
         override suspend fun logout() = Unit
     }

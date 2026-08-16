@@ -7,6 +7,7 @@ export interface ProviderCapabilities {
   providerFeedbackViewer: boolean;
   providerCustomerMetadataEditor: boolean;
   metricCatalogOperator: boolean;
+  modelPricingOperator?: boolean;
 }
 
 export interface ProviderSession {

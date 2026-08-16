@@ -177,6 +177,46 @@ describe("provider console application shell", () => {
     expect(feedbackApi.fetch).not.toHaveBeenCalled();
   });
 
+  it("shows model pricing only for the dedicated capability without loading customer feedback", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sessionWithCapabilities(false, false, false, true)));
+    const api = feedbackApiResponse(jsonResponse({ items: [] }));
+    render(<App session={createSessionClient(fetcher)} feedbackApi={api} />);
+    expect(await screen.findByRole("heading", { name: "Model token pricing" })).toBeVisible();
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions");
+    expect(screen.queryByRole("heading", { name: "Customer Feedback" })).not.toBeInTheDocument();
+  });
+
+  it("lets a pricing operator create, edit, publish, and retire a price without requesting customers", async () => {
+    const user = userEvent.setup();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sessionWithCapabilities(false, false, false, true)));
+    const draft = { id: "price-1", provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00.000Z", effectiveTo: null, status: "draft" };
+    const api = feedbackApiResponses(
+      jsonResponse({ items: [] }), jsonResponse({ items: [{ date: "2026-08-15", provider: "openai_responses", model: "gpt", inputTokens: 12, outputTokens: 3, totalTokens: 15, inputCostCny: 1, outputCostCny: 2, totalCostCny: 3, callCount: 1, successCount: 1 }] }), jsonResponse(draft), jsonResponse({ ...draft, inputCnyPerMillionTokens: 9 }),
+      jsonResponse({ ...draft, inputCnyPerMillionTokens: 9, status: "published" }),
+      jsonResponse({ ...draft, inputCnyPerMillionTokens: 9, status: "retired", effectiveTo: "2026-09-01T00:00:00.000Z" })
+    );
+    render(<App session={createSessionClient(fetcher)} feedbackApi={api} />);
+    await screen.findByRole("heading", { name: "Model token pricing" });
+    expect(await screen.findByText(/2026-08-15.*openai_responses.*gpt/)).toBeVisible();
+    expect(api.fetch).toHaveBeenCalledWith(expect.stringMatching(/^\/v1\/provider-model-pricing\/usage\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}$/));
+    await user.type(screen.getByLabelText("Provider"), "openai_responses");
+    await user.type(screen.getByLabelText("Model"), "gpt");
+    await user.type(screen.getByLabelText("Input CNY per 1M tokens"), "8");
+    await user.type(screen.getByLabelText("Output CNY per 1M tokens"), "32");
+    await user.type(screen.getByLabelText("Effective from"), "2026-08-16T00:00:00.000Z");
+    await user.click(screen.getByRole("button", { name: "Create draft" }));
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions", expect.objectContaining({ method: "POST", body: JSON.stringify({ provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00.000Z" }) }));
+    await user.clear(screen.getByLabelText("Input CNY per 1M tokens")); await user.type(screen.getByLabelText("Input CNY per 1M tokens"), "9");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions/price-1", expect.objectContaining({ method: "PUT" }));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions/price-1/publish", expect.objectContaining({ method: "POST" }));
+    await user.type(screen.getByLabelText("Scheduled effective to"), "2026-09-01T00:00:00.000Z");
+    await user.click(screen.getByRole("button", { name: "Retire" }));
+    expect(api.fetch).toHaveBeenCalledWith("/v1/provider-model-pricing/versions/price-1/retire", expect.objectContaining({ method: "POST", body: JSON.stringify({ effectiveTo: "2026-09-01T00:00:00.000Z" }) }));
+    expect(api.fetch).not.toHaveBeenCalledWith("/v1/provider-customers?limit=50");
+  });
+
   it("shows feedback and catalog information for an account with both capabilities", async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValue(jsonResponse(sessionWithCapabilities(true, true)));
@@ -221,11 +261,12 @@ describe("provider console application shell", () => {
 function sessionWithCapabilities(
   providerFeedbackViewer: boolean,
   metricCatalogOperator: boolean,
-  providerCustomerMetadataEditor = false
+  providerCustomerMetadataEditor = false,
+  modelPricingOperator = false
 ): ProviderSession {
   return {
     ...viewerSession,
-    capabilities: { providerFeedbackViewer, providerCustomerMetadataEditor, metricCatalogOperator }
+    capabilities: { providerFeedbackViewer, providerCustomerMetadataEditor, metricCatalogOperator, modelPricingOperator }
   };
 }
 

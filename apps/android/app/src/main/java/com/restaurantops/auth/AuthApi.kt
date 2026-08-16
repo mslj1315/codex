@@ -15,12 +15,21 @@ interface AuthApi {
     @POST("/v1/auth/logout")
     suspend fun logout(@Header("Authorization") authorization: String)
 
+    @POST("/v1/auth/change-password")
+    suspend fun changePassword(@Header("Authorization") authorization: String, @Body body: ChangePasswordRequest)
+
     @GET("/v1/auth/me/stores")
     suspend fun stores(@Header("Authorization") authorization: String): StoresResponse
 }
 
 data class LoginRequest(val loginName: String, val password: String)
 data class RefreshRequest(val refreshToken: String)
-data class AuthTokensResponse(val accessToken: String, val refreshToken: String, val expiresAt: String)
+data class AuthTokensResponse(
+    val accessToken: String,
+    val refreshToken: String,
+    val expiresAt: String,
+    val passwordChangeRequired: Boolean = false
+)
+data class ChangePasswordRequest(val currentPassword: String, val newPassword: String)
 data class StoresResponse(val stores: List<StoreMembershipResponse>)
 data class StoreMembershipResponse(val enterpriseId: String, val storeId: String, val role: String)

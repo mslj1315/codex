@@ -19,11 +19,12 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +41,25 @@ import com.restaurantops.imports.network.LocalImportApiRuntime
 import com.restaurantops.operations.OperationsRuntime
 import com.restaurantops.operations.OperationsScreen
 import com.restaurantops.operations.OperationsViewModel
+import com.restaurantops.content.StoryboardContext
+import com.restaurantops.content.StoryboardContextRepository
+import com.restaurantops.content.StoryboardContextScreen
+import com.restaurantops.content.StoryboardVideoScreen
+import com.restaurantops.content.StoryboardVideoViewModel
+import com.restaurantops.content.StoryboardWireApi
+import com.restaurantops.content.RetrofitStoryboardVideoApi
+import com.restaurantops.content.HttpStoryboardVideoRepository
+import com.restaurantops.content.ContentResolverDirectVideoUploader
+import com.restaurantops.content.AuthenticatedRenderDelivery
+import com.restaurantops.content.RenderDeliveryResult
+import com.restaurantops.content.ContentCreationScreen
+import com.restaurantops.content.RemoteContentCreationRequiredScreen
+import com.restaurantops.content.ContentCreationDestination
+import com.restaurantops.content.contentCreationDestination
+import com.restaurantops.content.ContentCreationViewModel
+import com.restaurantops.content.HttpContentCreationRepository
+import com.restaurantops.content.contentCreationWireApi
+import kotlinx.coroutines.launch
 import com.restaurantops.home.OperationsHomeScreen
 import com.restaurantops.home.OperationsHomeViewModel
 import retrofit2.Retrofit
@@ -52,10 +72,12 @@ fun WorkspaceRoot(
     onReturnToOnboarding: () -> Unit,
     storeId: String,
     authenticatedApiClient: AuthenticatedApiClient? = null,
+    onReturnToLogin: (() -> Unit)? = null,
     onLogout: (() -> Unit)? = null,
     onChooseAnotherStore: (() -> Unit)? = null
 ) {
-    val contentResolver = LocalContext.current.contentResolver
+    val androidContext = LocalContext.current
+    val contentResolver = androidContext.contentResolver
     val importFileReader = remember(contentResolver) { AndroidImportFileReader(contentResolver) }
     val importViewModel = remember(importFileReader, storeId, authenticatedApiClient) {
         val repository = if (authenticatedApiClient != null) {
@@ -83,24 +105,35 @@ fun WorkspaceRoot(
     val operationsHomeViewModel = remember(storeId, operationsHomeRepository, operationsRepository) {
         operationsHomeRepository?.let { OperationsHomeViewModel(it, operationsRepository) }
     }
+    val storyboardWireApi = remember(authenticatedApiClient) { authenticatedApiClient?.retrofit(BuildConfig.LOCAL_API_BASE_URL)?.create(StoryboardWireApi::class.java) }
+    val contentCreationRepository = remember(authenticatedApiClient) {
+        authenticatedApiClient?.let { HttpContentCreationRepository(contentCreationWireApi(it, BuildConfig.LOCAL_API_BASE_URL)) }
+    }
+    val contentCreationViewModel = remember(storeId, contentCreationRepository) {
+        contentCreationRepository?.let(::ContentCreationViewModel)
+    }
+    val storyboardContextRepository = remember(storyboardWireApi) { storyboardWireApi?.let(::StoryboardContextRepository) }
+    val storyboardViewModel = remember(storyboardWireApi, contentResolver) { storyboardWireApi?.let { StoryboardVideoViewModel(HttpStoryboardVideoRepository(RetrofitStoryboardVideoApi(it), ContentResolverDirectVideoUploader(contentResolver))) } }
+    val renderDelivery = remember(authenticatedApiClient, androidContext) { authenticatedApiClient?.let { AuthenticatedRenderDelivery(androidContext, BuildConfig.LOCAL_API_BASE_URL, it.okHttpClient()) } }
+    val deliveryScope = androidx.compose.runtime.rememberCoroutineScope()
+    var storyboardContext by remember { androidx.compose.runtime.mutableStateOf<StoryboardContext?>(null) }
+    val selectedStoryboardContext = storyboardContext
     when {
         viewModel.isDiagnosisOpen -> DiagnosisScreen(
             onBack = viewModel::closeOverlay,
             onCreateTask = viewModel::createPriorityTaskAndOpenTasks
         )
-        viewModel.isVideoFactoryOpen -> VideoFactoryScreen(
-            stage = viewModel.videoStage,
-            selectedTopic = viewModel.selectedTopic,
-            copyDraft = viewModel.copyDraft,
-            onSelectTopic = viewModel::selectTopic,
-            onCopyDraftChanged = viewModel::updateCopyDraft,
-            onPrevious = viewModel::retreatVideoStage,
-            onNext = viewModel::advanceVideoStage,
-            onClose = viewModel::closeOverlay,
-            onReturnHome = {
-                viewModel.selectTab(WorkspaceTab.HOME)
-                viewModel.closeOverlay()
-            }
+        viewModel.isStoryboardOpen && selectedStoryboardContext != null && storyboardViewModel != null -> StoryboardVideoScreen(
+            viewModel = storyboardViewModel,
+            storeId = storeId,
+            taskId = selectedStoryboardContext.taskId,
+            shotListId = selectedStoryboardContext.shotListId,
+            onDeliver = { render, candidate -> renderDelivery?.let { delivery -> deliveryScope.launch { val result = if (candidate == null) delivery.output(storeId, selectedStoryboardContext.taskId, selectedStoryboardContext.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id) else delivery.cover(storeId, selectedStoryboardContext.taskId, selectedStoryboardContext.shotListId, storyboardViewModel.state.draft?.projectId ?: return@launch, render.id, candidate); when (result) { is RenderDeliveryResult.Ready -> delivery.open(result.file, if (candidate == null) "video/mp4" else "image/jpeg"); is RenderDeliveryResult.Unavailable -> storyboardViewModel.deliveryUnavailable(result.message) } } } }
+        )
+        viewModel.isStoryboardOpen && storyboardContextRepository != null -> StoryboardContextScreen(
+            repository = storyboardContextRepository,
+            storeId = storeId,
+            onSelected = { storyboardContext = it }
         )
         viewModel.isImportOpen -> ImportScreen(
             viewModel = importViewModel,
@@ -139,7 +172,6 @@ fun WorkspaceRoot(
                         viewModel.selectTab(WorkspaceTab.TASKS)
                     },
                     onViewAllAlerts = { viewModel.selectTab(WorkspaceTab.TASKS) },
-                    onOpenVideoFactory = viewModel::openVideoFactory,
                     onOpenImport = viewModel::openImport,
                     modifier = Modifier.padding(contentPadding)
                 )
@@ -150,6 +182,21 @@ fun WorkspaceRoot(
                     rangeEnd = viewModel.selectedOperationsPeriod?.rangeEnd,
                     modifier = Modifier.padding(contentPadding)
                 )
+                WorkspaceTab.CONTENT_CREATION -> when (contentCreationDestination(contentCreationViewModel != null)) {
+                    ContentCreationDestination.RemoteWorkflow -> ContentCreationScreen(
+                        viewModel = requireNotNull(contentCreationViewModel),
+                        storeId = storeId,
+                        onStoryboardHandoff = { handoff ->
+                            storyboardContext = StoryboardContext(handoff.taskId, handoff.shotListId, "已确认分镜")
+                            viewModel.openStoryboard()
+                        },
+                        modifier = Modifier.padding(contentPadding)
+                    )
+                    ContentCreationDestination.RemoteRequired -> RemoteContentCreationRequiredScreen(
+                        onReturnToLogin = onReturnToLogin ?: onReturnToOnboarding,
+                        modifier = Modifier.padding(contentPadding)
+                    )
+                }
                 WorkspaceTab.TASKS -> TasksScreen(
                     tasks = viewModel.tasks,
                     modifier = Modifier.padding(contentPadding)
@@ -177,7 +224,6 @@ private fun HomeScreen(
     onOpenDiagnosis: () -> Unit,
     onCreateTask: () -> Unit,
     onViewAllAlerts: () -> Unit,
-    onOpenVideoFactory: () -> Unit,
     onOpenImport: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -211,7 +257,6 @@ private fun HomeScreen(
         Text("工作入口", style = MaterialTheme.typography.titleMedium)
         EntryRow(title = "导入经营数据", detail = "本地演示：手工录入和待确认项", onClick = onOpenImport)
         EntryRow(title = "经营诊断", detail = "查看本地演示诊断", onClick = onOpenDiagnosis)
-        EntryRow(title = "AI 视频工厂", detail = "本地占位，暂未生成视频", onClick = onOpenVideoFactory)
         Text("待办任务 $pendingTaskCount 项", style = MaterialTheme.typography.titleMedium)
     }
 }
@@ -298,216 +343,6 @@ private fun DiagnosisSection(title: String, content: String) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, style = MaterialTheme.typography.titleSmall)
         Text(content, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun VideoFactoryScreen(
-    stage: VideoFactoryStage,
-    selectedTopic: String,
-    copyDraft: String,
-    onSelectTopic: (String) -> Unit,
-    onCopyDraftChanged: (String) -> Unit,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    onClose: () -> Unit,
-    onReturnHome: () -> Unit
-) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("AI 视频工厂") },
-                navigationIcon = { TextButton(onClick = onReturnHome) { Text("返回首页") } },
-                actions = { TextButton(onClick = onClose) { Text("关闭") } }
-            )
-        }
-    ) { contentPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(contentPadding)
-                .padding(20.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text("本地演示流程", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "第 ${stage.ordinal + 1} / ${VideoFactoryStage.entries.size} 步",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            VideoStageIndicator(currentStage = stage)
-            HorizontalDivider()
-            VideoFactoryStageContent(
-                stage = stage,
-                selectedTopic = selectedTopic,
-                copyDraft = copyDraft,
-                onSelectTopic = onSelectTopic,
-                onCopyDraftChanged = onCopyDraftChanged
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = onPrevious, enabled = stage != VideoFactoryStage.TOPIC) {
-                    Text("上一步")
-                }
-                Button(onClick = onNext, enabled = stage != VideoFactoryStage.LIBRARY) {
-                    Text("下一步")
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun VideoStageIndicator(currentStage: VideoFactoryStage) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        VideoFactoryStage.entries.forEachIndexed { index, item ->
-            val marker = if (item == currentStage) "●" else "○"
-            val label = if (item == currentStage) {
-                "$marker ${index + 1}. ${item.title}（当前）"
-            } else {
-                "$marker ${index + 1}. ${item.title}"
-            }
-            Text(
-                label,
-                color = if (item == currentStage) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun VideoFactoryStageContent(
-    stage: VideoFactoryStage,
-    selectedTopic: String,
-    copyDraft: String,
-    onSelectTopic: (String) -> Unit,
-    onCopyDraftChanged: (String) -> Unit
-) {
-    when (stage) {
-        VideoFactoryStage.TOPIC -> TopicStage(
-            selectedTopic = selectedTopic,
-            onSelectTopic = onSelectTopic
-        )
-        VideoFactoryStage.COPY -> CopyStage(copyDraft, onCopyDraftChanged)
-        VideoFactoryStage.COPY_COMPLIANCE -> ComplianceStage()
-        VideoFactoryStage.STORYBOARD -> StoryboardStage()
-        VideoFactoryStage.ASSETS -> MaterialsStage()
-        VideoFactoryStage.LIBRARY -> LibraryStage()
-    }
-}
-
-@Composable
-private fun TopicStage(selectedTopic: String, onSelectTopic: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("选题", style = MaterialTheme.typography.titleLarge)
-        Text("选择一个本地示例选题。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        VideoFactoryLocalContent.sources.forEach { source ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(source.label, style = MaterialTheme.typography.labelLarge)
-                    source.topics.forEach { topic ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(topic, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    if (selectedTopic == topic) "已选本地示例" else "本地示例",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            TextButton(onClick = { onSelectTopic(topic) }) {
-                                Text(if (selectedTopic == topic) "已选择" else "选择")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CopyStage(copyDraft: String, onCopyDraftChanged: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("文案", style = MaterialTheme.typography.titleLarge)
-        Text("编辑本地文案草稿。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TextField(
-            value = copyDraft,
-            onValueChange = onCopyDraftChanged,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("视频文案") },
-            minLines = 5
-        )
-    }
-}
-
-@Composable
-private fun ComplianceStage() {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("文字合规", style = MaterialTheme.typography.titleLarge)
-        Text("本地规则演示，不构成平台审核结果")
-        Text("请以实际发布平台的规则与审核结果为准。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun StoryboardStage() {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("分镜", style = MaterialTheme.typography.titleLarge)
-        VideoFactoryLocalContent.shots.forEach { shot ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(shot.title, style = MaterialTheme.typography.titleSmall)
-                    Text(shot.filmingGuidance)
-                    Text(shot.materialPlaceholder, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MaterialsStage() {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("素材", style = MaterialTheme.typography.titleLarge)
-        Text("素材占位：未选择、读取或传输任何文件。")
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "图片与视频素材将在接入后显示；当前仅为本地占位。",
-                modifier = Modifier.padding(16.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun LibraryStage() {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("视频库", style = MaterialTheme.typography.titleLarge)
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text("午市双人套餐短片", style = MaterialTheme.typography.titleSmall)
-                Text("示例条目，未生成真实视频")
-                Text("本地处理状态占位，未进入生成队列", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
     }
 }
 

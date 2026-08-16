@@ -52,6 +52,20 @@ describe("authentication routes", () => {
     expect(afterLogout.statusCode).toBe(401);
   });
 
+  it("accepts only policy-compliant password changes and keeps rejected changes neutral", async () => {
+    const accessToken = (await loginOwner(app)).json<{ accessToken: string }>().accessToken;
+
+    for (const newPassword of ["Abcdefg", "abcdefgh", "ABCDEFGH"]) {
+      const rejected = await app.inject({ method: "POST", url: "/v1/auth/change-password", headers: bearer(accessToken), payload: { currentPassword: "passphrase", newPassword } });
+      expect(rejected.statusCode).toBe(401);
+      expect(rejected.json()).toEqual({ error: "Authentication required" });
+    }
+
+    const changed = await app.inject({ method: "POST", url: "/v1/auth/change-password", headers: bearer(accessToken), payload: { currentPassword: "passphrase", newPassword: "Abcdefgh" } });
+    expect(changed.statusCode).toBe(204);
+    expect((await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "owner", password: "Abcdefgh" } })).statusCode).toBe(200);
+  });
+
   it("derives existing store route context from the bearer membership", async () => {
     const accessToken = (await loginOwner(app)).json<{ accessToken: string }>().accessToken;
     const allowed = await app.inject({ method: "GET", url: "/v1/stores/store_demo/readiness?rangeStart=2026-08-01&rangeEnd=2026-08-07", headers: bearer(accessToken) });
@@ -62,6 +76,29 @@ describe("authentication routes", () => {
     expect(denied.statusCode).toBe(403);
     expect(invalid.statusCode).toBe(401);
     expect(invalid.json()).toEqual({ error: "Authentication required" });
+  });
+
+  it("never turns a provider-feedback account with a store membership into a customer data principal", async () => {
+    await database.query(
+      "INSERT INTO service_operator_roles (account_id, role) VALUES ('account_owner', 'provider_feedback_viewer')"
+    );
+    const accessToken = (await loginOwner(app)).json<{ accessToken: string }>().accessToken;
+    const profile = {
+      storeName: "Provider must not read this", industryCode: "fast_food", categoryCode: "rice_noodle",
+      provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "private address",
+      businessDistrictType: "community", operatingMode: "dine_in"
+    };
+
+    const profileRead = await app.inject({ method: "GET", url: "/v1/stores/store_demo/content-profile", headers: bearer(accessToken) });
+    const profileWrite = await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-profile", headers: bearer(accessToken), payload: profile });
+    const importWrite = await app.inject({
+      method: "POST", url: "/v1/stores/store_demo/imports/manual", headers: bearer(accessToken),
+      payload: { rangeStart: "2026-08-01", rangeEnd: "2026-08-07", candidates: [{ metricKey: "orders", metricDisplayName: "Orders", value: 12, unit: "count", status: "ready" }] }
+    });
+
+    for (const response of [profileRead, profileWrite, importWrite]) expect(response.statusCode).toBe(403);
+    await expect(database.query("SELECT id FROM store_content_profile_versions")).resolves.toMatchObject({ rows: [] });
+    await expect(database.query("SELECT id FROM import_batches")).resolves.toMatchObject({ rows: [] });
   });
 
   it("rejects production startup without an auth token secret", () => {
