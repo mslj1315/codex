@@ -28,6 +28,8 @@ import { registerModelConfigurationRoutes } from "./admin/model-config-routes.js
 import { ModelConfigurationRepository, type ModelGenerationResolver } from "./admin/model-configs.js";
 import { registerAdminConsoleStatic } from "./admin-console-static.js";
 import { registerAdminModelPricingRoutes } from "./admin/model-pricing-routes.js";
+import { registerAdminContentRoutes } from "./admin/content-routes.js";
+import { registerAccessManagementRoutes } from "./admin/access-management-routes.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -94,6 +96,8 @@ export function buildServer(options: ServerOptions = {}) {
     app.register((instance) => registerCustomerAccountAdminRoutes(instance, auth, database));
     app.register((instance) => registerModelConfigurationRoutes(instance, auth, database, options.modelConfigEncryptionKey));
     app.register((instance) => registerAdminModelPricingRoutes(instance, auth, database));
+    app.register((instance) => registerAdminContentRoutes(instance, auth, database));
+    app.register((instance) => registerAccessManagementRoutes(instance, auth, database));
   }
   if (database) {
     registerOperatorAuthRoutes(app, database, { publicOrigin: options.operatorPublicOrigin });
