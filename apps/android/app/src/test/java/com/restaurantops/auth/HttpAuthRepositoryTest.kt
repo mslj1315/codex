@@ -18,12 +18,12 @@ class HttpAuthRepositoryTest {
         )
         val repository = HttpAuthRepository(api, tokenStore)
 
-        assertEquals(listOf(store), repository.login("owner", "secret"))
+        assertEquals(AuthenticatedSession(listOf(store), passwordChangeRequired = false), repository.login("owner", "secret"))
 
         assertEquals("refresh", tokenStore.value)
         assertEquals("access", repository.accessToken)
-        assertEquals("owner", api.loginRequest?.loginName)
-        assertEquals("secret", api.loginRequest?.password)
+        assertEquals("owner", api.loginRequests.single().loginName)
+        assertEquals("secret", api.loginRequests.single().password)
         assertEquals("Bearer access", api.storesAuthorization)
     }
 
@@ -36,7 +36,7 @@ class HttpAuthRepositoryTest {
         )
         val repository = HttpAuthRepository(api, tokenStore)
 
-        assertEquals(listOf(store), repository.restore())
+        assertEquals(AuthenticatedSession(listOf(store), passwordChangeRequired = false), repository.restore())
 
         assertEquals("previous-refresh", api.refreshRequest?.refreshToken)
         assertEquals("new-refresh", tokenStore.value)
@@ -84,6 +84,40 @@ class HttpAuthRepositoryTest {
     }
 
     @Test
+    fun passwordChangeRequiredLoginDoesNotRequestCustomerStores() = runTest {
+        val tokenStore = FakeRefreshTokenStore()
+        val api = FakeAuthApi(loginTokens = AuthTokensResponse("access", "refresh", "2026-08-12T10:00:00Z", passwordChangeRequired = true))
+        val repository = HttpAuthRepository(api, tokenStore)
+
+        assertEquals(AuthenticatedSession(emptyList(), passwordChangeRequired = true), repository.login("13800138000", "temporary-password"))
+
+        assertEquals(null, api.storesAuthorization)
+        assertEquals("refresh", tokenStore.value)
+    }
+
+    @Test
+    fun passwordChangeUsesTheCurrentSessionThenClearsItAndAuthenticatesWithTheNewPassword() = runTest {
+        val tokenStore = FakeRefreshTokenStore()
+        val api = FakeAuthApi(
+            loginTokens = AuthTokensResponse("old-access", "old-refresh", "2026-08-12T10:00:00Z", passwordChangeRequired = true),
+            reloginTokens = AuthTokensResponse("new-access", "new-refresh", "2026-08-12T10:00:00Z"),
+            stores = listOf(store)
+        )
+        val repository = HttpAuthRepository(api, tokenStore)
+        repository.login("13800138000", "temporary-password")
+
+        assertEquals(AuthenticatedSession(listOf(store), passwordChangeRequired = false), repository.changePassword("13800138000", "temporary-password", "a-new-safe-password"))
+
+        assertEquals("Bearer old-access", api.changePasswordAuthorization)
+        assertEquals(ChangePasswordRequest("temporary-password", "a-new-safe-password"), api.changePasswordRequest)
+        assertEquals(LoginRequest("13800138000", "a-new-safe-password"), api.loginRequests.last())
+        assertEquals(1, tokenStore.clearCalls)
+        assertEquals("new-refresh", tokenStore.value)
+        assertEquals("new-access", repository.accessToken)
+        assertEquals("Bearer new-access", api.storesAuthorization)
+    }
+
+    @Test
     fun failedRefreshClearsTokensWithoutLeakingTheFailedSession() = runTest {
         val tokenStore = FakeRefreshTokenStore("refresh")
         val api = FakeAuthApi(refreshFailure = AuthRequestException(401, "Authentication required"))
@@ -116,27 +150,31 @@ class HttpAuthRepositoryTest {
     }
 
     private class FakeRefreshTokenStore(var value: String? = null) : RefreshTokenStore {
+        var clearCalls = 0
         override fun read(): String? = value
         override fun write(token: String) { value = token }
-        override fun clear() { value = null }
+        override fun clear() { clearCalls += 1; value = null }
     }
 
     private class FakeAuthApi(
         private val loginTokens: AuthTokensResponse? = null,
+        private val reloginTokens: AuthTokensResponse? = null,
         private val refreshTokens: AuthTokensResponse? = null,
         private val stores: List<StoreMembership> = emptyList(),
         private val logoutFailure: Throwable? = null,
         private val storesFailure: Throwable? = null,
         private val refreshFailure: Throwable? = null
     ) : AuthApi {
-        var loginRequest: LoginRequest? = null
+        val loginRequests = mutableListOf<LoginRequest>()
         var refreshRequest: RefreshRequest? = null
         var storesAuthorization: String? = null
         var logoutAuthorization: String? = null
+        var changePasswordAuthorization: String? = null
+        var changePasswordRequest: ChangePasswordRequest? = null
 
         override suspend fun login(body: LoginRequest): AuthTokensResponse {
-            loginRequest = body
-            return requireNotNull(loginTokens)
+            loginRequests += body
+            return if (loginRequests.size == 1) requireNotNull(loginTokens) else reloginTokens ?: requireNotNull(loginTokens)
         }
 
         override suspend fun refresh(body: RefreshRequest): AuthTokensResponse {
@@ -148,6 +186,11 @@ class HttpAuthRepositoryTest {
         override suspend fun logout(authorization: String) {
             logoutAuthorization = authorization
             logoutFailure?.let { throw it }
+        }
+
+        override suspend fun changePassword(authorization: String, body: ChangePasswordRequest) {
+            changePasswordAuthorization = authorization
+            changePasswordRequest = body
         }
 
         override suspend fun stores(authorization: String): StoresResponse {

@@ -47,6 +47,15 @@ class SessionViewModelTest {
     }
 
     @Test
+    fun passwordChangeRequiredLoginRoutesToTheForcedPasswordChangeScreen() = runTest {
+        val viewModel = SessionViewModel(FakeRepository(listOf(storeA)), FakeSelectedStoreStore(), SavedStateHandle())
+
+        viewModel.acceptLogin("13800138000", AuthenticatedSession(emptyList(), passwordChangeRequired = true))
+
+        assertEquals(AppSessionState.ForcedPasswordChange("13800138000"), viewModel.state)
+    }
+
+    @Test
     fun invalidPersistedStoreReturnsToSelection() = runTest {
         val viewModel = SessionViewModel(
             FakeRepository(listOf(storeA, storeB)),
@@ -118,8 +127,9 @@ class SessionViewModelTest {
         var loginCalls = 0
         var restoreCalls = 0
         var logoutCalls = 0
-        override suspend fun login(loginName: String, password: String): List<StoreMembership> { loginCalls += 1; return stores }
-        override suspend fun restore(): List<StoreMembership> { restoreCalls += 1; return stores }
+        override suspend fun login(loginName: String, password: String): AuthenticatedSession { loginCalls += 1; return AuthenticatedSession(stores, passwordChangeRequired = false) }
+        override suspend fun restore(): AuthenticatedSession { restoreCalls += 1; return AuthenticatedSession(stores, passwordChangeRequired = false) }
+        override suspend fun changePassword(loginName: String, currentPassword: String, newPassword: String): AuthenticatedSession = AuthenticatedSession(stores, passwordChangeRequired = false)
         override suspend fun logout() { logoutCalls += 1 }
     }
 }

@@ -28,4 +28,22 @@ describe("unified admin console static delivery", () => {
     expect((await app.inject({ method: "GET", url: "/admin/assets/missing.js" })).statusCode).toBe(404);
     expect((await app.inject({ method: "GET", url: "/provider/assets/app.js" })).statusCode).toBe(404);
   });
+
+  it("redirects legacy console paths to the unified admin without serving their bundles", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "admin-console-dist-"));
+    directories.push(directory);
+    await mkdir(join(directory, "assets"));
+    await writeFile(join(directory, "index.html"), "<!doctype html><title>unified admin</title>");
+    await writeFile(join(directory, "assets", "app.js"), "console.log('admin asset');");
+    const app = buildServer({ adminConsoleDistDir: directory });
+    servers.push(app);
+
+    for (const path of ["/provider/", "/provider/customers/store-a", "/operator/", "/operator/templates"]) {
+      const response = await app.inject({ method: "GET", url: path });
+      expect(response.statusCode).toBe(302);
+      expect(response.headers.location).toBe("/admin/");
+    }
+    expect((await app.inject({ method: "GET", url: "/provider/assets/app.js" })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/operator/assets/app.js" })).statusCode).toBe(404);
+  });
 });

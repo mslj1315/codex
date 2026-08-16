@@ -12,8 +12,7 @@ import { AuthService } from "./auth/service.js";
 import { authenticatedContextResolver } from "./imports/routes.js";
 import { registerProviderFeedbackRoutes } from "./provider-feedback/routes.js";
 import { registerProviderCustomerRoutes } from "./provider-customers/routes.js";
-import { registerProviderConsoleStatic } from "./provider-console-static.js";
-import { registerOperatorConsoleStatic } from "./operator-console-static.js";
+import { registerLegacyConsoleRedirects } from "./legacy-console-redirects.js";
 import { registerOperatorAuthRoutes } from "./operator-auth/routes.js";
 import { registerOperatorContentRoutes } from "./operator-content/routes.js";
 import { registerProfileRoutes } from "./content-planning/profile-routes.js";
@@ -38,8 +37,6 @@ export interface ServerOptions {
   developmentMode?: boolean;
   providerBrowserDevelopmentMode?: boolean;
   operatorPublicOrigin?: string;
-  providerConsoleDistDir?: string;
-  operatorConsoleDistDir?: string;
   adminConsoleDistDir?: string;
   localContainerDevelopmentMode?: boolean;
   trustedContextResolver?: TrustedContextResolver;
@@ -58,13 +55,7 @@ export function buildServer(options: ServerOptions = {}) {
   const app = Fastify({ bodyLimit: 5 * 1024 * 1024, logger: options.logger ?? false, trustProxy: false });
 
   app.get("/health", async () => ({ status: "ok" }));
-  const providerConsoleDistDir = options.providerConsoleDistDir;
-  if (providerConsoleDistDir) {
-    app.register((instance) => registerProviderConsoleStatic(instance, providerConsoleDistDir));
-  }
-  if (options.operatorConsoleDistDir) {
-    app.register((instance) => registerOperatorConsoleStatic(instance, options.operatorConsoleDistDir!));
-  }
+  registerLegacyConsoleRedirects(app);
   if (options.adminConsoleDistDir) app.register((instance) => registerAdminConsoleStatic(instance, options.adminConsoleDistDir!));
   const database = options.database ?? (options.databaseUrl ? createDatabase(options.databaseUrl) : undefined);
   const explicitContextResolver = options.trustedContextResolver ?? (
@@ -131,10 +122,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     developmentMode: process.env.DEVELOPMENT_MODE === "true",
     providerBrowserDevelopmentMode: process.env.PROVIDER_BROWSER_DEVELOPMENT_MODE === "true",
     operatorPublicOrigin: process.env.OPERATOR_PUBLIC_ORIGIN,
-    providerConsoleDistDir: process.env.PROVIDER_CONSOLE_DIST_DIR
-      ?? fileURLToPath(new URL("../provider-console-dist", import.meta.url)),
-    operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR
-      ?? fileURLToPath(new URL("../operator-console-dist", import.meta.url)),
     adminConsoleDistDir: process.env.ADMIN_CONSOLE_DIST_DIR
       ?? fileURLToPath(new URL("../admin-console-dist", import.meta.url)),
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",

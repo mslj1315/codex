@@ -1,13 +1,3 @@
-FROM node:24-alpine AS provider-console-build
-
-WORKDIR /build/apps/provider-console
-
-COPY apps/provider-console/package.json apps/provider-console/package-lock.json ./
-RUN npm ci
-
-COPY apps/provider-console/ ./
-RUN npm run build
-
 FROM node:24-alpine AS admin-console-build
 
 WORKDIR /build/apps/admin-console
@@ -16,16 +6,6 @@ COPY apps/admin-console/package.json apps/admin-console/package-lock.json ./
 RUN npm ci
 
 COPY apps/admin-console/ ./
-RUN npm run build
-
-FROM node:24-alpine AS operator-console-build
-
-WORKDIR /build/apps/operator-console
-
-COPY apps/operator-console/package.json apps/operator-console/package-lock.json ./
-RUN npm ci
-
-COPY apps/operator-console/ ./
 RUN npm run build
 
 FROM node:24-alpine
@@ -38,8 +18,6 @@ RUN npm ci
 COPY services/api/tsconfig.json ./
 COPY services/api/src ./src
 COPY services/api/migrations ./migrations
-COPY --from=provider-console-build /build/apps/provider-console/dist ./provider-console-dist
-COPY --from=operator-console-build /build/apps/operator-console/dist ./operator-console-dist
 COPY --from=admin-console-build /build/apps/admin-console/dist ./admin-console-dist
 
 EXPOSE 3000

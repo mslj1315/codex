@@ -16,6 +16,7 @@ sealed interface AppSessionState {
     data object Loading : AppSessionState
     data object Login : AppSessionState
     data class StoreSelection(val stores: List<StoreMembership>) : AppSessionState
+    data class ForcedPasswordChange(val loginName: String) : AppSessionState
     data class RemoteWorkspace(val store: StoreMembership) : AppSessionState
     data object LocalDemo : AppSessionState
 }
@@ -34,15 +35,33 @@ class SessionViewModel(
         state = AppSessionState.Loading
         viewModelScope.launch {
             try {
-                transitionToAuthorizedStores(repository.restore())
+                val session = repository.restore()
+                if (session.passwordChangeRequired) {
+                    repository.clearSessionForPasswordChange()
+                    state = AppSessionState.Login
+                } else {
+                    transitionToAuthorizedStores(session.stores)
+                }
             } catch (_: AuthRequestException) {
                 state = AppSessionState.Login
             }
         }
     }
 
-    fun acceptLogin(stores: List<StoreMembership>) {
-        transitionToAuthorizedStores(stores)
+    fun acceptLogin(loginName: String, session: AuthenticatedSession) {
+        if (session.passwordChangeRequired) {
+            state = AppSessionState.ForcedPasswordChange(loginName)
+        } else {
+            transitionToAuthorizedStores(session.stores)
+        }
+    }
+
+    fun acceptChangedPassword(session: AuthenticatedSession) {
+        if (session.passwordChangeRequired) {
+            state = AppSessionState.Login
+        } else {
+            transitionToAuthorizedStores(session.stores)
+        }
     }
 
     fun selectStore(store: StoreMembership) {
@@ -99,4 +118,8 @@ class SessionViewModel(
             else -> AppSessionState.Login
         }
     }
+}
+
+private fun AuthRepository.clearSessionForPasswordChange() {
+    if (this is AccessTokenSession) clearSession()
 }
