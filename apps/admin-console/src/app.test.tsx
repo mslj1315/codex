@@ -108,6 +108,16 @@ describe("unified admin console", () => {
     expect(client.request).not.toHaveBeenCalled();
   });
 
+  it("sends the required name with a direct content draft edit", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-7", displayName: "\u7ba1\u7406\u5458" }, permissions: ["content_templates.edit"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5185\u5bb9\u8fd0\u8425" }));
+    await userEvent.type(screen.getByLabelText("\u6a21\u677f ID"), "template-1");
+    await userEvent.type(screen.getByLabelText("\u540d\u79f0"), "到店模板");
+    await userEvent.click(screen.getByRole("button", { name: "\u76f4\u63a5\u4fdd\u5b58\u8349\u7a3f" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/content/templates/template-1/draft", expect.objectContaining({ method: "PUT", body: expect.stringContaining('"name":"到店模板"') }));
+  });
+
   it("offers direct internal role assignment without reading accounts", async () => {
     const client = api();
     render(<App session={{ account: { id: "admin-6", displayName: "\u7ba1\u7406\u5458" }, permissions: ["internal_accounts.manage"] }} api={client} />);
