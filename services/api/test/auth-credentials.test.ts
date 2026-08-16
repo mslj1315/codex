@@ -12,6 +12,11 @@ describe("auth credentials", () => {
     await expect(hashNewPassword("Abcdefgh")).resolves.toMatch(/^\$2[aby]\$/);
   });
 
+  it("accepts a self-chosen password at bcrypt's 72 UTF-8 byte limit and rejects 73 bytes", async () => {
+    await expect(hashNewPassword(`Aa${"b".repeat(70)}`)).resolves.toMatch(/^\$2[aby]\$/);
+    await expect(hashNewPassword(`Aa${"b".repeat(71)}`)).rejects.toThrow();
+  });
+
   it("hashes a password and verifies only the original value", async () => {
     const hash = await hashPassword("correct horse battery staple", () => Buffer.alloc(16, 7));
 
