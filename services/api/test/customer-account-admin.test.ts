@@ -58,6 +58,35 @@ describe("customer account administration", () => {
     expect((await app.inject({ method: "GET", url: "/v1/auth/me/stores", headers: bearer(currentToken) })).statusCode).toBe(401);
   });
 
+  it("resets a customer with more than one enabled store membership", async () => {
+    const created = await app.inject({ method: "POST", url: "/v1/admin/customer-accounts", headers: await superBearer(app), payload: { mobile: "13600136000", displayName: "多门店", enterpriseId: "ent_demo", storeId: "store_first", storeRole: "owner" } });
+    const account = created.json<{ account: { id: string } }>().account;
+    await database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ($1, 'ent_demo', 'store_second', 'operator')", [account.id]);
+
+    const reset = await app.inject({ method: "POST", url: `/v1/admin/customer-accounts/${account.id}/reset-password`, headers: await superBearer(app) });
+
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json<{ account: { id: string } }>().account.id).toBe(account.id);
+  });
+
+  it("returns 409 when a normalized mobile already exists", async () => {
+    const headers = await superBearer(app);
+    const payload = { mobile: "13500135000", displayName: "重复", enterpriseId: "ent_demo", storeId: "store_demo", storeRole: "owner" };
+    expect((await app.inject({ method: "POST", url: "/v1/admin/customer-accounts", headers, payload })).statusCode).toBe(201);
+
+    expect((await app.inject({ method: "POST", url: "/v1/admin/customer-accounts", headers, payload: { ...payload, mobile: "+86 135-0013-5000" } })).statusCode).toBe(409);
+  });
+
+  it("rejects a password change that exceeds bcrypt's 72 UTF-8 byte limit", async () => {
+    const created = await app.inject({ method: "POST", url: "/v1/admin/customer-accounts", headers: await superBearer(app), payload: { mobile: "13700137000", displayName: "长度", enterpriseId: "ent_demo", storeId: "store_demo", storeRole: "owner" } });
+    const body = created.json<{ temporaryPassword: string }>();
+    const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "13700137000", password: body.temporaryPassword } });
+
+    const response = await app.inject({ method: "POST", url: "/v1/auth/change-password", headers: bearer(login.json<{ accessToken: string }>().accessToken), payload: { currentPassword: body.temporaryPassword, newPassword: "密".repeat(25) } });
+
+    expect(response.statusCode).toBe(401);
+  });
+
   it("rejects customers from admin routes before customer account data is queried", async () => {
     await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('customer', '13800138001', 'Customer', $1)", [await hashPassword("passphrase")]);
     await database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role) VALUES ('customer', 'ent_demo', 'store_demo', 'owner')");

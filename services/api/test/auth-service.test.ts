@@ -228,6 +228,15 @@ describe("auth service", () => {
     await expect(database.query("SELECT password_hash FROM accounts WHERE id = 'account_owner'"))
       .resolves.toMatchObject({ rows: [{ password_hash: expect.stringMatching(/^\$2[aby]\$/) }] });
   });
+
+  it("rejects a session created from a credential version invalidated by a concurrent reset", async () => {
+    const repository = new AuthRepository(database);
+    await database.query("UPDATE accounts SET credential_version = 1 WHERE id = 'account_owner'");
+    await database.query("UPDATE accounts SET credential_version = credential_version + 1 WHERE id = 'account_owner'");
+    await repository.createSession({ id: "stale_session", accountId: "account_owner", credentialVersion: 1, refreshTokenHash: "stale", expiresAt: new Date("2026-09-01T00:00:00.000Z") });
+
+    await expect(repository.findActiveSession("account_owner", "stale_session", now)).resolves.toBeUndefined();
+  });
 });
 
 async function legacyScryptHash(password: string): Promise<string> {

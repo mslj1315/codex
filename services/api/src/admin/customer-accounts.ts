@@ -19,7 +19,7 @@ export class CustomerAccountRepository {
   constructor(private readonly database: Database) {}
 
   async create(input: { mobile: string; displayName: string; enterpriseId: string; storeId: string; storeRole: StoreRole; actorId: string; temporaryPassword: string }): Promise<CustomerAccountView> {
-    return this.transaction(async (client) => {
+    try { return await this.transaction(async (client) => {
       const duplicate = await client.query("SELECT 1 FROM accounts WHERE login_name = $1 FOR UPDATE", [input.mobile]);
       if (duplicate.rowCount) throw new CustomerAccountConflictError();
       const id = randomUUID();
@@ -33,19 +33,20 @@ export class CustomerAccountRepository {
       );
       await writeAudit(client, input.actorId, "customer_account.created", "customer_account", id, { accountStatus: "enabled", operation: "create" });
       return { id, loginName: input.mobile, displayName: input.displayName, enterpriseId: input.enterpriseId, storeId: input.storeId, storeRole: input.storeRole, enabled: true, passwordChangeRequired: true };
-    });
+    }); } catch (error) {
+      if (isUniqueViolation(error)) throw new CustomerAccountConflictError();
+      throw error;
+    }
   }
 
   async resetPassword(input: { accountId: string; actorId: string; temporaryPassword: string }): Promise<CustomerAccountView | undefined> {
     return this.transaction(async (client) => {
-      const found = await client.query<Row>(
-        `SELECT account.id, account.login_name, account.display_name, account.enabled, membership.enterprise_id, membership.store_id, membership.role
-         FROM accounts AS account JOIN store_memberships AS membership ON membership.account_id = account.id
-         WHERE account.id = $1 AND membership.enabled = true FOR UPDATE`, [input.accountId]
-      );
+      const found = await client.query<Row>("SELECT id, login_name, display_name, enabled FROM accounts WHERE id = $1 FOR UPDATE", [input.accountId]);
       if (found.rowCount !== 1 || !Boolean(found.rows[0]!.enabled)) return undefined;
-      const row = found.rows[0]!;
-      await client.query("UPDATE accounts SET password_hash = $1, password_change_required = true, updated_at = CURRENT_TIMESTAMP WHERE id = $2", [await hashPassword(input.temporaryPassword), input.accountId]);
+      const membership = await client.query<Row>("SELECT enterprise_id, store_id, role FROM store_memberships WHERE account_id = $1 AND enabled = true ORDER BY enterprise_id, store_id LIMIT 1", [input.accountId]);
+      if (membership.rowCount !== 1) return undefined;
+      const row = { ...found.rows[0]!, ...membership.rows[0]! };
+      await client.query("UPDATE accounts SET password_hash = $1, password_change_required = true, credential_version = credential_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $2", [await hashPassword(input.temporaryPassword), input.accountId]);
       await client.query("UPDATE account_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE account_id = $1 AND revoked_at IS NULL", [input.accountId]);
       await writeAudit(client, input.actorId, "customer_account.password_reset", "customer_account", input.accountId, { operation: "reset_password" });
       return view(row, true);
@@ -72,6 +73,8 @@ export function temporaryPassword(): string { return randomBytes(18).toString("b
 export class CustomerAccountValidationError extends Error {}
 export class CustomerAccountConflictError extends Error {}
 type Row = Record<string, unknown>;
+
+function isUniqueViolation(error: unknown): boolean { return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "23505"; }
 
 function view(row: Row, passwordChangeRequired: boolean): CustomerAccountView {
   return { id: String(row.id), loginName: String(row.login_name), displayName: String(row.display_name), enterpriseId: String(row.enterprise_id), storeId: String(row.store_id), storeRole: String(row.role) as StoreRole, enabled: Boolean(row.enabled), passwordChangeRequired };

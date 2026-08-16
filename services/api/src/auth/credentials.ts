@@ -10,6 +10,7 @@ const scrypt = promisify(nodeScrypt) as (password: string, salt: Buffer, keyLeng
 // Credentials are stored as bcrypt hashes only. The optional second argument is
 // retained temporarily so existing callers compile while migration tests evolve.
 export async function hashPassword(password: string, _legacyRandom?: unknown): Promise<string> {
+  if (!isBcryptPasswordLength(password)) throw new PasswordValidationError();
   return bcrypt.hash(password, BCRYPT_COST);
 }
 
@@ -22,6 +23,8 @@ export async function verifyPassword(password: string, serialized: string): Prom
 }
 
 export function isLegacyScryptPasswordHash(value: string): boolean { return parseLegacyScrypt(value) !== undefined; }
+export function isBcryptPasswordLength(value: string): boolean { const bytes = Buffer.byteLength(value, "utf8"); return bytes > 0 && bytes <= 72; }
+export class PasswordValidationError extends Error {}
 
 function parseLegacyScrypt(serialized: string): { salt: Buffer; expected: Buffer } | undefined {
   const [algorithm, version, salt, expected, extra] = serialized.split("$");
