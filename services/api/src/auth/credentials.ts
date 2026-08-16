@@ -30,7 +30,7 @@ export async function verifyPassword(password: string, serialized: string): Prom
 export function isLegacyScryptPasswordHash(value: string): boolean { return parseLegacyScrypt(value) !== undefined; }
 export function isBcryptPasswordLength(value: string): boolean { const bytes = Buffer.byteLength(value, "utf8"); return bytes > 0 && bytes <= 72; }
 export function isNewPassword(value: string): boolean {
-  return Buffer.byteLength(value, "utf8") >= 8 && isBcryptPasswordLength(value) && /[A-Z]/.test(value) && /[a-z]/.test(value);
+  return Array.from(value).length >= 8 && isBcryptPasswordLength(value) && /[A-Z]/.test(value) && /[a-z]/.test(value);
 }
 export class PasswordValidationError extends Error {}
 

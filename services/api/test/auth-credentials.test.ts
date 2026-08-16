@@ -8,8 +8,10 @@ describe("auth credentials", () => {
     for (const password of ["Abcdefg", "abcdefgh", "ABCDEFGH"]) {
       await expect(hashNewPassword(password)).rejects.toThrow();
     }
+    await expect(hashNewPassword("A好b好")).rejects.toThrow();
 
     await expect(hashNewPassword("Abcdefgh")).resolves.toMatch(/^\$2[aby]\$/);
+    await expect(hashNewPassword("Ab好好好好好好")).resolves.toMatch(/^\$2[aby]\$/);
   });
 
   it("accepts a self-chosen password at bcrypt's 72 UTF-8 byte limit and rejects 73 bytes", async () => {
