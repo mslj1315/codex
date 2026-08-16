@@ -89,6 +89,37 @@ describe("admin model configurations", () => {
     expect(response.statusCode).toBe(422);
     expect((await database.query("SELECT enabled,is_default FROM model_configurations WHERE id=$1", [id])).rows[0]).toMatchObject({ enabled: true, is_default: true });
   });
+
+  it("clears a customer override and resolves the current global default instead", async () => {
+    const repository = new ModelConfigurationRepository(database, encryptionKey);
+    const firstDefault = await repository.create({ label: "First", provider: "deepseek", model: "first", baseUrl: "https://first.example/v1", apiKey: "key-first", enabled: true, makeDefault: true, actorId: "super" });
+    const override = await repository.create({ label: "Override", provider: "qwen", model: "override", baseUrl: "https://override.example/v1", apiKey: "key-override", enabled: true, makeDefault: false, actorId: "super" });
+    const latestDefault = await repository.create({ label: "Latest", provider: "openai_responses", model: "latest", baseUrl: "https://latest.example/v1", apiKey: "key-latest", enabled: true, makeDefault: true, actorId: "super" });
+    await repository.assignCustomer({ enterpriseId: "ent_demo", storeId: "store_demo", configurationId: override.id, actorId: "super" });
+    expect(await repository.resolveForCustomer({ enterpriseId: "ent_demo", storeId: "store_demo" })).toMatchObject({ id: override.id });
+
+    const response = await app.inject({ method: "DELETE", url: "/v1/admin/customer-model-assignments/ent_demo/store_demo", headers: await superBearer(app) });
+
+    expect(response.statusCode).toBe(204);
+    expect(await repository.resolveForCustomer({ enterpriseId: "ent_demo", storeId: "store_demo" })).toMatchObject({ id: latestDefault.id });
+    expect((await database.query("SELECT model_configuration_id FROM customer_model_assignments WHERE enterprise_id='ent_demo' AND store_id='store_demo'")).rowCount).toBe(0);
+    const audit = JSON.stringify((await database.query("SELECT action_code,metadata_json FROM internal_audit_events WHERE target_type='customer_model_assignment' ORDER BY created_at")).rows);
+    expect(audit).toContain("customer_model_assignment.cleared");
+    expect(audit).not.toMatch(/key-override|ciphertext|nonce/i);
+    expect(firstDefault.id).not.toBe(latestDefault.id);
+  });
+
+  it("denies an unprivileged customer before clearing an assignment", async () => {
+    const repository = new ModelConfigurationRepository(database, encryptionKey);
+    const config = await repository.create({ label: "Assigned", provider: "deepseek", model: "m", baseUrl: "https://safe.example/v1", apiKey: "key", enabled: true, makeDefault: true, actorId: "super" });
+    await repository.assignCustomer({ enterpriseId: "ent_demo", storeId: "store_demo", configurationId: config.id, actorId: "super" });
+    const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "13800138000", password: "passphrase" } });
+
+    const response = await app.inject({ method: "DELETE", url: "/v1/admin/customer-model-assignments/ent_demo/store_demo", headers: bearer(login.json<{ accessToken: string }>().accessToken) });
+
+    expect(response.statusCode).toBe(403);
+    expect(await repository.resolveForCustomer({ enterpriseId: "ent_demo", storeId: "store_demo" })).toMatchObject({ id: config.id });
+  });
 });
 
 async function superBearer(app: ReturnType<typeof buildServer>) { const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "super", password: "passphrase" } }); return bearer(login.json<{ accessToken: string }>().accessToken); }
