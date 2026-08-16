@@ -86,6 +86,11 @@ type InternalAuditMetadataKey =
   | "permissionCode"
   | "priceVersionId"
   | "previousEnabled"
+  | "provider"
+  | "model"
+  | "priceStatus"
+  | "effectiveFrom"
+  | "effectiveTo"
   | "reasonCode"
   | "roleCode"
   | "state";
@@ -94,7 +99,7 @@ export type InternalAuditMetadata = Partial<Record<InternalAuditMetadataKey, Int
 
 const INTERNAL_AUDIT_METADATA_KEYS = new Set<InternalAuditMetadataKey>([
   "accountStatus", "assignmentMode", "enabled", "modelConfigurationId", "modelAssignmentId",
-  "operation", "permissionCode", "priceVersionId", "previousEnabled", "reasonCode", "roleCode", "state"
+  "operation", "permissionCode", "priceVersionId", "previousEnabled", "provider", "model", "priceStatus", "effectiveFrom", "effectiveTo", "reasonCode", "roleCode", "state"
 ]);
 
 const SENSITIVE_AUDIT_METADATA_KEY = /password|secret|key|token|prompt|content|copy|inspiration|media|object|cipher|plaintext|credential/i;

@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { browserApi, type AdminApi, type AdminSession } from "./api";
 import { CustomerManagement } from "./customer-management";
 import { ModelOperations } from "./model-operations";
@@ -8,6 +8,12 @@ export type { AdminApi, AdminSession } from "./api";
 type View = "概览" | "客户管理" | "模型配置" | "模型计费" | "内容运营" | "权限管理";
 const allowed = (p: string[]): View[] => { const views: View[] = ["概览"]; if (p.includes("customer_accounts.read") || p.includes("customer_accounts.create") || p.includes("customer_accounts.reset_password") || p.includes("model_assignments.manage")) views.push("客户管理"); if (p.includes("model_configs.read") || p.includes("model_configs.manage")) views.push("模型配置"); if (p.includes("model_pricing.read") || p.includes("model_pricing.manage") || p.includes("model_usage.read")) views.push("模型计费"); if (p.some(x => ["content_templates.read", "content_templates.manage", "review_rules.read", "review_rules.manage"].includes(x))) views.push("内容运营"); if (p.includes("roles.manage") || p.includes("audit.read")) views.push("权限管理"); return views; };
 
-export function App({ session, api = browserApi() }: { session?: AdminSession; api?: AdminApi }) { const [current, setCurrent] = useState(session); return current ? <Console session={current} api={api} /> : <Login api={api} onLogin={setCurrent} />; }
+export function App({ session, api }: { session?: AdminSession; api?: AdminApi }) {
+  const browserClient = useRef<AdminApi | null>(null);
+  if (!browserClient.current) browserClient.current = browserApi();
+  const client = api ?? browserClient.current;
+  const [current, setCurrent] = useState(session);
+  return current ? <Console session={current} api={client} /> : <Login api={client} onLogin={setCurrent} />;
+}
 function Login({ api, onLogin }: { api: AdminApi; onLogin: (session: AdminSession) => void }) { const [failure, setFailure] = useState(false); async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement); try { setFailure(false); onLogin(await api.login(String(form.get("loginName") ?? ""), String(form.get("password") ?? ""))); } catch { setFailure(true); } finally { formElement.reset(); } } return <main className="login"><form onSubmit={(event) => void submit(event)}><h1>餐饮运营管理后台</h1><label>账号<input name="loginName" required /></label><label>密码<input name="password" type="password" required /></label>{failure && <p role="alert">账号、密码或后台权限无效</p>}<button>登录</button></form></main>; }
 function Console({ session, api }: { session: AdminSession; api: AdminApi }) { const views = allowed(session.permissions); const [view, setView] = useState<View>(views[0]!); return <div className="shell"><aside><strong>餐饮运营</strong><small>{session.account.displayName}</small><nav aria-label="管理导航">{views.map(item => <button className={view === item ? "selected" : ""} key={item} onClick={() => setView(item)}>{item}</button>)}</nav></aside><main><h1>{view}</h1>{view === "概览" && <p>仅展示安全运行状态和汇总信息，不展示客户原始内容、素材、审核记录或对象地址。</p>}{view === "客户管理" && <CustomerManagement api={api} permissions={session.permissions} />}{view === "模型配置" && <ModelOperations api={api} permissions={session.permissions} />}{view === "模型计费" && <PricingOperations api={api} permissions={session.permissions} />}{view === "内容运营" && <section><h2>内容运营</h2><p>此入口仅保留版本化模板和规则的安全状态。本版不从统一后台读取客户文案、灵感、审核记录、分镜或媒体。</p></section>}{view === "权限管理" && <section><h2>权限管理</h2><p>角色和权限配置将在独立的 RBAC 管理任务中启用。</p></section>}</main></div>; }

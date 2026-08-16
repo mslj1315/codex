@@ -56,6 +56,19 @@ describe("model pricing provider routes", () => {
     expect(result.json()).toEqual({ items: [] });
     expect(result.body).not.toMatch(/enterprise|store|actor|task|prompt|content|media|object/i);
   });
+
+  it("returns the internal version list as items and records only safe pricing audit fields", async () => {
+    const superToken = await login("super");
+    const created = await app.inject({ method: "POST", url: "/v1/admin/model-pricing/versions", headers: bearer(superToken), payload: { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" } });
+    expect(created.statusCode).toBe(201);
+    const id = created.json<{ id: string }>().id;
+    expect((await app.inject({ method: "GET", url: "/v1/admin/model-pricing/versions", headers: bearer(superToken) })).json()).toMatchObject({ items: [{ id, provider: "openai_responses", model: "gpt" }] });
+    expect((await app.inject({ method: "POST", url: `/v1/admin/model-pricing/versions/${id}/publish`, headers: bearer(superToken) })).statusCode).toBe(200);
+    const audit = JSON.stringify((await database.query("SELECT action_code,metadata_json FROM internal_audit_events WHERE target_id=$1", [id])).rows);
+    expect(audit).toContain("model_pricing.created");
+    expect(audit).toContain("model_pricing.published");
+    expect(audit).not.toMatch(/secret|key|token|prompt|content|copy|inspiration|media|object/i);
+  });
 });
 let activeApp: ReturnType<typeof buildServer>;
 async function login(loginName: string) { const r = await activeApp.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName, password: "passphrase" } }); return r.json<{accessToken:string}>().accessToken; }

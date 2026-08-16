@@ -44,6 +44,23 @@ describe("unified admin console", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("\u8d26\u53f7\u3001\u5bc6\u7801\u6216\u540e\u53f0\u6743\u9650\u65e0\u6548");
   });
 
+  it("keeps the browser authorization token after login causes a console re-render", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/v1/auth/login") return new Response(JSON.stringify({ accessToken: "header.payload.signature" }), { status: 200 });
+      if (input === "/v1/auth/me/internal-permissions") return new Response(JSON.stringify({ account: { id: "admin-1", displayName: "管理员" }, permissions: ["customer_accounts.read"] }), { status: 200 });
+      return new Response(JSON.stringify({ items: [] }), { status: 200 });
+    });
+    render(<App />);
+    await userEvent.type(screen.getByLabelText("账号"), "admin");
+    await userEvent.type(screen.getByLabelText("密码"), "password");
+    await userEvent.click(screen.getByRole("button", { name: "登录" }));
+    await userEvent.click(screen.getByRole("button", { name: "客户管理" }));
+
+    const customerRequest = fetchMock.mock.calls.find(([url]) => url === "/v1/admin/customer-accounts?limit=50");
+    expect(customerRequest?.[1]).toEqual(expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer header.payload.signature" }) }));
+    fetchMock.mockRestore();
+  });
+
   it("offers direct safe operations without fetching lists for manage-only permissions", async () => {
     const client = api();
     render(<App session={{ account: { id: "admin-2", displayName: "\u7ba1\u7406\u5458" }, permissions: ["model_assignments.manage", "model_configs.manage", "model_pricing.manage"] }} api={client} />);

@@ -58,6 +58,19 @@ describe("customer account administration", () => {
     expect((await app.inject({ method: "GET", url: "/v1/auth/me/stores", headers: bearer(currentToken) })).statusCode).toBe(401);
   });
 
+  it("disables a customer through the internal permission route and revokes its active session", async () => {
+    const created = await app.inject({ method: "POST", url: "/v1/admin/customer-accounts", headers: await superBearer(app), payload: { mobile: "13600136001", displayName: "停用测试", enterpriseId: "ent_demo", storeId: "store_demo", storeRole: "owner" } });
+    const body = created.json<{ account: { id: string }; temporaryPassword: string }>();
+    const login = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "13600136001", password: body.temporaryPassword } });
+    const disabled = await app.inject({ method: "POST", url: `/v1/admin/customer-accounts/${body.account.id}/disable`, headers: await superBearer(app) });
+
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.json<{ account: { enabled: boolean } }>().account.enabled).toBe(false);
+    expect((await app.inject({ method: "GET", url: "/v1/auth/me/stores", headers: bearer(login.json<{ accessToken: string }>().accessToken) })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/v1/auth/login", payload: { loginName: "13600136001", password: body.temporaryPassword } })).statusCode).toBe(401);
+    expect(JSON.stringify((await database.query("SELECT metadata_json FROM internal_audit_events WHERE action_code = 'customer_account.disabled'")).rows)).not.toMatch(/password|secret|token/i);
+  });
+
   it("resets a customer with more than one enabled store membership", async () => {
     const created = await app.inject({ method: "POST", url: "/v1/admin/customer-accounts", headers: await superBearer(app), payload: { mobile: "13600136000", displayName: "多门店", enterpriseId: "ent_demo", storeId: "store_first", storeRole: "owner" } });
     const account = created.json<{ account: { id: string } }>().account;

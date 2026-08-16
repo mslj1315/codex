@@ -53,6 +53,19 @@ export class CustomerAccountRepository {
     });
   }
 
+  async disable(input: { accountId: string; actorId: string }): Promise<CustomerAccountView | undefined> {
+    return this.transaction(async (client) => {
+      const found = await client.query<Row>("SELECT id, login_name, display_name, enabled, password_change_required FROM accounts WHERE id = $1 FOR UPDATE", [input.accountId]);
+      if (found.rowCount !== 1 || !Boolean(found.rows[0]!.enabled)) return undefined;
+      const membership = await client.query<Row>("SELECT enterprise_id, store_id, role FROM store_memberships WHERE account_id = $1 AND enabled = true ORDER BY enterprise_id, store_id LIMIT 1", [input.accountId]);
+      if (membership.rowCount !== 1) return undefined;
+      await client.query("UPDATE accounts SET enabled = false, credential_version = credential_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1", [input.accountId]);
+      await client.query("UPDATE account_sessions SET revoked_at = CURRENT_TIMESTAMP WHERE account_id = $1 AND revoked_at IS NULL", [input.accountId]);
+      await writeAudit(client, input.actorId, "customer_account.disabled", "customer_account", input.accountId, { accountStatus: "disabled", previousEnabled: true, operation: "disable" });
+      return view({ ...found.rows[0]!, ...membership.rows[0]!, enabled: false }, Boolean(found.rows[0]!.password_change_required));
+    });
+  }
+
   async list(limit: number): Promise<CustomerAccountView[]> {
     const result = await this.database.query<Row>(
       `SELECT account.id, account.login_name, account.display_name, account.enabled, account.password_change_required,

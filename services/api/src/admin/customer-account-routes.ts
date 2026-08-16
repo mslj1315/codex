@@ -32,6 +32,14 @@ export async function registerCustomerAccountAdminRoutes(app: FastifyInstance, a
       return { account, temporaryPassword: password };
     } catch (error) { return failure(error, reply); }
   });
+  app.post("/v1/admin/customer-accounts/:accountId/disable", async (request, reply) => {
+    try {
+      const params = object(request.params);
+      const account = await auth.requireInternalPermission(requireBearer(request), "customer_accounts.disable", (actor) => accounts.disable({ accountId: identifier(params.accountId), actorId: actor.id }));
+      if (!account) return reply.code(404).send({ error: "Customer account not found or already disabled" });
+      return { account };
+    } catch (error) { return failure(error, reply); }
+  });
 }
 
 function failure(error: unknown, reply: { code(statusCode: number): { send(value: unknown): unknown } }) {
