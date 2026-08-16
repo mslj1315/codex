@@ -6,6 +6,13 @@ import { CustomerAccountConflictError, CustomerAccountRepository, CustomerAccoun
 
 export async function registerCustomerAccountAdminRoutes(app: FastifyInstance, auth: AuthService, database: Database): Promise<void> {
   const accounts = new CustomerAccountRepository(database);
+  app.get("/v1/admin/customer-accounts", async (request, reply) => {
+    try {
+      const limit = Math.min(100, Math.max(1, Number((request.query as Record<string, unknown>).limit ?? 50)));
+      if (!Number.isInteger(limit)) throw new CustomerAccountValidationError();
+      return { items: await auth.requireInternalPermission(requireBearer(request), "customer_accounts.read", () => accounts.list(limit)) };
+    } catch (error) { return failure(error, reply); }
+  });
   app.post("/v1/admin/customer-accounts", async (request, reply) => {
     try {
       const body = object(request.body);

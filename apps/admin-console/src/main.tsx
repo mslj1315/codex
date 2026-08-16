@@ -1,0 +1,2 @@
+import { StrictMode } from "react"; import { createRoot } from "react-dom/client"; import { App } from "./app"; import "./styles.css";
+const root=document.getElementById("root"); if (!root) throw new Error("Admin console root element is missing"); createRoot(root).render(<StrictMode><App session={{account:{id:"",displayName:""},permissions:[]}} /></StrictMode>);

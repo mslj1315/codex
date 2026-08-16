@@ -26,6 +26,7 @@ import { registerModelPricingRoutes } from "./model-pricing/routes.js";
 import { registerCustomerAccountAdminRoutes } from "./admin/customer-account-routes.js";
 import { registerModelConfigurationRoutes } from "./admin/model-config-routes.js";
 import { ModelConfigurationRepository, type ModelGenerationResolver } from "./admin/model-configs.js";
+import { registerAdminConsoleStatic } from "./admin-console-static.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -36,6 +37,7 @@ export interface ServerOptions {
   operatorPublicOrigin?: string;
   providerConsoleDistDir?: string;
   operatorConsoleDistDir?: string;
+  adminConsoleDistDir?: string;
   localContainerDevelopmentMode?: boolean;
   trustedContextResolver?: TrustedContextResolver;
   objectStorage?: ObjectStorage;
@@ -60,6 +62,7 @@ export function buildServer(options: ServerOptions = {}) {
   if (options.operatorConsoleDistDir) {
     app.register((instance) => registerOperatorConsoleStatic(instance, options.operatorConsoleDistDir!));
   }
+  if (options.adminConsoleDistDir) app.register((instance) => registerAdminConsoleStatic(instance, options.adminConsoleDistDir!));
   const database = options.database ?? (options.databaseUrl ? createDatabase(options.databaseUrl) : undefined);
   const explicitContextResolver = options.trustedContextResolver ?? (
     options.localContainerDevelopmentMode
@@ -126,6 +129,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       ?? fileURLToPath(new URL("../provider-console-dist", import.meta.url)),
     operatorConsoleDistDir: process.env.OPERATOR_CONSOLE_DIST_DIR
       ?? fileURLToPath(new URL("../operator-console-dist", import.meta.url)),
+    adminConsoleDistDir: process.env.ADMIN_CONSOLE_DIST_DIR
+      ?? fileURLToPath(new URL("../admin-console-dist", import.meta.url)),
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
     objectStorage: createMinioObjectStorageFromEnv(process.env),
     modelGenerationService: createConfiguredGenerationService(process.env),

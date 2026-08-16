@@ -53,6 +53,16 @@ export class CustomerAccountRepository {
     });
   }
 
+  async list(limit: number): Promise<CustomerAccountView[]> {
+    const result = await this.database.query<Row>(
+      `SELECT account.id, account.login_name, account.display_name, account.enabled, account.password_change_required,
+              membership.enterprise_id, membership.store_id, membership.role
+       FROM accounts AS account JOIN store_memberships AS membership ON membership.account_id = account.id
+       WHERE membership.enabled = true ORDER BY account.created_at DESC, account.id ASC LIMIT $1`, [limit]
+    );
+    return result.rows.map((row) => view(row, Boolean(row.password_change_required)));
+  }
+
   private async transaction<T>(work: (client: Queryable) => Promise<T>): Promise<T> {
     const client = await this.database.connect();
     try { await client.query("BEGIN"); const result = await work(client); await client.query("COMMIT"); return result; }
