@@ -24,6 +24,8 @@ import { createConfiguredVideoStorage, type VideoStorage } from "./video-editing
 import { registerStoryboardContextRoutes } from "./video-editing/storyboard-context-routes.js";
 import { registerModelPricingRoutes } from "./model-pricing/routes.js";
 import { registerCustomerAccountAdminRoutes } from "./admin/customer-account-routes.js";
+import { registerModelConfigurationRoutes } from "./admin/model-config-routes.js";
+import { ModelConfigurationRepository } from "./admin/model-configs.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -41,6 +43,7 @@ export interface ServerOptions {
   logger?: FastifyServerOptions["logger"];
   modelGenerationService?: ModelGenerationService;
   videoStorage?: VideoStorage;
+  modelConfigEncryptionKey?: string;
 }
 
 export function buildServer(options: ServerOptions = {}) {
@@ -84,6 +87,7 @@ export function buildServer(options: ServerOptions = {}) {
     app.register((instance) => registerProviderCustomerRoutes(instance, providerOptions));
     app.register((instance) => registerModelPricingRoutes(instance, providerOptions));
     app.register((instance) => registerCustomerAccountAdminRoutes(instance, auth, database));
+    app.register((instance) => registerModelConfigurationRoutes(instance, auth, database, options.modelConfigEncryptionKey));
   }
   if (database) {
     registerOperatorAuthRoutes(app, database, { publicOrigin: options.operatorPublicOrigin });
@@ -98,8 +102,9 @@ export function buildServer(options: ServerOptions = {}) {
     }));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
     app.register((instance) => registerStoryboardContextRoutes(instance, database, contextResolver));
-    if (options.modelGenerationService) {
-      app.register((instance) => registerWorkflowRoutes(instance, database, contextResolver, options.modelGenerationService!));
+    const modelResolver = options.modelConfigEncryptionKey ? new ModelConfigurationRepository(database, options.modelConfigEncryptionKey) : undefined;
+    if (options.modelGenerationService || modelResolver) {
+      app.register((instance) => registerWorkflowRoutes(instance, database, contextResolver, options.modelGenerationService, modelResolver));
     }
     if (options.videoStorage) {
       app.register((instance) => registerVideoAssetRoutes(instance, database, contextResolver, options.videoStorage!));
@@ -123,6 +128,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     localContainerDevelopmentMode: process.env.LOCAL_CONTAINER_DEVELOPMENT_MODE === "true",
     objectStorage: createMinioObjectStorageFromEnv(process.env),
     modelGenerationService: createConfiguredGenerationService(process.env),
+    modelConfigEncryptionKey: process.env.MODEL_CONFIG_ENCRYPTION_KEY,
     videoStorage: createConfiguredVideoStorage(process.env),
     logger: true
   });

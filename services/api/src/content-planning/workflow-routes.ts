@@ -6,16 +6,15 @@ import { ForbiddenError } from "../imports/repository.js";
 import type { TrustedContext } from "../imports/service.js";
 import { copyDraftsSchema, shotListSchema, topicArraySchema, type GenerationResult, type ModelGenerationService } from "../model-providers/generation.js";
 import { CopyReviewService, CopyReviewUnavailableError, digest, type CopyReviewResult } from "./review-service.js";
+import { ModelConfigurationUnavailableError, type ModelGenerationResolver } from "../admin/model-configs.js";
 
 type Row = Record<string, unknown>;
 type GenerationKind = "topics" | "copies" | "shots";
 interface GenerationClaim { existing?: Row[]; claimId?: string; }
 class WorkflowError extends Error { constructor(message: string, readonly status = 422, readonly findings?: unknown[]) { super(message); } }
 
-export async function registerWorkflowRoutes(app: FastifyInstance, database: Database, resolve: (request: FastifyRequest) => Promise<TrustedContext | undefined>, generator?: ModelGenerationService): Promise<void> {
-  if (!generator) throw new Error("workflow routes require a generation service");
-  const generationService = generator;
-  const review = new CopyReviewService(database, generationService);
+export async function registerWorkflowRoutes(app: FastifyInstance, database: Database, resolve: (request: FastifyRequest) => Promise<TrustedContext | undefined>, generator?: ModelGenerationService, modelResolver?: ModelGenerationResolver): Promise<void> {
+  if (!generator && !modelResolver) throw new Error("workflow routes require a generation service");
   app.addHook("onRequest", async (request, reply) => {
     const context = await resolve(request);
     if (!context) return reply.code(403).send({ error: "No trusted request context" });
@@ -119,7 +118,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     if (!copy.rowCount || copy.rows[0].status !== "draft") throw new WorkflowError("Draft copy not found", 409);
     let reviewed: CopyReviewResult;
     try {
-      reviewed = await review.review(String(item.id), id, Number(copy.rows[0].version), `${copy.rows[0].title} ${copy.rows[0].body}`, level(item));
+      reviewed = await new CopyReviewService(database, await serviceFor(item)).review(String(item.id), id, Number(copy.rows[0].version), `${copy.rows[0].title} ${copy.rows[0].body}`, level(item));
     } catch (error) {
       if (error instanceof CopyReviewUnavailableError) throw new WorkflowError("Semantic review is unavailable; update the draft and try again", 422);
       throw error;
@@ -148,7 +147,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     if (claim.existing) return claim.existing.map(topicJson);
     let output: GenerationResult<Array<Record<string, string | number>>>;
     try {
-      output = await generationService.generateStructured({ requestId: String(item.id), promptVersion: "content-topic-v1", commercialLevel: level(item), input: generationInput(item), schema: topicArraySchema });
+      output = await (await serviceFor(item)).generateStructured({ requestId: String(item.id), promptVersion: "content-topic-v1", commercialLevel: level(item), input: generationInput(item), schema: topicArraySchema });
       if (output.output.length !== 3) throw new WorkflowError("Topic generation must return exactly three topics", 502);
       return (await completeClaim(item, "topics", "", claim.claimId!, output, async client => {
         const saved: Row[] = [];
@@ -165,7 +164,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     if (claim.existing) return claim.existing.map(copyJson);
     let output: GenerationResult<Array<Record<string, string | number>>>;
     try {
-      output = await generationService.generateStructured({ requestId: `${item.id}:${topicId}`, promptVersion: "content-copy-v1", commercialLevel: level(item), input: { ...generationInput(item), topic: topicJson(topic.rows[0]) }, schema: copyDraftsSchema });
+      output = await (await serviceFor(item)).generateStructured({ requestId: `${item.id}:${topicId}`, promptVersion: "content-copy-v1", commercialLevel: level(item), input: { ...generationInput(item), topic: topicJson(topic.rows[0]) }, schema: copyDraftsSchema });
       return (await completeClaim(item, "copies", topicId, claim.claimId!, output, async client => {
         const saved: Row[] = [];
         for (const [index, generated] of output.output.entries()) {
@@ -186,7 +185,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
     if (claim.existing) return shotsJson(claim.existing[0]);
     let output: GenerationResult<Array<Record<string, string | number>>>;
     try {
-      output = await generationService.generateStructured({ requestId: `${item.id}:${copy.id}`, promptVersion: "content-shots-v1", commercialLevel: level(item), input: { ...generationInput(item), copy: copyJson(copy) }, schema: shotListSchema });
+      output = await (await serviceFor(item)).generateStructured({ requestId: `${item.id}:${copy.id}`, promptVersion: "content-shots-v1", commercialLevel: level(item), input: { ...generationInput(item), copy: copyJson(copy) }, schema: shotListSchema });
       const saved = await completeClaim(item, "shots", copyId, claim.claimId!, output, client => client.query<Row>("INSERT INTO content_task_shot_lists(id,task_id,copy_id,shots_json) VALUES($1,$2,$3,$4) RETURNING *", [randomUUID(), item.id, copy.id, JSON.stringify(output.output)]).then(result => result.rows), client => findShots(client, item.id, copyId));
       return shotsJson(saved[0]);
     } catch (error) { await failClaim(item, "shots", copyId, claim.claimId!, "content-shots-v1", error); throw error; }
@@ -211,6 +210,14 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
       if (!claim.rowCount) throw new WorkflowError("Generation is already in progress", 409);
       return { claimId: String(claim.rows[0].claim_id) };
     } catch (error) { await rollback(client); throw error; } finally { client.release(); }
+  }
+
+  async function serviceFor(item: Row): Promise<ModelGenerationService> {
+    if (modelResolver) {
+      try { return await modelResolver.generationServiceFor({ enterpriseId: String(item.enterprise_id), storeId: String(item.store_id) }); }
+      catch (error) { if (!(error instanceof ModelConfigurationUnavailableError) || error.reason !== "no_configuration" || !generator) throw error; }
+    }
+    return generator!;
   }
 
   async function completeClaim<T extends Row>(item: Row, kind: GenerationKind, subjectId: string, claimId: string, output: GenerationResult<unknown>, persist: (client: PoolClient) => Promise<T[]>, findExisting: (client: PoolClient) => Promise<Row[]>): Promise<T[]> {
