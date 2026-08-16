@@ -6,6 +6,7 @@ import { buildServer } from "../src/server.js";
 import type { Database } from "../src/db.js";
 import type { ModelGenerationService } from "../src/model-providers/generation.js";
 import { CopyReviewService, digest } from "../src/content-planning/review-service.js";
+import { ModelConfigurationUnavailableError } from "../src/admin/model-configs.js";
 
 const scope = { enterpriseId: "ent_demo", storeId: "store_demo", actorId: "actor_demo" };
 const profile = { storeName: "双流小馆", industryCode: "fast_food", categoryCode: "rice_noodle", provinceCode: "sc", cityCode: "cd", districtCode: "sl", detailedAddress: "航空港", businessDistrictType: "community", operatingMode: "dine_in" };
@@ -378,6 +379,26 @@ describe("content planning workflow", () => {
     expect(vi.mocked(generator.generateStructured)).toHaveBeenCalledTimes(1);
     expect((await pool.query("SELECT kind,status,provider,model,prompt_version,usage_json,latency_ms FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows).toMatchObject([{ kind: "topics", status: "succeeded", provider: "deepseek", model: "test", prompt_version: "content-topic-v1", latency_ms: 1 }]);
     expect((await pool.query("SELECT * FROM content_task_generation_claims WHERE task_id=$1", [task.id])).rowCount).toBe(0);
+  });
+
+  it("returns a neutral 422 without invoking a model when the assigned model configuration is disabled", async () => {
+    const task = (await app.inject({ method: "POST", url: "/v1/stores/store_demo/content-tasks", payload: { persona: "owner", contentType: "store_story", style: "sincere", commercialLevel: 1 } })).json<{ id: string }>();
+    const unavailable = buildServer({
+      database: pool,
+      trustedContextResolver: async () => scope,
+      modelGenerationService: generator,
+      modelGenerationResolver: { generationServiceFor: async () => { throw new ModelConfigurationUnavailableError("disabled", "assigned-config-123 must not leak"); } }
+    });
+
+    const response = await unavailable.inject({ method: "POST", url: `/v1/stores/store_demo/content-tasks/${task.id}/topics/generate` });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "Model generation is unavailable" });
+    expect(response.body).not.toMatch(/assigned-config|disabled|model configuration|key/i);
+    expect(vi.mocked(generator.generateStructured)).not.toHaveBeenCalled();
+    expect((await pool.query("SELECT provider,model,failure_code FROM content_task_generation_runs WHERE task_id=$1", [task.id])).rows)
+      .toEqual([{ provider: "unknown", model: "unknown", failure_code: "WorkflowError" }]);
+    await unavailable.close();
   });
 
   it("freezes the applicable published CNY token price on a successful generation", async () => {

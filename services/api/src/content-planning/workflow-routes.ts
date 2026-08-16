@@ -215,7 +215,11 @@ export async function registerWorkflowRoutes(app: FastifyInstance, database: Dat
   async function serviceFor(item: Row): Promise<ModelGenerationService> {
     if (modelResolver) {
       try { return await modelResolver.generationServiceFor({ enterpriseId: String(item.enterprise_id), storeId: String(item.store_id) }); }
-      catch (error) { if (!(error instanceof ModelConfigurationUnavailableError) || error.reason !== "no_configuration" || !generator) throw error; }
+      catch (error) {
+        if (!(error instanceof ModelConfigurationUnavailableError)) throw error;
+        if (error.reason === "no_configuration" && generator) return generator;
+        throw new WorkflowError("Model generation is unavailable", 422);
+      }
     }
     return generator!;
   }

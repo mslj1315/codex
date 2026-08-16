@@ -25,7 +25,7 @@ import { registerStoryboardContextRoutes } from "./video-editing/storyboard-cont
 import { registerModelPricingRoutes } from "./model-pricing/routes.js";
 import { registerCustomerAccountAdminRoutes } from "./admin/customer-account-routes.js";
 import { registerModelConfigurationRoutes } from "./admin/model-config-routes.js";
-import { ModelConfigurationRepository } from "./admin/model-configs.js";
+import { ModelConfigurationRepository, type ModelGenerationResolver } from "./admin/model-configs.js";
 
 export interface ServerOptions {
   databaseUrl?: string;
@@ -44,6 +44,7 @@ export interface ServerOptions {
   modelGenerationService?: ModelGenerationService;
   videoStorage?: VideoStorage;
   modelConfigEncryptionKey?: string;
+  modelGenerationResolver?: ModelGenerationResolver;
 }
 
 export function buildServer(options: ServerOptions = {}) {
@@ -102,7 +103,7 @@ export function buildServer(options: ServerOptions = {}) {
     }));
     app.register((instance) => registerProfileRoutes(instance, database, contextResolver));
     app.register((instance) => registerStoryboardContextRoutes(instance, database, contextResolver));
-    const modelResolver = options.modelConfigEncryptionKey ? new ModelConfigurationRepository(database, options.modelConfigEncryptionKey) : undefined;
+    const modelResolver = options.modelGenerationResolver ?? (options.modelConfigEncryptionKey ? new ModelConfigurationRepository(database, options.modelConfigEncryptionKey) : undefined);
     if (options.modelGenerationService || modelResolver) {
       app.register((instance) => registerWorkflowRoutes(instance, database, contextResolver, options.modelGenerationService, modelResolver));
     }
