@@ -28,6 +28,17 @@ describe("unified admin console", () => {
     expect(screen.getByRole("navigation")).toHaveTextContent("\u5ba2\u6237\u7ba1\u7406");
   });
 
+  it("submits a direct encoded customer disable without loading customer accounts", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-disable", displayName: "\u7ba1\u7406\u5458" }, permissions: ["customer_accounts.disable"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba2\u6237\u7ba1\u7406" }));
+    await userEvent.type(screen.getByLabelText("\u5ba2\u6237\u8d26\u53f7 ID"), "customer/a");
+    await userEvent.click(screen.getByRole("button", { name: "\u63d0\u4ea4\u505c\u7528" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/customer-accounts/customer%2Fa/disable", { method: "POST" });
+    expect(client.request).not.toHaveBeenCalledWith("/v1/admin/customer-accounts?limit=50");
+    expect(screen.getByRole("status")).toHaveTextContent("\u5ba2\u6237\u8d26\u53f7\u5df2\u505c\u7528");
+  });
+
   it("uses the internal pricing API and presents separate input and output prices", async () => {
     const client = api();
     render(<App session={session} api={client} />);
