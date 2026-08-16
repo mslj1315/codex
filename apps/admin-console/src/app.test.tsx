@@ -23,6 +23,11 @@ describe("unified admin console", () => {
     expect(screen.queryByText("\u5185\u5bb9\u8fd0\u8425")).not.toBeInTheDocument();
   });
 
+  it("shows customer management for a disable-only internal permission", () => {
+    render(<App session={{ account: { id: "admin-disable", displayName: "\u7ba1\u7406\u5458" }, permissions: ["customer_accounts.disable"] }} api={api()} />);
+    expect(screen.getByRole("navigation")).toHaveTextContent("\u5ba2\u6237\u7ba1\u7406");
+  });
+
   it("uses the internal pricing API and presents separate input and output prices", async () => {
     const client = api();
     render(<App session={session} api={client} />);
@@ -116,6 +121,18 @@ describe("unified admin console", () => {
     await userEvent.type(screen.getByLabelText("\u540d\u79f0"), "到店模板");
     await userEvent.click(screen.getByRole("button", { name: "\u76f4\u63a5\u4fdd\u5b58\u8349\u7a3f" }));
     expect(client.request).toHaveBeenCalledWith("/v1/admin/content/templates/template-1/draft", expect.objectContaining({ method: "PUT", body: expect.stringContaining('"name":"到店模板"') }));
+  });
+
+  it("resets a direct content editor to valid rule fields after switching kind", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-8", displayName: "\u7ba1\u7406\u5458" }, permissions: ["content_templates.edit", "review_rules.edit"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5185\u5bb9\u8fd0\u8425" }));
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba1\u6838\u89c4\u5219" }));
+    expect((screen.getByLabelText("\u7248\u672c\u914d\u7f6e\uff08JSON\uff09") as HTMLTextAreaElement).value).toContain('"ruleType"');
+    await userEvent.type(screen.getByLabelText("\u89c4\u5219 ID"), "rule-1");
+    await userEvent.type(screen.getByLabelText("\u540d\u79f0"), "绝对化规则");
+    await userEvent.click(screen.getByRole("button", { name: "\u76f4\u63a5\u4fdd\u5b58\u8349\u7a3f" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/content/rules/rule-1/draft", expect.objectContaining({ method: "PUT", body: expect.stringContaining('"ruleType"') }));
   });
 
   it("offers direct internal role assignment without reading accounts", async () => {

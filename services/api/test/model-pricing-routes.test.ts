@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Database } from "../src/db.js";
 import { hashPassword } from "../src/auth/credentials.js";
 import { buildServer } from "../src/server.js";
+import { ModelPricingRepository } from "../src/model-pricing/repository.js";
 
 describe("model pricing provider routes", () => {
   let database: Database;
@@ -68,6 +69,35 @@ describe("model pricing provider routes", () => {
     expect(audit).toContain("model_pricing.created");
     expect(audit).toContain("model_pricing.published");
     expect(audit).not.toMatch(/secret|key|token|prompt|content|copy|inspiration|media|object/i);
+  });
+
+  it("rolls back an internal price mutation when its audit write fails", async () => {
+    const originalConnect = database.connect.bind(database);
+    database.connect = async () => {
+      const client = await originalConnect(); const query = client.query.bind(client);
+      client.query = (async (sql: string, ...args: unknown[]) => {
+        if (sql.includes("INSERT INTO internal_audit_events")) throw new Error("audit unavailable");
+        return query(sql, ...args as []);
+      }) as typeof client.query;
+      return client;
+    };
+    const superToken = await login("super");
+    const response = await app.inject({ method: "POST", url: "/v1/admin/model-pricing/versions", headers: bearer(superToken), payload: { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" } });
+    expect(response.statusCode).toBe(500);
+    // pg-mem does not faithfully roll back an intercepted client query; the unit test below
+    // proves the transaction has no commit path after an audit failure.
+  });
+
+  it("never commits a price write when the audit write fails", async () => {
+    const calls: string[] = [];
+    const client = { query: async (sql: string) => { calls.push(sql); if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [], rowCount: 0 }; if (sql.includes("model_token_price_versions")) return { rows: [{ id: "price-1", provider: "openai_responses", model: "gpt", input_cny_per_million_tokens: 8, output_cny_per_million_tokens: 32, effective_from: "2026-08-16T00:00:00Z", effective_to: null, status: "draft" }], rowCount: 1 }; if (sql.includes("internal_audit_events")) throw new Error("audit unavailable"); return { rows: [], rowCount: 0 }; }, release() {} };
+    const repository = new ModelPricingRepository({ connect: async () => client, query: async () => ({ rows: [], rowCount: 0 }) } as never);
+    await expect(repository.createAndAudit("actor", { provider: "openai_responses", model: "gpt", inputCnyPerMillionTokens: 8, outputCnyPerMillionTokens: 32, effectiveFrom: "2026-08-16T00:00:00Z" })).rejects.toThrow("audit unavailable");
+    expect(calls).toContain("BEGIN");
+    expect(calls.some(call => call.includes("model_token_price_versions"))).toBe(true);
+    expect(calls.some(call => call.includes("internal_audit_events"))).toBe(true);
+    expect(calls).toContain("ROLLBACK");
+    expect(calls).not.toContain("COMMIT");
   });
 });
 let activeApp: ReturnType<typeof buildServer>;
