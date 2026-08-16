@@ -9,7 +9,7 @@ const session: AdminSession = {
 };
 
 function api(): AdminApi {
-  return { login: vi.fn(), request: vi.fn(async () => new Response(JSON.stringify({ items: [] }), { status: 200 })) };
+  return { login: vi.fn(), changePassword: vi.fn(async () => new Response(null, { status: 204 })), request: vi.fn(async () => new Response(JSON.stringify({ items: [] }), { status: 200 })) };
 }
 
 describe("unified admin console", () => {
@@ -51,7 +51,7 @@ describe("unified admin console", () => {
   });
 
   it("shows a neutral failure for an internal login that cannot obtain permissions", async () => {
-    const client: AdminApi = { login: vi.fn(async () => { throw new Error("forbidden"); }), request: vi.fn() };
+    const client: AdminApi = { login: vi.fn(async () => { throw new Error("forbidden"); }), changePassword: vi.fn(), request: vi.fn() };
     render(<App api={client} />);
     await userEvent.type(screen.getByLabelText("\u8d26\u53f7"), "admin");
     await userEvent.type(screen.getByLabelText("\u5bc6\u7801"), "wrong");
@@ -155,5 +155,68 @@ describe("unified admin console", () => {
     await userEvent.click(screen.getByRole("button", { name: "\u63d0\u4ea4\u89d2\u8272\u5206\u914d" }));
     expect(client.request).toHaveBeenCalledWith("/v1/admin/access/accounts/internal-1/roles", expect.objectContaining({ method: "PUT" }));
     expect(client.request).not.toHaveBeenCalledWith("/v1/admin/access/accounts");
+  });
+
+  it("offers account security to every authenticated internal user", async () => {
+    render(<App session={{ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }} api={api()} />);
+
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+
+    expect(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801")).toBeInTheDocument();
+    expect(screen.getByLabelText("\u65b0\u5bc6\u7801")).toBeInTheDocument();
+    expect(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801")).toBeInTheDocument();
+  });
+
+  it("does not submit an account password change when confirmation differs", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }} api={client} />);
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+    await userEvent.type(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801"), "Current1");
+    await userEvent.type(screen.getByLabelText("\u65b0\u5bc6\u7801"), "NewPassword1");
+    await userEvent.type(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801"), "Different1");
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
+
+    expect(client.changePassword).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("\u8bf7\u786e\u8ba4\u4e24\u6b21\u8f93\u5165\u7684\u65b0\u5bc6\u7801\u4e00\u81f4");
+  });
+
+  it("does not submit an account password change when the new password misses the policy", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }} api={client} />);
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+    await userEvent.type(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801"), "Current1");
+    await userEvent.type(screen.getByLabelText("\u65b0\u5bc6\u7801"), "alllowercase");
+    await userEvent.type(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801"), "alllowercase");
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
+
+    expect(client.changePassword).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("\u65b0\u5bc6\u7801\u81f3\u5c11 8 \u4f4d");
+  });
+
+  it("posts a password change with the bearer then returns to login on success", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (input === "/v1/auth/login") return new Response(JSON.stringify({ accessToken: "password-change-token" }), { status: 200 });
+      if (input === "/v1/auth/me/internal-permissions") return new Response(JSON.stringify({ account: { id: "admin-security", displayName: "\u7ba1\u7406\u5458" }, permissions: [] }), { status: 200 });
+      if (input === "/v1/auth/change-password") return new Response(null, { status: 204 });
+      return new Response(null, { status: 404 });
+    });
+    render(<App />);
+    await userEvent.type(screen.getByLabelText("\u8d26\u53f7"), "admin");
+    await userEvent.type(screen.getByLabelText("\u5bc6\u7801"), "Current1");
+    await userEvent.click(screen.getByRole("button", { name: "\u767b\u5f55" }));
+    await userEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "\u8d26\u53f7\u5b89\u5168" }));
+    await userEvent.type(screen.getByLabelText("\u5f53\u524d\u5bc6\u7801"), "Current1");
+    await userEvent.type(screen.getByLabelText("\u65b0\u5bc6\u7801"), "NewPassword1");
+    await userEvent.type(screen.getByLabelText("\u786e\u8ba4\u65b0\u5bc6\u7801"), "NewPassword1");
+    await userEvent.click(screen.getByRole("button", { name: "\u4fdd\u5b58\u65b0\u5bc6\u7801" }));
+
+    const passwordChange = fetchMock.mock.calls.find(([url]) => url === "/v1/auth/change-password");
+    expect(passwordChange?.[1]).toEqual(expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ Authorization: "Bearer password-change-token", "Content-Type": "application/json" }),
+      body: JSON.stringify({ currentPassword: "Current1", newPassword: "NewPassword1" })
+    }));
+    expect(screen.getByRole("heading", { name: "\u9910\u996e\u8fd0\u8425\u7ba1\u7406\u540e\u53f0" })).toBeInTheDocument();
+    fetchMock.mockRestore();
   });
 });
