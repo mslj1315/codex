@@ -34,7 +34,7 @@ export class AuthService {
   async login(input: { loginName: string; password: string }): Promise<AuthTokens> {
     const account = await this.repository.findAccountByLoginName(normalizeLoginName(input.loginName));
     if (!account?.enabled || !await verifyPassword(input.password, account.passwordHash)) throw new AuthenticationError("Authentication required");
-    if (isLegacyScryptPasswordHash(account.passwordHash)) {
+    if (isLegacyScryptPasswordHash(account.passwordHash) && isBcryptPasswordLength(input.password)) {
       await this.repository.upgradeLegacyPasswordHash(account.id, account.passwordHash, await hashPassword(input.password));
     }
     return this.createTokens(account);

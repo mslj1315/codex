@@ -229,6 +229,16 @@ describe("auth service", () => {
       .resolves.toMatchObject({ rows: [{ password_hash: expect.stringMatching(/^\$2[aby]\$/) }] });
   });
 
+  it("keeps a verified legacy hash when its UTF-8 password cannot safely fit bcrypt", async () => {
+    const password = "密".repeat(25);
+    const legacyHash = await legacyScryptHash(password);
+    await database.query("UPDATE accounts SET password_hash = $1 WHERE id = 'account_owner'", [legacyHash]);
+
+    await expect(service.login({ loginName: "owner", password })).resolves.toMatchObject({ account: { id: "account_owner" } });
+    await expect(database.query("SELECT password_hash FROM accounts WHERE id = 'account_owner'"))
+      .resolves.toMatchObject({ rows: [{ password_hash: legacyHash }] });
+  });
+
   it("rejects a session created from a credential version invalidated by a concurrent reset", async () => {
     const repository = new AuthRepository(database);
     await database.query("UPDATE accounts SET credential_version = 1 WHERE id = 'account_owner'");
