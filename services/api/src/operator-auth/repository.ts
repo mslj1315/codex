@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import type { Database, Queryable } from "../db.js";
+import { hashNewPassword } from "../auth/credentials.js";
 
 export const OPERATOR_SESSION_COOKIE = "operator_session";
 export const OPERATOR_ADMIN_ROLE = "operator_admin" as const;
@@ -64,7 +65,7 @@ export class OperatorAuthRepository {
   }
 
   async provision(accountId: string, password: string, workFactor: number): Promise<boolean> {
-    const passwordHash = await bcrypt.hash(password, workFactor);
+    const passwordHash = await hashNewPassword(password, workFactor);
     const result = await this.database.query<Row>(
       "INSERT INTO operator_accounts (account_id, password_hash, role) VALUES ($1,$2,$3) ON CONFLICT (account_id) DO NOTHING RETURNING account_id",
       [accountId, passwordHash, OPERATOR_ADMIN_ROLE]

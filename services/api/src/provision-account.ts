@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { createDatabase, type Database } from "./db.js";
-import { hashPassword } from "./auth/credentials.js";
+import { hashNewPassword, isNewPassword } from "./auth/credentials.js";
 import { AuthRepository, type ServiceOperatorRole, type StoreRole } from "./auth/repository.js";
 
 export interface ProvisionAccountResult {
@@ -24,14 +24,14 @@ export interface AccountProvisioner {
 export interface ProvisionAccountDependencies {
   createDatabase(databaseUrl: string): Database & { end(): Promise<void> };
   createProvisioner(database: Database): AccountProvisioner;
-  hashPassword(password: string): Promise<string>;
+  hashNewPassword(password: string): Promise<string>;
   writeOutput(value: string): void;
 }
 
 const defaults: ProvisionAccountDependencies = {
   createDatabase,
   createProvisioner(database) { return new AuthRepository(database); },
-  hashPassword,
+  hashNewPassword,
   writeOutput(value) { console.log(value); }
 };
 
@@ -45,7 +45,7 @@ export async function runProvisionAccount(
     const result = await dependencies.createProvisioner(database).provision({
       loginName: input.loginName,
       displayName: input.displayName,
-      passwordHash: await dependencies.hashPassword(input.password),
+      passwordHash: await dependencies.hashNewPassword(input.password),
       enterpriseId: input.enterpriseId,
       storeId: input.storeId,
       storeRole: input.storeRole,
@@ -72,6 +72,7 @@ function readInput(environment: Record<string, string | undefined>) {
   const loginName = required(environment, "PROVISION_LOGIN_NAME").toLowerCase();
   const displayName = required(environment, "PROVISION_DISPLAY_NAME");
   const password = required(environment, "PROVISION_PASSWORD");
+  if (!isNewPassword(password)) throw new Error("PROVISION_PASSWORD is invalid");
   const enterpriseId = identifier(required(environment, "PROVISION_ENTERPRISE_ID"), "PROVISION_ENTERPRISE_ID");
   const storeId = identifier(required(environment, "PROVISION_STORE_ID"), "PROVISION_STORE_ID");
   const storeRole = role(required(environment, "PROVISION_STORE_ROLE"));

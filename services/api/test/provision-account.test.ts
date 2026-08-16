@@ -6,7 +6,7 @@ const environment = {
   DATABASE_URL: "postgresql://operator:private-password@postgres:5432/imports",
   PROVISION_LOGIN_NAME: "Owner",
   PROVISION_DISPLAY_NAME: "门店负责人",
-  PROVISION_PASSWORD: "private-passphrase",
+  PROVISION_PASSWORD: "Private-passphrase",
   PROVISION_ENTERPRISE_ID: "ent_demo",
   PROVISION_STORE_ID: "store_demo",
   PROVISION_STORE_ROLE: "owner",
@@ -53,6 +53,13 @@ describe("account provisioning CLI", () => {
     expect(harness.events).toEqual([]);
   });
 
+  it("rejects a lowercase-only self-chosen provision password before opening a database", async () => {
+    const harness = createHarness();
+
+    await expect(runProvisionAccount({ ...environment, PROVISION_PASSWORD: "lowercase-password" }, harness.dependencies)).rejects.toThrow("PROVISION_PASSWORD is invalid");
+    expect(harness.events).toEqual([]);
+  });
+
   it("always closes the database and does not output when provisioning fails", async () => {
     const failure = new Error("private database failure");
     const harness = createHarness(failure);
@@ -87,7 +94,7 @@ function createHarness(failure?: Error) {
         }
       };
     },
-    async hashPassword() { return "scrypt$v1$hash"; },
+    async hashNewPassword() { return "scrypt$v1$hash"; },
     writeOutput(value) { state.events.push("output"); state.output.push(value); }
   };
   return Object.assign(state, { dependencies });

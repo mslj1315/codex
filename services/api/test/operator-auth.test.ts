@@ -42,6 +42,14 @@ describe("operator authentication", () => {
     expect(comparisons).toHaveLength(1);
   });
 
+  it("enforces the shared self-chosen password policy when provisioning an operator account", async () => {
+    const repository = new OperatorAuthRepository(pool);
+
+    await expect(repository.provision("op-lowercase", "abcdefghijkl", 4)).rejects.toThrow();
+    await expect(repository.provision("op-too-long", `Aa${"密".repeat(24)}`, 4)).rejects.toThrow();
+    await expect(repository.provision("op-compliant", "Abcdefgh", 4)).resolves.toBe(true);
+  });
+
   it("disables an account atomically, revokes its session, and audits the action", async () => {
     const repository = new OperatorAuthRepository(pool);
     const created = await repository.createSession("op-1");

@@ -14,9 +14,9 @@ export async function hashPassword(password: string, _legacyRandom?: unknown): P
   return bcrypt.hash(password, BCRYPT_COST);
 }
 
-export async function hashNewPassword(password: string): Promise<string> {
+export async function hashNewPassword(password: string, workFactor = BCRYPT_COST): Promise<string> {
   if (!isNewPassword(password)) throw new PasswordValidationError();
-  return bcrypt.hash(password, BCRYPT_COST);
+  return bcrypt.hash(password, workFactor);
 }
 
 export async function verifyPassword(password: string, serialized: string): Promise<boolean> {
