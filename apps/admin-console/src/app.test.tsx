@@ -69,4 +69,16 @@ describe("unified admin console", () => {
 
     expect(client.request).toHaveBeenCalledWith("/v1/admin/customer-model-assignments/ent-1/store-1", expect.objectContaining({ method: "PUT" }));
   });
+
+  it("limits direct model fields to the selected operation and never reloads a manage-only list", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-4", displayName: "\u7ba1\u7406\u5458" }, permissions: ["model_configs.manage"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u6a21\u578b\u914d\u7f6e" }));
+    const operation = screen.getByLabelText("\u64cd\u4f5c");
+    await userEvent.selectOptions(operation, "default");
+    expect(screen.queryByLabelText(/\u65b0 API \u5bc6\u94a5/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/\u540d\u79f0\uff08\u7f16\u8f91\u65f6\uff09/)).not.toBeInTheDocument();
+    await userEvent.selectOptions(operation, "rotate");
+    expect(screen.getByLabelText(/\u65b0 API \u5bc6\u94a5/)).toBeRequired();
+  });
 });
