@@ -35,6 +35,17 @@ describe("unified admin content and access routes", () => {
     expect(denied.body).not.toContain("13800138000");
   });
 
+  test("rejects an internal role binding when the account has even a disabled customer membership", async () => {
+    const { app, token, database } = await appWithAdmin({ superAdmin: true });
+    const created = await app.inject({ method: "POST", url: "/v1/admin/access/roles", headers: bearer(token), payload: { code: "internal_reader", displayName: "内部查看", permissionCodes: ["internal_accounts.read"] } });
+    const role = created.json<{ id: string }>();
+    await database.query("INSERT INTO accounts (id, login_name, display_name, password_hash) VALUES ('former-customer', 'former-customer', 'Former', 'x')");
+    await database.query("INSERT INTO store_memberships (account_id, enterprise_id, store_id, role, enabled) VALUES ('former-customer', 'enterprise', 'store', 'owner', false)");
+    const response = await app.inject({ method: "PUT", url: "/v1/admin/access/accounts/former-customer/roles", headers: bearer(token), payload: { roleIds: [role.id] } });
+    expect(response.statusCode).toBe(409);
+    expect((await database.query("SELECT * FROM internal_account_roles WHERE account_id='former-customer'")).rowCount).toBe(0);
+  });
+
   test("never allows the super administrator role to be changed or assigned through access endpoints", async () => {
     const { app, token } = await appWithAdmin({ superAdmin: true });
     const result = await app.inject({ method: "PUT", url: "/v1/admin/access/roles/internal-role-super-admin", headers: bearer(token), payload: { displayName: "改名", enabled: false, permissionCodes: [] } });

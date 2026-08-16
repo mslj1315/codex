@@ -98,4 +98,24 @@ describe("unified admin console", () => {
     await userEvent.selectOptions(operation, "rotate");
     expect(screen.getByLabelText(/\u65b0 API \u5bc6\u94a5/)).toBeRequired();
   });
+
+  it("offers direct content edit and publish without reading a list", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-5", displayName: "\u7ba1\u7406\u5458" }, permissions: ["content_templates.edit", "content_templates.publish"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5185\u5bb9\u8fd0\u8425" }));
+    expect(screen.getByLabelText("\u6a21\u677f ID")).toBeInTheDocument();
+    expect(screen.getByLabelText("\u53d1\u5e03\u6a21\u677f ID")).toBeInTheDocument();
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
+  it("offers direct internal role assignment without reading accounts", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-6", displayName: "\u7ba1\u7406\u5458" }, permissions: ["internal_accounts.manage"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u6743\u9650\u7ba1\u7406" }));
+    await userEvent.type(screen.getByLabelText("\u5185\u90e8\u8d26\u53f7 ID"), "internal-1");
+    await userEvent.type(screen.getByLabelText("\u5206\u914d\u89d2\u8272 ID"), "role-1");
+    await userEvent.click(screen.getByRole("button", { name: "\u63d0\u4ea4\u89d2\u8272\u5206\u914d" }));
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/access/accounts/internal-1/roles", expect.objectContaining({ method: "PUT" }));
+    expect(client.request).not.toHaveBeenCalledWith("/v1/admin/access/accounts");
+  });
 });
