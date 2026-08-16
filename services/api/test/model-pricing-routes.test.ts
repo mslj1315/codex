@@ -15,8 +15,9 @@ describe("model pricing provider routes", () => {
     const { Pool } = memory.adapters.createPg(); database = new Pool();
     await applyMigrations(database);
     const hash = await hashPassword("passphrase", () => Buffer.alloc(16, 4));
-    await database.query("INSERT INTO accounts (id,login_name,display_name,password_hash) VALUES ('price','price','Price', $1), ('viewer','viewer','Viewer',$1)", [hash]);
+    await database.query("INSERT INTO accounts (id,login_name,display_name,password_hash) VALUES ('price','price','Price', $1), ('viewer','viewer','Viewer',$1), ('super','super','Super',$1)", [hash]);
     await database.query("INSERT INTO service_operator_roles (account_id,role) VALUES ('price','model_pricing_operator'),('viewer','provider_feedback_viewer')");
+    await database.query("INSERT INTO internal_account_roles (account_id,role_id) VALUES ('super','internal-role-super-admin')");
     app = buildServer({ database, authTokenSecret: "a sufficiently long test signing secret", now: () => new Date("2026-08-15T00:00:00Z") }); activeApp = app;
   });
 
@@ -45,6 +46,15 @@ describe("model pricing provider routes", () => {
     expect((await app.inject({ method: "GET", url, headers: bearer(price) })).statusCode).toBe(403);
     expect((await app.inject({ method: "GET", url, headers: providerHeaders(viewer) })).statusCode).toBe(403);
     expect((await app.inject({ method: "GET", url, headers: providerHeaders(price) })).statusCode).toBe(200);
+  });
+
+  it("lets an internal administrator retrieve a safe aggregate without date parameters", async () => {
+    const superToken = await login("super");
+    const result = await app.inject({ method: "GET", url: "/v1/admin/model-pricing/usage", headers: bearer(superToken) });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toEqual({ items: [] });
+    expect(result.body).not.toMatch(/enterprise|store|actor|task|prompt|content|media|object/i);
   });
 });
 let activeApp: ReturnType<typeof buildServer>;
