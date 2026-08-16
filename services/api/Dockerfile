@@ -1,4 +1,4 @@
-FROM node:24-alpine AS admin-console-build
+FROM docker.m.daocloud.io/library/node:24-alpine AS admin-console-build
 
 WORKDIR /build/apps/admin-console
 
@@ -8,7 +8,7 @@ RUN npm ci
 COPY apps/admin-console/ ./
 RUN npm run build
 
-FROM node:24-alpine
+FROM docker.m.daocloud.io/library/node:24-alpine
 
 WORKDIR /app
 
