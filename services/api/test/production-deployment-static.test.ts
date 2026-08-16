@@ -62,6 +62,16 @@ describe("production deployment topology", () => {
     expect(nginx).not.toContain("proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for");
   });
 
+  it("serves the cloud-test APK only at its fixed HTTPS download path", async () => {
+    const nginx = await readFile(nginxConfiguration, "utf8");
+
+    expect(nginx).toContain("location = /downloads/restaurant-operations-cloud-test.apk");
+    expect(nginx).toContain("alias /var/www/restaurant-ops-downloads/restaurant-operations-cloud-test.apk");
+    expect(nginx).toContain("application/vnd.android.package-archive");
+    expect(nginx).toContain('Content-Disposition "attachment; filename=restaurant-operations-cloud-test.apk"');
+    expect(nginx).toContain("autoindex off");
+  });
+
   it("resolves only the API loopback port in Docker Compose", async () => {
     let output: string;
     try {
