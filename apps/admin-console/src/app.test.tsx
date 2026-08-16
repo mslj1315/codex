@@ -43,4 +43,30 @@ describe("unified admin console", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("\u8d26\u53f7\u3001\u5bc6\u7801\u6216\u540e\u53f0\u6743\u9650\u65e0\u6548");
   });
+
+  it("offers direct safe operations without fetching lists for manage-only permissions", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-2", displayName: "\u7ba1\u7406\u5458" }, permissions: ["model_assignments.manage", "model_configs.manage", "model_pricing.manage"] }} api={client} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba2\u6237\u7ba1\u7406" }));
+    expect(screen.getByLabelText("\u4f01\u4e1a ID")).toBeInTheDocument();
+    expect(screen.getByLabelText(/\u6a21\u578b\u914d\u7f6e ID/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "\u6a21\u578b\u914d\u7f6e" }));
+    expect(screen.getByLabelText("\u5df2\u6709\u6a21\u578b\u914d\u7f6e ID")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "\u6a21\u578b\u8ba1\u8d39" }));
+    expect(screen.getByLabelText("\u5df2\u6709\u8ba1\u8d39\u7248\u672c ID")).toBeInTheDocument();
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
+  it("sends a direct assignment only with the assignment permission", async () => {
+    const client = api();
+    render(<App session={{ account: { id: "admin-3", displayName: "\u7ba1\u7406\u5458" }, permissions: ["model_assignments.manage"] }} api={client} />);
+    await userEvent.click(screen.getByRole("button", { name: "\u5ba2\u6237\u7ba1\u7406" }));
+    await userEvent.type(screen.getByLabelText("\u4f01\u4e1a ID"), "ent-1");
+    await userEvent.type(screen.getByLabelText("\u95e8\u5e97 ID"), "store-1");
+    await userEvent.type(screen.getByLabelText(/\u6a21\u578b\u914d\u7f6e ID/), "model-1");
+    await userEvent.click(screen.getByRole("button", { name: "\u63d0\u4ea4\u6a21\u578b\u5206\u914d" }));
+
+    expect(client.request).toHaveBeenCalledWith("/v1/admin/customer-model-assignments/ent-1/store-1", expect.objectContaining({ method: "PUT" }));
+  });
 });

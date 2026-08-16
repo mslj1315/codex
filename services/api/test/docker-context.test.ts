@@ -38,14 +38,17 @@ describe("root Docker build context", () => {
     expect(rules).not.toContain("**/package-lock.json");
   });
 
-  it("builds and packages the provider and operator consoles independently", async () => {
+  it("builds and packages each console independently regardless of the configured Node registry", async () => {
     const dockerfile = await readFile(apiDockerfile, "utf8");
 
-    expect(dockerfile).toContain("FROM node:24-alpine AS provider-console-build");
+    expect(dockerfile).toMatch(/FROM\s+\S*node:24-alpine AS provider-console-build/);
     expect(dockerfile).toContain("COPY --from=provider-console-build /build/apps/provider-console/dist ./provider-console-dist");
-    expect(dockerfile).toContain("FROM node:24-alpine AS operator-console-build");
+    expect(dockerfile).toMatch(/FROM\s+\S*node:24-alpine AS operator-console-build/);
     expect(dockerfile).toContain("COPY apps/operator-console/package.json apps/operator-console/package-lock.json ./");
     expect(dockerfile).toContain("COPY --from=operator-console-build /build/apps/operator-console/dist ./operator-console-dist");
+    expect(dockerfile).toMatch(/FROM\s+\S*node:24-alpine AS admin-console-build/);
+    expect(dockerfile).toContain("COPY apps/admin-console/package.json apps/admin-console/package-lock.json ./");
+    expect(dockerfile).toContain("COPY --from=admin-console-build /build/apps/admin-console/dist ./admin-console-dist");
   });
 });
 
